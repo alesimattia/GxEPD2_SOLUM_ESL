@@ -27,9 +27,10 @@
 //   SOLUM_M3_BWR_97. Dall'altra parte il datasheet SOLUM del donor dichiara
 //   PIXEL COLORS = BWRY per la 9.7".
 //   La contraddizione la risolve la misura, non la documentazione: la fa
-//   examples/color_test/color_test.ino di questa libreria, che esercita tutte
-//   le combinazioni dei due piani più il canale 0x28 e chiude con la scheda di
-//   osservazione che mappa ogni esito sulla conseguenza per questo file.
+//   examples/panel_diagnostic/panel_diagnostic.ino di questa libreria, che
+//   esercita tutte le combinazioni dei due piani più il canale 0x28 e chiude
+//   con la scheda di osservazione che mappa ogni esito sulla conseguenza per
+//   questo file.
 //
 // Requisiti build:
 //   - HW SPI (HSPI su ESP32 tramite la Waveshare E-Paper ESP32 Driver Board).
@@ -772,8 +773,15 @@ inline void GxEPD2_SOLUM_097c_960x672::hibernate()
   _PowerOff();
   if (_rst >= 0)
   {
-    _writeCommand(0x10); // deep sleep
-    _writeData(0x11);    // deep sleep
+    /** Deep sleep. Il datasheet SSD1677 Rev 1.0 definisce per 0x10 solo
+     *  A[1:0]=00 (normale) e A[1:0]=11 (deep sleep), e dice che in deep sleep
+     *  il BUSY resta alto. Da qui 0x03, che è anche quello che usa
+     *  OpenEPaperLink sulla stessa famiglia; il precedente 0x11 ha A[1:0]=01,
+     *  che nella tabella non c'è. panel_diagnostic misura quale dei due alza
+     *  il BUSY. Per uscire serve un HW reset, che _InitDisplay() fa già quando
+     *  _hibernating è alto. */
+    _writeCommand(0x10);
+    _writeData(0x03);
     _hibernating = true;
     _init_display_done = false;
     _color_dirty = false;
@@ -911,7 +919,7 @@ inline void GxEPD2_SOLUM_097c_960x672::writeImageRed(const uint8_t* bitmap,
 
 /** Canale giallo mai verificato sul pannello: nel datasheet SSD1677 Rev 1.0 la
  *  posizione 0x28 è VCOM Sense e non un piano immagine. Vedi la nota in cima
- *  al file; l'esito lo dà color_test. */
+ *  al file; l'esito lo dà panel_diagnostic. */
 inline void GxEPD2_SOLUM_097c_960x672::writeImageYellow(const uint8_t* bitmap,
     int16_t x, int16_t y, int16_t w, int16_t h, bool pgm)
 {
