@@ -19,13 +19,15 @@ Jean-Marc Zingg, fornendo:
 - **supporto nativo al 4° colore** (giallo) sul comando `0x28` del
   controller SSD1677 — verificato su hardware.
 
-Per il contesto applicativo (sketch principale, moduli Weather/Calendar,
-flussi di boot, OTA, ecc.) vedi [README principale del progetto](../README.md).
+Per un esempio d'uso completo (sketch, moduli Weather/Calendar, flussi di
+boot, OTA) vedi il progetto che la consuma:
+[ePaper-weather-dashboard](https://github.com/alesimattia/ePaper-weather-dashboard).
 
 ---
 
 ## Indice
 
+- [Installazione](#installazione)
 - [0. Il pannello SOLUM 9.7"](#0-il-pannello-solum-97)
 - [Origine](#origine)
 - [1. `GxEPDImage::showImage()` — unico entry-point pubblico](#1-gxepdimageshowimage--unico-entry-point-pubblico)
@@ -34,12 +36,56 @@ flussi di boot, OTA, ecc.) vedi [README principale del progetto](../README.md).
 - [4. Sistema di descrittori universali (`namespace GxEPDImage`)](#4-sistema-di-descrittori-universali-namespace-gxepdimage)
 - [5. Ottimizzazioni rispetto al driver stock](#5-ottimizzazioni-rispetto-al-driver-stock)
 - [6. API completa](#6-api-completa)
+- [Licenza](#licenza)
+
+---
+
+## Installazione
+
+Libreria Arduino a sè stante che **dipende da GxEPD2**: questo repo non la
+contiene, la estende con il driver di un pannello che upstream non supporta.
+
+1. installa **GxEPD2** (>= 1.6.9) e **Adafruit GFX Library** dal Library
+   Manager dell'IDE;
+2. installa questa libreria: *Sketch → #include libreria → Aggiungi libreria
+   .ZIP*, oppure clonando il repo in `Documents/Arduino/libraries/`;
+3. nello sketch:
+
+```cpp
+#include <GxEPD2_3C.h>
+#include <GxEPD2_SOLUM_097c_960x672.h>
+
+// Globale, non locale a setup(): selectSPI() conserva il puntatore a hspi
+SPIClass hspi(HSPI);
+
+// CS, DC, RST, BUSY come cablati sulla Waveshare E-Paper ESP32 Driver Board
+GxEPD2_3C<GxEPD2_SOLUM_097c_960x672, GxEPD2_SOLUM_097c_960x672::HEIGHT / 8>
+    display(GxEPD2_SOLUM_097c_960x672(15, 27, 26, 25));
+
+void setup()
+{
+  hspi.begin(13, 12, 14, 15);                                  // SCK, MISO, MOSI, SS
+  display.epd2.selectSPI(hspi, SPISettings(10000000, MSBFIRST, SPI_MODE0));
+  display.init(115200, true, 2, false);
+  display.setRotation(0);                                      // 960w × 672h landscape
+  display.setFullWindow();
+}
+```
+
+Requisiti: target **ESP32** — il driver usa `SPIClass::writeBytes` e ha i
+`delay(1)` di yield WDT per ESP8266 rimossi dai hot path — e alimentazione
+3,3 V su VCC **e su tutte le data line** del pannello, che non sono
+5V-tolerant. Adafruit_GFX serve solo se `ENABLE_GxEPD2_GFX` è attivo.
+
+Se preferisci non installarla e tenerla dentro il progetto che la usa (come
+submodule), l'include diventa relativo al path del submodule:
+`#include "GxEPD2_SOLUM_097c_960x672/src/GxEPD2_SOLUM_097c_960x672.h"`.
 
 ---
 
 ## 0. Il pannello SOLUM 9.7"
 
-Caratteristiche del pannello ricavate dai cataloghi SOLUM in [../DOCS](../DOCS)
+Caratteristiche del pannello ricavate dai cataloghi SOLUM in [DOCS/ di ePaper-weather-dashboard](https://github.com/alesimattia/ePaper-weather-dashboard/tree/main/DOCS)
 (`Newton-Pro_Specifications.pdf`, `Newton-Core_Specifications.pdf`), dallo
 schematico `E-Paper_ESP32_Driver_Board_V3.pdf` della board Waveshare e dalle
 verifiche su hardware. Spiegano il perchè di diverse scelte del driver, quindi
@@ -194,7 +240,7 @@ partial. La ragione è strutturale: il partial veloce di SSD1677 è
 **differenziale** e usa la RAM `0x26` come buffer "previous", mentre qui `0x26`
 è il piano rosso e `0x28` il giallo — la RAM che servirebbe per il differenziale
 è occupata dai colori. Il fratello monocromatico con lo stesso controller
-([`GxEPD2_1330_GDEM133T91`](../GxEPD2-master/src/gdem/GxEPD2_1330_GDEM133T91.h),
+([`GxEPD2_1330_GDEM133T91`](https://github.com/ZinggJM/GxEPD2/blob/1.6.9/src/gdem/GxEPD2_1330_GDEM133T91.h),
 960 × 680) fa 4.500 ms full e **600 ms** partial proprio perchè quella RAM è
 libera.
 
@@ -366,9 +412,9 @@ template ha un'architettura **hard-coded su 2 canali**:
 - mantiene un buffer GFX paged in RAM con **due piani** (black + accent)
 - nel loop `firstPage()` / `nextPage()` invoca **una sola hook** sul
   driver: `writeImage(black, color, ...)` in modalità full-window
-  ([GxEPD2_3C.h:368](../GxEPD2-master/src/GxEPD2_3C.h#L368)); la variante
+  ([GxEPD2_3C.h:368](https://github.com/ZinggJM/GxEPD2/blob/1.6.9/src/GxEPD2_3C.h#L368)); la variante
   `writeImagePart(black, color, ...)` è usata solo con `setPartialWindow`
-  ([GxEPD2_3C.h:273](../GxEPD2-master/src/GxEPD2_3C.h#L273))
+  ([GxEPD2_3C.h:273](https://github.com/ZinggJM/GxEPD2/blob/1.6.9/src/GxEPD2_3C.h#L273))
 - non ha nè campi nè API per un terzo canale
 
 Quando abbiamo confermato che il pannello SOLUM supporta nativamente un
@@ -450,7 +496,7 @@ incapsulate nel driver custom:
 2. **`writeImageYellow()` + `preserveYellow(true)`** chiamati a mano
    prima di `firstPage()`, per compositing custom (es. la barra
    gialla temp-range del banner Weather, vedi
-   [`Weather.h`](../Weather.h)). Il driver auto-resetta il flag dentro
+   [`Weather.h` di ePaper-weather-dashboard](https://github.com/alesimattia/ePaper-weather-dashboard/blob/main/Weather.h)). Il driver auto-resetta il flag dentro
    `refresh()` al termine del loop paged.
 
 ## 4. Sistema di descrittori universali (`namespace GxEPDImage`)
@@ -566,7 +612,7 @@ adottati negli altri driver moderni della libreria.
   (~0.8 μs/byte a 10 MHz, contro ~1.5 μs/byte della transfer per-byte upstream
   — `_writeData(buf, n)` di `GxEPD2_EPD` è anch'esso un loop per-byte di
   `transfer()`, NON un bulk vero, vedi
-  [GxEPD2-master/src/GxEPD2_EPD.cpp:197-207](../GxEPD2-master/src/GxEPD2_EPD.cpp#L197-L207)).
+  [GxEPD2_EPD.cpp:197-207](https://github.com/ZinggJM/GxEPD2/blob/1.6.9/src/GxEPD2_EPD.cpp#L197-L207)).
   Su un refresh BWRY steady-state (322.560 byte: paged B+R + piano giallo +
   cleanup `0x26`) il transfer SPI passa da ~484 ms a ~258 ms:
   **risparmio ~225 ms per refresh** (derivazione in
@@ -586,3 +632,19 @@ contratto della libreria — non sono pensati per uso diretto: lo sketch
 chiama `showImage()` per immagini singole, oppure il template
 `GxEPD2_3C` invoca `writeImage(black, color)` a ogni `nextPage()` nel flusso
 paged full-window (`writeImagePart` solo con `setPartialWindow`).
+
+---
+
+## Licenza
+
+**GPL-3.0**, come GxEPD2. Non è una scelta: il driver nasce come copia
+modificata di
+[`GxEPD2_1330c_GDEM133Z91`](https://github.com/ZinggJM/GxEPD2/blob/1.6.9/src/gdem3c/GxEPD2_1330c_GDEM133Z91.cpp)
+di Jean-Marc Zingg, di cui eredita sequenza di init, write RAM e refresh, ed
+è quindi codice derivato da una libreria GPL-3.0.
+
+Questo repo è un fork di [ZinggJM/GxEPD2](https://github.com/ZinggJM/GxEPD2):
+il branch `master` conserva l'albero upstream alla **1.6.9** (`de82887`), il
+branch `main` contiene questa libreria. I riferimenti ai sorgenti upstream in
+questa doc puntano al tag 1.6.9, non a `master`, così le righe citate restano
+valide anche quando upstream avanza.
