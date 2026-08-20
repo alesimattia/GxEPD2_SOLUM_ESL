@@ -11,12 +11,25 @@
 // Pannello pilotato (personalizzazione rispetto all'originale):
 //   - Produttore: SOLUM (modulo ESL 9.7" riusato).
 //   - Risoluzione: 672w x 960h native portrait (usato in landscape 960w x 672h dopo setRotation(0)).
-//   - Colori: 4 colori nativi (bianco / nero / rosso / giallo) pilotati
-//     rispettivamente via comando 0x24 (black plane), 0x26 (red accent),
-//     0x28 (yellow accent) del controller SSD1677.
+//   - Colori: bianco / nero / rosso verificati sul pannello, pilotati dai
+//     comandi 0x24 (BW plane) e 0x26 (accent) del controller SSD1677.
 //   - Refresh: solo full refresh (~22 s), niente fast partial update.
 //   - Controller: SSD1677, indirizzamento full-window a finestra parziale.
 //   - Alimentazione: 3.3V su VCC e su tutte le data line (non 5V-tolerant).
+//
+// CANALE GIALLO (0x28): mai verificato sul pannello.
+//   Da sapere quando si tocca: il datasheet SSD1677 Rev 1.0 (docs/) elenca due
+//   soli piani immagine, 0x24 Write RAM (Black White) e 0x26 Write RAM (RED),
+//   più il motore di dithering a 0x25, e alla posizione 0x28 mette "VCOM
+//   Sense", un comando analogico che richiede CLKEN=1 e ANALOGEN=1, alza il
+//   BUSY e non prende parametri. La parola "yellow" non compare nel datasheet.
+//   Anche OpenEPaperLink (docs/openepaperlink/) cataloga il modulo come
+//   SOLUM_M3_BWR_97. Dall'altra parte il datasheet SOLUM del donor dichiara
+//   PIXEL COLORS = BWRY per la 9.7".
+//   La contraddizione la risolve la misura, non la documentazione: la fa
+//   examples/color_test/color_test.ino di questa libreria, che esercita tutte
+//   le combinazioni dei due piani più il canale 0x28 e chiude con la scheda di
+//   osservazione che mappa ogni esito sulla conseguenza per questo file.
 //
 // Requisiti build:
 //   - HW SPI (HSPI su ESP32 tramite la Waveshare E-Paper ESP32 Driver Board).
@@ -357,6 +370,15 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
     void _cleanAccentIfDirty(uint8_t command, bool& dirty_flag);
 
     void _writeScreenBuffer(uint8_t command, uint8_t value);
+
+    /** Riempimento di un piano immagine tramite i comandi Auto Write RAM for
+     *  Regular Pattern del SSD1677 (0x47 per 0x24, 0x46 per 0x26): il pattern
+     *  lo genera il controller, quindi sul bus va un solo byte invece di
+     *  80.640 e il piano si azzera in ~15 ms invece di ~65. È la stessa
+     *  coppia di comandi che il firmware SOLUM di fabbrica usa in init.
+     *  Ritorna false quando il piano o il valore non sono esprimibili come
+     *  pattern, e il chiamante ripiega sul transfer SPI. */
+    bool _fillPlaneByPattern(uint8_t command, uint8_t value);
     void _writeImage(uint8_t command, const uint8_t bitmap[], int16_t x, int16_t y, int16_t w, int16_t h, bool invert = false, bool mirror_y = false, bool pgm = false);
     void _writeImagePart(uint8_t command, const uint8_t bitmap[], int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
                          int16_t x, int16_t y, int16_t w, int16_t h, bool invert = false, bool mirror_y = false, bool pgm = false);
@@ -369,7 +391,8 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
     // Dirty flags: tracciano quando i canali RAM accent del controller
     // contengono dati non puliti dall'ultima writeScreenBuffer(). Permettono
     // di saltare il clean pre-draw quando non serve (tipico caso: catena di
-    // immagini B/N consecutive). Risparmio ~65 ms per canale per draw
+    // immagini B/N consecutive). Risparmio per draw: ~15 ms su 0x26, che si
+    // pulisce col pattern hardware, ~65 ms su 0x28, che passa dal bus
     // (80.640 byte a ~0.8us/byte).
     bool _color_dirty = false;   // 0x26 (red)
     bool _yellow_dirty = false;  // 0x28 (yellow)
@@ -443,16 +466,21 @@ inline void GxEPD2_SOLUM_097c_960x672::writeScreenBuffer(uint8_t black_value, ui
   _yellow_dirty = false;
 }
 
+// Riempie un piano a schermo pieno con un valore costante. Se il controller
+// sa generare il pattern da sè la scrittura non passa dal bus; il transfer
+// SPI resta come fallback per i casi che il generatore non copre.
 inline void GxEPD2_SOLUM_097c_960x672::_writeScreenBuffer(uint8_t command, uint8_t value)
 {
+  if (_fillPlaneByPattern(command, value)) return;
   _setPartialRamArea(0, 0, WIDTH, HEIGHT);
   _writeCommand(command);
   _startTransfer();
   // Bulk SPI: invece di chiamare _transfer(value) 80640 volte (full-window
   // a WIDTH*HEIGHT/8 byte), pre-riempiamo un buffer di stack con il valore
   // costante e lo scarichiamo a chunk via writeBytes(). Saving ~56 ms per
-  // piano (80.640 byte, da ~1.5us a ~0.8us/byte) sul cleanup accent dirty,
-  // chiamato max 2 volte per refresh BWRY -> BW.
+  // piano (80.640 byte, da ~1.5us a ~0.8us/byte). Percorso raggiunto solo
+  // quando il pattern hardware non copre il caso: piano 0x28, oppure un
+  // valore che non sia 0x00 o 0xFF.
   // Buffer 256 byte: più grande della FIFO 64-byte ESP32 così la
   // primitiva interna gestisce più write concatenate senza overhead extra.
   uint8_t buf[256];
@@ -465,6 +493,30 @@ inline void GxEPD2_SOLUM_097c_960x672::_writeScreenBuffer(uint8_t command, uint8
     remaining -= chunk;
   }
   _endTransfer();
+}
+
+inline bool GxEPD2_SOLUM_097c_960x672::_fillPlaneByPattern(uint8_t command, uint8_t value)
+{
+  // Solo i due piani immagine hanno un comando Auto Write Pattern dedicato.
+  uint8_t pattern_command;
+  if (command == 0x24) pattern_command = 0x47;
+  else if (command == 0x26) pattern_command = 0x46;
+  else return false;
+  // Il generatore emette un livello per step, quindi sa esprimere soltanto i
+  // due valori a bit uniformi: qualunque altro deve passare dal bus.
+  if (value != 0x00 && value != 0xFF) return false;
+  /** Finestra piena impostata comunque, per lasciare area e cursore nello
+   *  stesso stato in cui li lascia il percorso SPI. */
+  _setPartialRamArea(0, 0, WIDTH, HEIGHT);
+  /** A[7] = valore del primo step, A[6:4] = 111 -> step height 680,
+   *  A[2:0] = 111 -> step width 960: un unico step copre tutta la RAM nativa.
+   *  Il pattern ignora la finestra di 0x44/0x45 e riempie tutti i 960x680;
+   *  le 8 gate line oltre la 672 non vengono mai scandite (MUX 671). */
+  _writeCommand(pattern_command);
+  _writeData(value ? 0xF7 : 0x77);
+  // Il controller alza BUSY per tutta la generazione del pattern.
+  _waitWhileBusy("_fillPlaneByPattern", 50);
+  return true;
 }
 
 // Scrive una bitmap B/W sul canale nero (0x24) lasciando gli accent puliti.
@@ -857,6 +909,9 @@ inline void GxEPD2_SOLUM_097c_960x672::writeImageRed(const uint8_t* bitmap,
   _color_dirty = true;
 }
 
+/** Canale giallo mai verificato sul pannello: nel datasheet SSD1677 Rev 1.0 la
+ *  posizione 0x28 è VCOM Sense e non un piano immagine. Vedi la nota in cima
+ *  al file; l'esito lo dà color_test. */
 inline void GxEPD2_SOLUM_097c_960x672::writeImageYellow(const uint8_t* bitmap,
     int16_t x, int16_t y, int16_t w, int16_t h, bool pgm)
 {
@@ -868,10 +923,11 @@ inline void GxEPD2_SOLUM_097c_960x672::writeImageYellow(const uint8_t* bitmap,
 // ---------------------------------------------------------------------------
 // Pulizia selettiva di un canale accent.
 //
-// SSD1677 RAM polarity (datasheet Rev 0.4, tabella Set RAM X/Y):
-//   cmd 0x24 BW plane:    bit=1 -> pixel white,        bit=0 -> pixel black
-//   cmd 0x26 RED accent:  bit=1 -> red ON,             bit=0 -> no red
-//   cmd 0x28 YEL accent:  bit=1 -> yellow ON,          bit=0 -> no yellow
+// SSD1677 RAM polarity (datasheet Rev 1.0, tabella comandi, verbatim):
+//   cmd 0x24 Write RAM (Black White): bit=1 -> pixel white, bit=0 -> black
+//   cmd 0x26 Write RAM (RED):         bit=1 -> red, bit=0 -> non-red
+//   cmd 0x28 nel datasheet è VCOM Sense e non un piano: il cleanup su 0x28
+//            pulisce una RAM solo se il modulo ne ha davvero una lì.
 //
 // Le bitmap in input alle API writeImage* adottano convenzione inversa
 // (bit=1 = NOT color) per comodità visiva e compatibilità con il formato

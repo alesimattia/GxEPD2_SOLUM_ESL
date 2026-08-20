@@ -16,8 +16,10 @@ Jean-Marc Zingg, fornendo:
   paged con yellow iniettato "out-of-band" (vedi [sezione dedicata](#3-perchè-il-yellow-è-out-of-band-nel-flusso-paged));
 - **sistema di descrittori universali** (`GxEPDImage::Descriptor`) che
   porta con sè formato e dimensioni dell'immagine (BW / BWR / BWRY);
-- **supporto nativo al 4° colore** (giallo) sul comando `0x28` del
-  controller SSD1677 — verificato su hardware.
+- **API per il 4° colore** (giallo) sul comando `0x28` del controller
+  SSD1677. Che `0x28` sia davvero il piano giallo di questo pannello resta un
+  assunto **non confermato**: vedi
+  [§0.10](#010-il-4-colore-non-appare-questione-aperta).
 
 Per un esempio d'uso completo (sketch, moduli Weather/Calendar, flussi di
 boot, OTA) vedi il progetto che la consuma:
@@ -85,7 +87,7 @@ submodule), l'include diventa relativo al path del submodule:
 
 ## 0. Il pannello SOLUM 9.7"
 
-Caratteristiche del pannello ricavate dai cataloghi SOLUM in [DOCS/ di ePaper-weather-dashboard](https://github.com/alesimattia/ePaper-weather-dashboard/tree/main/DOCS)
+Caratteristiche del pannello ricavate dai cataloghi SOLUM in [`docs/`](docs/)
 (`Newton-Pro_Specifications.pdf`, `Newton-Core_Specifications.pdf`), dallo
 schematico `E-Paper_ESP32_Driver_Board_V3.pdf` della board Waveshare e dalle
 verifiche su hardware. Spiegano il perchè di diverse scelte del driver, quindi
@@ -98,16 +100,25 @@ e involucro diversi:
 
 | Linea | Codice modello | Colori | Modulo ESL | Segni distintivi |
 |---|---|---|---|---|
-| Newton Pro gen. F5 | `EL097F5C4C/WWW` (cornice grigia), `EL097F5W4C/WWW` (bianca), `EL097F5B4C/WWW` (nera) | BWRY | 168,05 × 224,07 × 14,81 mm | nessun grado IP, nessun pulsante |
-| Newton Pro gen. F6 | `EL097F6W4A/WWW` (bianca), `EL097F6B4A/WWW` (nera) | BWRY | 170,2 × 223,6 × 14,85 mm | IP68, 1 pulsante, LED 7 colori |
-| Newton Core | modello TBD nel catalogo | **BWR** (3 colori); BW / BWR / BWRY nella variante "Core 4COLOR" | 167,65 × 220,04 × 13,80 mm | nessun grado IP, nessun pulsante |
+| Newton Pro gen. F5 | `EL097F5C4C/WWW` (cornice grigia), `EL097F5W4C/WWW` (bianca), `EL097F5B4C/WWW` (nera) | BWRY | 168,05 × 224,07 × 14,81 mm | nessun grado IP, **nessun pulsante**, LED 7 colori |
+| Newton Pro gen. F6 | `EL097F6W4A/WWW` (bianca), `EL097F6B4A/WWW` (nera); cornice dichiarata anche grigia o personalizzata | BWRY | 170,2 × 223,6 × 14,85 mm | **IP68**, **1 pulsante**, LED 7 colori |
+| Newton Core | modello TBD nel catalogo | **BWR** (3 colori); BW / BWR / BWRY nella variante "Core 4COLOR" | 167,65 × 220,04 × 13,80 mm | cornice solo bianca o nera, nessun grado IP, nessun pulsante |
 
 Decodifica del codice: `EL` + `097` (pollici) + `F5`/`F6` (generazione) +
 `C`/`W`/`B` (colore cornice) + `4C`/`4A` (revisione).
 
-Il pannello pilotato da questo driver scrive davvero sul piano `0x28`, quindi
-**non** è un Newton Core base BWR: è un Pro F5/F6 oppure un Core 4COLOR. Il
-donor si riconosce anche dall'esterno: se l'ESL aveva pulsante e LED è un F6.
+Il donor di questo progetto è un **Pro gen. F5**: cornice grigia, nessun
+pulsante e nessun grado IP, cioè i due tratti che il F6 ha e il F5 no. La cornice
+da sola non basta a distinguerli, perchè il catalogo la dichiara grigia su
+entrambi, ma esclude il Core, offerto solo in bianco o nero. Nemmeno il LED a 7
+colori discrimina: c'è su tutti e due i Pro.
+
+Il codice modello **non garantisce il film a 4 colori**, perchè il set colori è
+un'opzione di build dello stesso modulo: la pagina Newton Core 4COLOR 9.7"
+dichiara `BW / BWR / BWRY` e la tabella di famiglia del Newton Pro (formati
+1.6"–11.6") dichiara `BW / BWR / BWY`. Lo stesso 672 × 960 viene quindi prodotto
+con due, uno o nessun colore d'accento, e solo una prova sul pannello dice quale
+si ha in mano: vedi [§0.10](#010-il-4-colore-non-appare-questione-aperta).
 
 ### 0.2 Geometria e densità
 
@@ -238,8 +249,8 @@ non è una lacuna di questo driver: **nessuno** dei 36 pannelli a 3 e 4 colori
 presenti in `epd3c/`, `epd4c/`, `gdem3c/`, `gdey3c/` di GxEPD2 ha il fast
 partial. La ragione è strutturale: il partial veloce di SSD1677 è
 **differenziale** e usa la RAM `0x26` come buffer "previous", mentre qui `0x26`
-è il piano rosso e `0x28` il giallo — la RAM che servirebbe per il differenziale
-è occupata dai colori. Il fratello monocromatico con lo stesso controller
+è il piano rosso — la RAM che servirebbe per il differenziale è occupata dal
+colore. Il fratello monocromatico con lo stesso controller
 ([`GxEPD2_1330_GDEM133T91`](https://github.com/ZinggJM/GxEPD2/blob/1.6.9/src/gdem/GxEPD2_1330_GDEM133T91.h),
 960 × 680) fa 4.500 ms full e **600 ms** partial proprio perchè quella RAM è
 libera.
@@ -259,11 +270,55 @@ elettrico e di timing viene quindi dal datasheet SSD1677 di Solomon Systech più
 le verifiche su hardware.
 
 E il datasheet SSD1677 va preso con le pinze proprio sui piani colore: **il
-codice `0x28` non è documentato come piano accent** (risulta come VCOM Sense).
-Che qui piloti il giallo — verificato su hardware — significa che il silicio o
-l'OTP del modulo SOLUM sono una variante custom. Di conseguenza il datasheet
-Solomon non è autorevole nè su quante DISPLAY Mode l'OTP contenga nè su come sia
-strutturata la LUT a 4 colori.
+codice `0x28` non è documentato come piano accent**, risulta come VCOM Sense,
+comando senza parametri. Il datasheet Solomon non è comunque autorevole su questo
+silicio, che può essere una variante custom con OTP proprio: non dice quante
+DISPLAY Mode l'OTP contenga nè come sarebbe strutturata una LUT a 4 colori. Vedi
+[§0.10](#010-il-4-colore-non-appare-questione-aperta).
+
+### 0.10 Il 4° colore non appare: questione aperta
+
+Sul pannello non compare nessun pixel giallo, nè dai descrittori BWRY di
+`showImage` nè da `writeImageYellow` chiamata a mano. Non compaiono nemmeno
+artefatti: il resto del frame è corretto, bianco nero e rosso inclusi.
+
+Che `0x28` sia il piano giallo è un **assunto**, non un fatto verificato:
+
+- nel datasheet pubblico SSD1677 `0x28` è VCOM Sense, un comando senza
+  parametri: i byte che seguono con D/C alto vengono scartati;
+- **nessun driver di GxEPD2 1.6.9 usa `0x28` come piano immagine**; gli unici
+  match del codice in `src/` sono dati di bitmap.
+
+L'ipotesi alternativa più solida è che il 4° colore stia nella **combinazione a
+2 bit dei due piani già esistenti**. Quello che la catena produce oggi, dato che
+`drawPixel` di `GxEPD2_3C` scrive bit=1 = "non questo colore" e il driver manda
+`0x24` senza invert e `0x26` con invert:
+
+| colore | `0x24` | `0x26` |
+|---|---|---|
+| bianco | 1 | 0 |
+| nero | 0 | 0 |
+| rosso | 1 | 1 |
+| — | 0 | 1 |
+
+La quarta combinazione **non viene mai generata**. Su silicio BWR il rosso vince
+a prescindere dal bit BW, quindi lì sarebbe rosso; su una variante a 4 colori è
+invece il code point naturale del giallo.
+
+Il controller non è interrogabile: sul FPC a 24 pin non esiste una linea SDO, il
+pin 12 è SDI e basta (vedi
+[§0.6](#06-interfaccia-elettrica-dallo-schematico-waveshare-v3)), quindi `0x27`
+read RAM, `0x2E` User ID read e `0x2F` status sono inutilizzabili. L'unica
+diagnostica possibile è scrivere un pattern e guardare il pannello: lo fa
+[`examples/color_test`](examples/color_test/color_test.ino), che vive in questa
+libreria perchè serve a costruire il driver, non il progetto consumer. Stampa in
+un solo refresh le quattro combinazioni della tabella su bande orizzontali
+numerate, più una fascia di controllo con `0x28 = 0xFF`, poi ripete il refresh in
+DISPLAY Mode 2 e chiude sul seriale con una scheda di osservazione che mappa ogni
+esito visibile sulla conseguenza per il driver.
+
+Finchè la questione è aperta, quello che questo README dice sul piano `0x28`
+descrive **come il driver è scritto**, non un comportamento osservato.
 
 ---
 
@@ -484,11 +539,13 @@ else if ((color == GxEPD_RED) || (color == GxEPD_YELLOW))
 `GxEPD_YELLOW` viene **trattato come `GxEPD_RED`** — la libreria non
 distingue. Il pixel "giallo" finisce sul piano rosso del controller
 (`0x26`) e MAI sul piano giallo (`0x28`). Questo è invisibile su pannelli
-3-colori (B+W+R), ma su SOLUM 4-colori si traduce in un pixel rosso al
-posto del giallo atteso.
+3-colori (B+W+R), mentre su un pannello a 4 colori si tradurrebbe in un
+pixel rosso al posto del giallo atteso.
 
-Per pilotare davvero il piano `0x28` ci sono due strade, entrambe già
-incapsulate nel driver custom:
+Per scrivere il piano `0x28` ci sono due strade, entrambe già
+incapsulate nel driver custom — con l'avvertenza di
+[§0.10](#010-il-4-colore-non-appare-questione-aperta), che sul pannello
+quelle scritture non producono giallo:
 
 1. **`GxEPDImage::showImage(display, descriptor)`** con descrittore
    `FORMAT_BWRY_1BPP` — il giallo viene iniettato direttamente sul
@@ -542,7 +599,7 @@ adottati negli altri driver moderni della libreria.
 
 | Aspetto | GDEM133Z91 base | Driver custom SOLUM | Stato |
 |---|---|---|---|
-| Init RAM 3 piani (B/R/Y) | solo B+R (0x24, 0x26) | B+R+Y (0x24, 0x26, 0x28) | ✓ migliore |
+| Init RAM 3 piani (B/R/Y) | solo B+R (0x24, 0x26) | B+R+Y (0x24, 0x26, 0x28) | ≈ effetto di 0x28 da confermare, vedi [§0.10](#010-il-4-colore-non-appare-questione-aperta) |
 | `delay(1)` ESP8266 WDT in hot path | presente in `_writeImage`/`_writeImagePart` | rimosso (target ESP32, task WDT 5 s) | ✓ migliore |
 | Delay dopo SWRESET | 10 ms (sotto-stimato) | 200 ms (datasheet SSD1677 ~100-300 ms) | ✓ migliore |
 | Entry-mode `0x11` | inviato a ogni `_setPartialRamArea` | inviato 1 volta in `_InitDisplay` | ✓ migliore |
@@ -550,7 +607,7 @@ adottati negli altri driver moderni della libreria.
 | Polarity cleanup accent | n/a | `0x00` esplicito (= accent spento, polarity nativa) | ✓ corretto vs. bug latente `0xFF` |
 | `hibernate()` guard idempotente | scrive 0x10 sempre, anche su re-entry | early return se già `_hibernating` | ✓ migliore |
 | `_init_display_done` reset on hibernate | sì | sì | = parità |
-| 4° canale (yellow `0x28`) | non gestito | API single-channel + `preserveYellow` | ✓ unica via possibile |
+| 4° canale (yellow `0x28`) | non gestito | API single-channel + `preserveYellow` | ≈ API presente, sul pannello non produce giallo, vedi [§0.10](#010-il-4-colore-non-appare-questione-aperta) |
 | Cleanup accent in `writeImage(bitmap, ...)` BW | non fa | sì (entrambi 0x26 e 0x28 dirty-checked) | ✓ migliore |
 | Cleanup accent in `writeImagePart(bitmap, ...)` BW | non fa | sì (allineato a `writeImage` per simmetria) | ✓ migliore |
 | Reset `_preserve_yellow` post-refresh | n/a | centralizzato in `_Update_Full()` | ✓ corretto |
