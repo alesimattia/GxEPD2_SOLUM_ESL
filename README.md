@@ -79,7 +79,7 @@ Requisiti: target **ESP32** — il driver usa `SPIClass::writeBytes` e ha i
 
 Se preferisci non installarla e tenerla dentro il progetto che la usa (come
 submodule), l'include diventa relativo al path del submodule:
-`#include "GxEPD2_SOLUM_097c_960x672/src/GxEPD2_SOLUM_097c_960x672.h"`.
+`#include "GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM_097c_960x672.h"`.
 
 ---
 
@@ -643,8 +643,9 @@ modificata di
 di Jean-Marc Zingg, di cui eredita sequenza di init, write RAM e refresh, ed
 è quindi codice derivato da una libreria GPL-3.0.
 
-Questo repo è un fork di [ZinggJM/GxEPD2](https://github.com/ZinggJM/GxEPD2):
-il branch `master` conserva l'albero upstream alla **1.6.9** (`de82887`), il
-branch `main` contiene questa libreria. I riferimenti ai sorgenti upstream in
-questa doc puntano al tag 1.6.9, non a `master`, così le righe citate restano
-valide anche quando upstream avanza.
+Questo repo è un **fork** di [ZinggJM/GxEPD2](https://github.com/ZinggJM/GxEPD2)
+— la derivazione è registrata da GitHub — ma non ne duplica l'albero: contiene
+solo questa libreria. I riferimenti ai sorgenti upstream in questa doc puntano
+al **tag 1.6.9**, la versione su cui il driver è stato scritto e verificato,
+non a `master`: così le righe citate restano valide anche quando upstream
+avanza.
