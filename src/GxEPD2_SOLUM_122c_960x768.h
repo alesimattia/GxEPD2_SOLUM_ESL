@@ -15,13 +15,13 @@
 //   - Risoluzione: 960x768 (datasheet PDF Newton-Core_Specifications.pdf).
 //   - Colori: 3 colori nativi (bianco / nero / rosso). Niente giallo,
 //     a differenza del driver SOLUM 9.7" del progetto.
-//   - Connettivita': 2 cavi FFC da 21 pin -> assumption "dual-controller
+//   - Connettività: 2 cavi FFC da 21 pin -> assumption "dual-controller
 //     master/slave" coerente con il pattern del 1248c.
 //   - Refresh: solo full refresh (~25 s), niente fast partial update.
 //
 // !!! ASSUMPTION CONTROLLER (TODO[VERIFY] al bring-up):
-//   Il datasheet Newton-Core e' marketing-only e NON dichiara il controller
-//   IC. La scelta UC8179 e' motivata da:
+//   Il datasheet Newton-Core è marketing-only e NON dichiara il controller
+//   IC. La scelta UC8179 è motivata da:
 //     - 2 FFC da 21 pin = pattern dual-controller (coerente con 1248c).
 //     - 12.2" ~ 12.48" (1248c) per dimensione fisica.
 //   Piano B: se al bring-up il pannello non risponde con la sequenza UC8179,
@@ -36,7 +36,7 @@
 //   Assumption iniziale: split verticale, master = colonne 0..479
 //   (sinistra), slave = colonne 480..959 (destra). Coerente con il pattern
 //   del 1248c che mette M1/M2 a sinistra e S1/S2 a destra.
-//   Se al bring-up solo meta' del display si aggiorna o ci sono artefatti
+//   Se al bring-up solo metà del display si aggiorna o ci sono artefatti
 //   sulla giunzione, valutare:
 //     - split orizzontale: master = righe 0..383 (alto), slave = 384..767;
 //     - swap master <-> slave: cs_m e cs_s scambiati a livello hardware;
@@ -47,8 +47,8 @@
 //   - HW SPI (HSPI su ESP32 tramite la Waveshare E-Paper ESP32 Driver Board
 //     o cablaggio equivalente).
 //   - Target ESP32 (Arduino core): le ottimizzazioni bulk-SPI usano
-//     SPI.writeBytes() che e' specifica ESP32.
-//   - Adafruit_GFX opzionale (se ENABLE_GxEPD2_GFX=0 il footprint e' minore).
+//     SPI.writeBytes() che è specifica ESP32.
+//   - Adafruit_GFX opzionale (se ENABLE_GxEPD2_GFX=0 il footprint è minore).
 //
 // Aggiunte custom rispetto alla base GxEPD2 (riprese dal driver SOLUM 9.7"):
 //   - GxEPDImage::showImage(display, descriptor) come UNICO entry-point
@@ -81,12 +81,13 @@
 //   UC8179. Finchè quella misura non c'è, questo file va letto come una
 //   proposta di init, non come un driver funzionante.
 //
-// LIMITAZIONE NOTA — selectSPI() ignorato:
-//   tutte le primitive di bus di questo driver usano l'oggetto SPI globale a
-//   20 MHz invece di _pSPIx / _spi_settings della base GxEPD2_EPD. Un
-//   selectSPI(hspi, ...) dello sketch non ha effetto qui: il bus va
-//   configurato con SPI.begin() sui pin giusti prima di init(). Divergenza
-//   dal driver 9.7", che invece rispetta selectSPI().
+// BUS SPI:
+//   le primitive di bus passano da _pSPIx / _spi_settings della base
+//   GxEPD2_EPD, comprese quelle delle ScreenPart, che ne tengono un
+//   riferimento. Il default che i costruttori impostano è l'oggetto SPI
+//   globale a 20 MHz, cioè quello che il driver usava da sempre; uno
+//   selectSPI(hspi, SPISettings(...)) dello sketch lo sostituisce, come sul
+//   driver 9.7". Va chiamato prima di init(), perchè è init() che apre il bus.
 //
 // Author: Mattia Alesi
 // =============================================================================
@@ -102,6 +103,9 @@
 // descrittore e le no-op del giallo dichiarate da questa classe.
 #include "GxEPDImage.h"
 
+// Pinout uniforme fra i driver della libreria.
+#include "GxEPD2_SOLUM_Pins.h"
+
 // ===========================================================================
 // Classe driver.
 // ===========================================================================
@@ -113,8 +117,8 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
     static const uint16_t WIDTH_VISIBLE = WIDTH;
     static const uint16_t HEIGHT = 768;
     // Riuso GDEY1248Z51 come Panel enum (stesso pattern del driver 9.7" che
-    // riusa GDEM133Z91): evita la modifica invasiva di GxEPD2.h. La scelta e'
-    // motivata dal fatto che 1248c e' la base strutturale di questo driver.
+    // riusa GDEM133Z91): evita la modifica invasiva di GxEPD2.h. La scelta è
+    // motivata dal fatto che 1248c è la base strutturale di questo driver.
     static const GxEPD2::Panel panel = GxEPD2::GDEY1248Z51;
     static const bool hasColor = true;
     static const bool hasPartialUpdate = true; // partial window addressing, full window refresh
@@ -124,7 +128,7 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
     static const uint16_t full_refresh_time = 25000; // ms, conservativo per 12.2"
     static const uint16_t partial_refresh_time = 25000;
 
-    // Split master/slave (TODO[VERIFY]): meta' larghezza per ogni controller,
+    // Split master/slave (TODO[VERIFY]): metà larghezza per ogni controller,
     // altezza piena. Coerente con il pattern del 1248c (M = sinistra,
     // S = destra). Le costanti sono usate sia dalla classe outer per dispatch
     // delle scritture sia dalle ScreenPart per l'addressing locale.
@@ -147,6 +151,15 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
     // Costruttore "compat single-CS" per bring-up con un solo controller cablato
     // (il secondo CS viene passato come -1, le scritture vanno solo al master).
     GxEPD2_SOLUM_122c_960x768(int16_t cs, int16_t dc, int16_t rst, int16_t busy);
+    /**
+     * Costruttore a pinout uniforme: accetta la struct comune ai driver della
+     * libreria. Legge cs2 e busy2 per il secondo controller e sck/miso/mosi
+     * per il bus, che questo driver apre da sè; i campi a -1 valgono
+     * "assente", quindi lo stesso pinout con cs2 = -1 dà il bring-up
+     * single-CS. È la firma che permette a uno sketch di cambiare pannello
+     * senza riscrivere la riga di costruzione del display.
+     */
+    explicit GxEPD2_SOLUM_122c_960x768(const GxEPD2_SOLUM_Pins& pins);
 
     // ----- API pubbliche (pattern GxEPD2 standard, BWR-only) -----
     // Override di init(): il base GxEPD2_EPD::init() configura solo i pin
@@ -228,7 +241,8 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
       public:
         const uint16_t WIDTH;
         const uint16_t HEIGHT;
-        ScreenPart(uint16_t width, uint16_t height, bool rev_scan, int16_t cs, int16_t dc);
+        ScreenPart(uint16_t width, uint16_t height, bool rev_scan, int16_t cs, int16_t dc,
+                   SPIClass*& pSPIx, SPISettings& spi_settings);
         void writeScreenBuffer(uint8_t command, uint8_t value);
         void writeImagePart(uint8_t command, const uint8_t bitmap[], int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
                             int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm);
@@ -239,7 +253,10 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
         bool    _rev_scan;
         int16_t _cs;
         int16_t _dc;
-        SPISettings _spi_settings;
+        // Riferimenti allo stato SPI del driver, non copie: così un
+        // selectSPI() dello sketch vale anche per le ScreenPart.
+        SPIClass*&   _pSPIx;
+        SPISettings& _spi_settings;
         void _setPartialRamArea(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
     };
 
@@ -302,9 +319,13 @@ inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(
   _cs_m(cs_m), _cs_s(cs_s), _dc_pin(dc), _rst_pin(rst),
   _busy_m(busy_m), _busy_s(busy_s),
   _temperature(20),
-  M(M_WIDTH, PART_HEIGHT, false, cs_m, dc),
-  S(S_WIDTH, PART_HEIGHT, true,  cs_s, dc)
+  M(M_WIDTH, PART_HEIGHT, false, cs_m, dc, _pSPIx, _spi_settings),
+  S(S_WIDTH, PART_HEIGHT, true,  cs_s, dc, _pSPIx, _spi_settings)
 {
+  // Default storico di questo driver: SPI globale a 20 MHz. Passa dai membri
+  // della base invece di essere cablato nelle primitive, così un selectSPI()
+  // dello sketch lo sostituisce.
+  selectSPI(SPI, SPISettings(20000000, MSBFIRST, SPI_MODE0));
 }
 #endif
 
@@ -317,23 +338,51 @@ inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(
   _cs_m(cs_m), _cs_s(cs_s), _dc_pin(dc), _rst_pin(rst),
   _busy_m(busy_m), _busy_s(busy_s),
   _temperature(20),
-  M(M_WIDTH, PART_HEIGHT, false, cs_m, dc),
-  S(S_WIDTH, PART_HEIGHT, true,  cs_s, dc)
+  M(M_WIDTH, PART_HEIGHT, false, cs_m, dc, _pSPIx, _spi_settings),
+  S(S_WIDTH, PART_HEIGHT, true,  cs_s, dc, _pSPIx, _spi_settings)
 {
+  // Default storico di questo driver: SPI globale a 20 MHz. Passa dai membri
+  // della base invece di essere cablato nelle primitive, così un selectSPI()
+  // dello sketch lo sostituisce.
+  selectSPI(SPI, SPISettings(20000000, MSBFIRST, SPI_MODE0));
 }
 
 // Variante single-CS: utile per bring-up con un solo controller cablato
 // fisicamente. Lo slave riceve cs=-1, quindi le scritture verso S sono no-op.
-// Mezzo display non aggiornera' (probabilmente meta' destra) ma il bring-up
-// del master si puo' validare in isolamento.
+// Mezzo display non aggiornerà (probabilmente metà destra) ma il bring-up
+// del master si può validare in isolamento.
 inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(int16_t cs, int16_t dc, int16_t rst, int16_t busy) :
   GxEPD2_EPD(cs, dc, rst, busy, LOW, 30000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
   _sck(SCK), _miso(MISO), _mosi(MOSI),
   _cs_m(cs), _cs_s(-1), _dc_pin(dc), _rst_pin(rst),
   _busy_m(busy), _busy_s(-1),
   _temperature(20),
-  M(M_WIDTH, PART_HEIGHT, false, cs, dc),
-  S(S_WIDTH, PART_HEIGHT, true,  -1, dc)
+  M(M_WIDTH, PART_HEIGHT, false, cs, dc, _pSPIx, _spi_settings),
+  S(S_WIDTH, PART_HEIGHT, true,  -1, dc, _pSPIx, _spi_settings)
+{
+  // Default storico di questo driver: SPI globale a 20 MHz. Passa dai membri
+  // della base invece di essere cablato nelle primitive, così un selectSPI()
+  // dello sketch lo sostituisce.
+  selectSPI(SPI, SPISettings(20000000, MSBFIRST, SPI_MODE0));
+}
+
+/**
+ * Delega al costruttore che corrisponde al pinout ricevuto. I pin del bus a
+ * -1 significano "quelli di default della board"; cs2 a -1 dà il bring-up
+ * single-CS, con la metà slave del pannello non pilotata.
+ */
+inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(const GxEPD2_SOLUM_Pins& pins) :
+#if defined(ESP32)
+  GxEPD2_SOLUM_122c_960x768(pins.sck  >= 0 ? pins.sck  : int16_t(SCK),
+                            pins.miso >= 0 ? pins.miso : int16_t(MISO),
+                            pins.mosi >= 0 ? pins.mosi : int16_t(MOSI),
+                            pins.cs, pins.cs2,
+                            pins.dc, pins.rst,
+                            pins.busy, pins.busy2)
+#else
+  GxEPD2_SOLUM_122c_960x768(pins.cs, pins.cs2, pins.dc, pins.rst,
+                            pins.busy, pins.busy2)
+#endif
 {
 }
 
@@ -380,7 +429,7 @@ inline void GxEPD2_SOLUM_122c_960x768::_writeScreenBuffer(uint8_t command, uint8
   if (S.isActive()) S.writeScreenBuffer(command, value);
 }
 
-// HOT PATH: chiamato dal template GxEPD2_3C in modalita' BW (paged).
+// HOT PATH: chiamato dal template GxEPD2_3C in modalità BW (paged).
 // Pulisce il canale rosso se dirty e poi scrive il piano BW.
 inline void GxEPD2_SOLUM_122c_960x768::writeImage(const uint8_t bitmap[], int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
@@ -418,10 +467,10 @@ inline void GxEPD2_SOLUM_122c_960x768::_writeImagePart(uint8_t command, const ui
     S.writeImagePart(command, bitmap, x_part, y_part, w_bitmap, h_bitmap, x - int16_t(M.WIDTH), y, w, h, invert, mirror_y, pgm);
 }
 
-// HOT PATH (paged full-window): GxEPD2_3C::nextPage() in modalita' full-window
+// HOT PATH (paged full-window): GxEPD2_3C::nextPage() in modalità full-window
 // chiama questa overload una volta per page. Avanza il page-hint dopo aver
-// scritto la page corrente sul controller, cosi' GxEPDImage::showImage
-// nella prossima iterazione skippa le righe gia' scritte.
+// scritto la page corrente sul controller, così GxEPDImage::showImage
+// nella prossima iterazione skippa le righe già scritte.
 inline void GxEPD2_SOLUM_122c_960x768::writeImage(const uint8_t* black, const uint8_t* color, int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
   if (black) _writeImage(0x10, black, x, y, w, h, invert, mirror_y, pgm);
@@ -555,7 +604,7 @@ inline void GxEPD2_SOLUM_122c_960x768::_resetDual()
 
 // Override di init(): pattern 1248c. Configura pinMode di tutti i pin
 // (master + slave) e poi avvia SPI con i pin custom se ESP32 lo richiede.
-// NON chiama GxEPD2_EPD::init() base, perche' il base assume single-CS.
+// NON chiama GxEPD2_EPD::init() base, perchè il base assume single-CS.
 inline void GxEPD2_SOLUM_122c_960x768::init(uint32_t serial_diag_bitrate)
 {
   init(serial_diag_bitrate, true, 20, false);
@@ -576,22 +625,31 @@ inline void GxEPD2_SOLUM_122c_960x768::init(uint32_t serial_diag_bitrate, bool i
     Serial.begin(serial_diag_bitrate);
     _diag_enabled = true;
   }
-  // Pin master + slave.
-  pinMode(_cs_m, OUTPUT);
-  digitalWrite(_cs_m, HIGH);
+  // Pin master + slave. Ogni pin è guardato da >= 0 come fa
+  // GxEPD2_EPD::init() della base: -1 significa assente e non deve arrivare a
+  // pinMode(). È il valore che GxEPD2_SOLUM_Pins usa per i campi non
+  // valorizzati, quindi è raggiungibile dal costruttore a pinout uniforme.
+  if (_cs_m >= 0)
+  {
+    pinMode(_cs_m, OUTPUT);
+    digitalWrite(_cs_m, HIGH);
+  }
   if (_cs_s >= 0)
   {
     pinMode(_cs_s, OUTPUT);
     digitalWrite(_cs_s, HIGH);
   }
-  pinMode(_dc_pin, OUTPUT);
-  digitalWrite(_dc_pin, HIGH);
+  if (_dc_pin >= 0)
+  {
+    pinMode(_dc_pin, OUTPUT);
+    digitalWrite(_dc_pin, HIGH);
+  }
   if (_rst_pin >= 0)
   {
     pinMode(_rst_pin, OUTPUT);
     digitalWrite(_rst_pin, HIGH);
   }
-  pinMode(_busy_m, INPUT);
+  if (_busy_m >= 0) pinMode(_busy_m, INPUT);
   if (_busy_s >= 0) pinMode(_busy_s, INPUT);
   _initSPI();
   _resetDual();
@@ -602,12 +660,12 @@ inline void GxEPD2_SOLUM_122c_960x768::_initSPI()
 #if defined(ESP32)
   if ((SCK != _sck) || (MISO != _miso) || (MOSI != _mosi))
   {
-    SPI.end();
-    SPI.begin(_sck, _miso, _mosi, _cs_m);
+    _pSPIx->end();
+    _pSPIx->begin(_sck, _miso, _mosi, _cs_m);
   }
-  else SPI.begin();
+  else _pSPIx->begin();
 #else
-  SPI.begin();
+  _pSPIx->begin();
 #endif
 }
 
@@ -638,8 +696,8 @@ inline void GxEPD2_SOLUM_122c_960x768::_PowerOff()
 //
 // TODO[VERIFY] al bring-up:
 //   - cmd 0x00 panel setting: M=0x0f (BWROTP normal scan), S=0x03 (BWROTP
-//     reverse scan). Speculare al pattern 1248c. Se al bring-up solo meta'
-//     del display si aggiorna o lo split e' invertito, scambiare i valori.
+//     reverse scan). Speculare al pattern 1248c. Se al bring-up solo metà
+//     del display si aggiorna o lo split è invertito, scambiare i valori.
 //   - cmd 0x61 resolution: 480x768. Il valore "768" in 2 byte BE = 0x0300.
 //   - cmd 0x06 booster soft start: valori 0x27 0x27 0x18 0x17 mantenuti
 //     dal 1248c. Se il pannello ha contrasto basso o ghosting persistente,
@@ -706,53 +764,56 @@ inline void GxEPD2_SOLUM_122c_960x768::_Update_Full()
 }
 
 // ----- Dispatch comandi master/slave (pattern 1248c semplificato) -----
+//
+// Le guardie >= 0 sui pin sono quelle di GxEPD2_EPD::_writeCommand della base:
+// -1 significa pin assente ed è un valore legale di GxEPD2_SOLUM_Pins.
 
 inline void GxEPD2_SOLUM_122c_960x768::_writeCommandMaster(uint8_t c)
 {
-  SPI.beginTransaction(SPISettings(20000000, MSBFIRST, SPI_MODE0));
-  digitalWrite(_dc_pin, LOW);
-  digitalWrite(_cs_m, LOW);
-  SPI.transfer(c);
-  digitalWrite(_cs_m, HIGH);
-  digitalWrite(_dc_pin, HIGH);
-  SPI.endTransaction();
+  _pSPIx->beginTransaction(_spi_settings);
+  if (_dc_pin >= 0) digitalWrite(_dc_pin, LOW);
+  if (_cs_m >= 0) digitalWrite(_cs_m, LOW);
+  _pSPIx->transfer(c);
+  if (_cs_m >= 0) digitalWrite(_cs_m, HIGH);
+  if (_dc_pin >= 0) digitalWrite(_dc_pin, HIGH);
+  _pSPIx->endTransaction();
 }
 
 inline void GxEPD2_SOLUM_122c_960x768::_writeDataMaster(uint8_t d)
 {
-  SPI.beginTransaction(SPISettings(20000000, MSBFIRST, SPI_MODE0));
-  digitalWrite(_cs_m, LOW);
-  SPI.transfer(d);
-  digitalWrite(_cs_m, HIGH);
-  SPI.endTransaction();
+  _pSPIx->beginTransaction(_spi_settings);
+  if (_cs_m >= 0) digitalWrite(_cs_m, LOW);
+  _pSPIx->transfer(d);
+  if (_cs_m >= 0) digitalWrite(_cs_m, HIGH);
+  _pSPIx->endTransaction();
 }
 
 inline void GxEPD2_SOLUM_122c_960x768::_writeCommandAll(uint8_t c)
 {
-  SPI.beginTransaction(SPISettings(20000000, MSBFIRST, SPI_MODE0));
-  digitalWrite(_dc_pin, LOW);
-  digitalWrite(_cs_m, LOW);
+  _pSPIx->beginTransaction(_spi_settings);
+  if (_dc_pin >= 0) digitalWrite(_dc_pin, LOW);
+  if (_cs_m >= 0) digitalWrite(_cs_m, LOW);
   if (_cs_s >= 0) digitalWrite(_cs_s, LOW);
-  SPI.transfer(c);
-  digitalWrite(_cs_m, HIGH);
+  _pSPIx->transfer(c);
+  if (_cs_m >= 0) digitalWrite(_cs_m, HIGH);
   if (_cs_s >= 0) digitalWrite(_cs_s, HIGH);
-  digitalWrite(_dc_pin, HIGH);
-  SPI.endTransaction();
+  if (_dc_pin >= 0) digitalWrite(_dc_pin, HIGH);
+  _pSPIx->endTransaction();
 }
 
 inline void GxEPD2_SOLUM_122c_960x768::_writeDataAll(uint8_t d)
 {
-  SPI.beginTransaction(SPISettings(20000000, MSBFIRST, SPI_MODE0));
-  digitalWrite(_cs_m, LOW);
+  _pSPIx->beginTransaction(_spi_settings);
+  if (_cs_m >= 0) digitalWrite(_cs_m, LOW);
   if (_cs_s >= 0) digitalWrite(_cs_s, LOW);
-  SPI.transfer(d);
-  digitalWrite(_cs_m, HIGH);
+  _pSPIx->transfer(d);
+  if (_cs_m >= 0) digitalWrite(_cs_m, HIGH);
   if (_cs_s >= 0) digitalWrite(_cs_s, HIGH);
-  SPI.endTransaction();
+  _pSPIx->endTransaction();
 }
 
 // Attende che entrambi i controller (master + slave) abbiano rilasciato il
-// pin BUSY. Pattern OR-degli-AND-negati: usciamo solo quando NON e' busy
+// pin BUSY. Pattern OR-degli-AND-negati: usciamo solo quando NON è busy
 // alcuno dei due. Se _busy_s < 0 (single-controller bring-up) ignora lo slave.
 inline void GxEPD2_SOLUM_122c_960x768::_waitWhileAnyBusy(const char* comment, uint16_t busy_time)
 {
@@ -784,9 +845,10 @@ inline void GxEPD2_SOLUM_122c_960x768::_waitWhileAnyBusy(const char* comment, ui
 // IMPLEMENTAZIONI INLINE — ScreenPart (controller singolo: master o slave)
 // =============================================================================
 
-inline GxEPD2_SOLUM_122c_960x768::ScreenPart::ScreenPart(uint16_t width, uint16_t height, bool rev_scan, int16_t cs, int16_t dc) :
+inline GxEPD2_SOLUM_122c_960x768::ScreenPart::ScreenPart(uint16_t width, uint16_t height, bool rev_scan, int16_t cs, int16_t dc,
+                                                         SPIClass*& pSPIx, SPISettings& spi_settings) :
   WIDTH(width), HEIGHT(height), _rev_scan(rev_scan), _cs(cs), _dc(dc),
-  _spi_settings(20000000, MSBFIRST, SPI_MODE0)
+  _pSPIx(pSPIx), _spi_settings(spi_settings)
 {
 }
 
@@ -801,25 +863,25 @@ inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeScreenBuffer(uint8_t com
   uint8_t buf[256];
   memset(buf, value, sizeof(buf));
   uint32_t remaining = uint32_t(WIDTH) * uint32_t(HEIGHT) / 8;
-  SPI.beginTransaction(_spi_settings);
+  _pSPIx->beginTransaction(_spi_settings);
   digitalWrite(_cs, LOW);
   while (remaining > 0)
   {
     uint32_t chunk = remaining > sizeof(buf) ? (uint32_t)sizeof(buf) : remaining;
-    SPI.writeBytes(buf, chunk);
+    _pSPIx->writeBytes(buf, chunk);
     remaining -= chunk;
   }
   digitalWrite(_cs, HIGH);
-  SPI.endTransaction();
+  _pSPIx->endTransaction();
 }
 
-// Scrittura partial della meta' di pannello pertinente a questa ScreenPart.
+// Scrittura partial della metà di pannello pertinente a questa ScreenPart.
 // Bulk-SPI per riga: buffer di max WIDTH/8 byte (60 byte per WIDTH=480),
 // flush via writeBytes una volta per riga invece di per-byte transfer().
 //
 // L'addressing usa cmd 0x91 (partial in) / 0x90 (partial window setting) /
 // 0x92 (partial out), pattern del 1248c. Il _setPartialRamArea applica
-// _rev_scan se la ScreenPart e' marked reverse (= meta' destra del display
+// _rev_scan se la ScreenPart è marked reverse (= metà destra del display
 // con scan invertito).
 inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeImagePart(uint8_t command, const uint8_t bitmap[],
     int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
@@ -851,7 +913,7 @@ inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeImagePart(uint8_t comman
 
   const int16_t rowBytes = w1 / 8;
   uint8_t rowBuf[64]; // max WIDTH/8 = 480/8 = 60
-  SPI.beginTransaction(_spi_settings);
+  _pSPIx->beginTransaction(_spi_settings);
   digitalWrite(_cs, LOW);
   for (int16_t i = 0; i < h1; i++)
   {
@@ -873,10 +935,10 @@ inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeImagePart(uint8_t comman
       if (invert) data = ~data;
       rowBuf[j] = data;
     }
-    SPI.writeBytes(rowBuf, rowBytes);
+    _pSPIx->writeBytes(rowBuf, rowBytes);
   }
   digitalWrite(_cs, HIGH);
-  SPI.endTransaction();
+  _pSPIx->endTransaction();
 
   writeCommand(0x92); // partial out
 }
@@ -884,27 +946,27 @@ inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeImagePart(uint8_t comman
 inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeCommand(uint8_t c)
 {
   if (_cs < 0) return;
-  SPI.beginTransaction(_spi_settings);
+  _pSPIx->beginTransaction(_spi_settings);
   if (_dc >= 0) digitalWrite(_dc, LOW);
   digitalWrite(_cs, LOW);
-  SPI.transfer(c);
+  _pSPIx->transfer(c);
   digitalWrite(_cs, HIGH);
   if (_dc >= 0) digitalWrite(_dc, HIGH);
-  SPI.endTransaction();
+  _pSPIx->endTransaction();
 }
 
 inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeData(uint8_t d)
 {
   if (_cs < 0) return;
-  SPI.beginTransaction(_spi_settings);
+  _pSPIx->beginTransaction(_spi_settings);
   digitalWrite(_cs, LOW);
-  SPI.transfer(d);
+  _pSPIx->transfer(d);
   digitalWrite(_cs, HIGH);
-  SPI.endTransaction();
+  _pSPIx->endTransaction();
 }
 
 // Imposta la finestra parziale RAM del controller (cmd 0x90, UC8179).
-// Se _rev_scan e' true (slave / meta' destra del pannello fisico), riflette
+// Se _rev_scan è true (slave / metà destra del pannello fisico), riflette
 // X attorno al centro della ScreenPart per allineare l'addressing alla
 // numerazione fisica delle source line invertite.
 inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::_setPartialRamArea(uint16_t x, uint16_t y, uint16_t w, uint16_t h)

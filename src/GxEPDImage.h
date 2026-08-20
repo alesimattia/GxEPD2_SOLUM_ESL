@@ -7,10 +7,34 @@
 // nella stessa translation unit sarebbe un errore di compilazione.
 //
 // Il template showImage() è indipendente dal silicio: parla solo con l'API
-// pubblica del driver (drawPixel del template GxEPD2_3C, showImagePageHint(),
-// writeImageYellow(), preserveYellow()). Un driver a 3 colori dichiara le
-// due primitive del giallo come no-op e il ramo FORMAT_BWRY_1BPP non scatta
-// mai, perchè è guardato dal formato del descrittore.
+// pubblica del driver e con quella del template GxEPD2_3C che lo avvolge.
+//
+// API RICHIESTA A UN DRIVER DI QUESTA LIBRERIA
+//   Chi aggiunge un driver deve implementarla tutta, anche quando una parte
+//   non ha senso sul suo pannello: showImage() è un template unico e non ha
+//   rami condizionali per driver. Sono cinque metodi pubblici:
+//
+//     void    setPaged() override      reset del page-hint. Il virtual della
+//                                      base viene chiamato da firstPage().
+//     int16_t showImagePageHint()      page corrente dedotta dal contatore.
+//                                      Il template GxEPD2_3C tiene
+//                                      _current_page privato senza getter,
+//                                      quindi il driver mantiene un contatore
+//                                      parallelo: azzerato in setPaged() e in
+//                                      _Update_Full(), avanzato in
+//                                      writeImage(black, color, ...).
+//     void    writeImageYellow(...)    terzo piano. No-op su un pannello che
+//                                      non ce l'ha.
+//     void    preserveYellow(bool)     protezione del terzo piano durante il
+//                                      loop paged. No-op come sopra.
+//     bool    isYellowPreserved()      stato del flag. true costante come sopra.
+//
+//   Un driver a due piani dichiara le tre primitive del giallo come no-op: il
+//   ramo FORMAT_BWRY_1BPP non scatta mai su di lui, perchè è guardato dal
+//   formato del descrittore, non dal tipo del driver.
+//
+//   Il pinout invece non passa da qui: è la struct uniforme di
+//   GxEPD2_SOLUM_Pins.h, che ogni driver accetta nel costruttore.
 // =============================================================================
 
 #ifndef _GxEPDImage_H_

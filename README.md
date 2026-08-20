@@ -13,8 +13,126 @@ Il namespace `GxEPDImage` (descrittori immagine e `showImage()`) sta in
 [`src/GxEPDImage.h`](src/GxEPDImage.h) e lo condividono tutti i driver: due
 header driver possono coesistere nella stessa translation unit.
 
-Il resto di questo documento riguarda il **9.7"**; per il 12.2" vedi
+Le prime sezioni valgono per la libreria; da [Il driver 9.7"](#il-driver-97)
+in poi il documento riguarda quel pannello. Per il 12.2" vedi
 [README_122c.md](README_122c.md).
+
+---
+
+## Indice
+
+- [Installazione](#installazione)
+- [Selezione del driver](#selezione-del-driver)
+- [Aggiungere un driver alla libreria](#aggiungere-un-driver-alla-libreria)
+- [Il driver 9.7"](#il-driver-97)
+- [0. Il pannello SOLUM 9.7"](#0-il-pannello-solum-97)
+- [Origine](#origine)
+- [1. `GxEPDImage::showImage()` — unico entry-point pubblico](#1-gxepdimageshowimage--unico-entry-point-pubblico)
+- [2. Tre API siblings single-channel uniformi](#2-tre-api-siblings-single-channel-uniformi)
+- [3. Perchè il yellow è "out-of-band" nel flusso paged](#3-perchè-il-yellow-è-out-of-band-nel-flusso-paged)
+- [4. Sistema di descrittori universali (`namespace GxEPDImage`)](#4-sistema-di-descrittori-universali-namespace-gxepdimage)
+- [5. Ottimizzazioni rispetto al driver stock](#5-ottimizzazioni-rispetto-al-driver-stock)
+- [6. API completa](#6-api-completa)
+- [Licenza](#licenza)
+
+---
+
+## Installazione
+
+Libreria Arduino a sè stante che **dipende da GxEPD2**: questo repo non la
+contiene, la estende con i driver di pannelli che upstream non supporta.
+
+1. installa **GxEPD2** (>= 1.6.9) e **Adafruit GFX Library** dal Library
+   Manager dell'IDE;
+2. installa questa libreria: *Sketch → #include libreria → Aggiungi libreria
+   .ZIP*, oppure clonando il repo in `Documents/Arduino/libraries/`;
+3. nello sketch:
+
+```cpp
+#define SOLUM_PANEL_097C     // oppure SOLUM_PANEL_122C
+#include <GxEPD2_3C.h>
+#include <GxEPD2_SOLUM.h>
+
+// Globale, non locale a setup(): selectSPI() conserva il puntatore a hspi
+SPIClass hspi(HSPI);
+
+// Pinout nella struct uniforme: cs, dc, rst, busy, cs2, busy2, sck, miso, mosi.
+// Qui il cablaggio della Waveshare E-Paper ESP32 Driver Board; i campi non
+// passati restano -1, cioè assenti.
+GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS, SOLUM_MAX_HEIGHT(GxEPD2_SOLUM_DRIVER_CLASS)>
+    display(GxEPD2_SOLUM_DRIVER_CLASS(GxEPD2_SOLUM_Pins{ 15, 27, 26, 25 }));
+
+void setup()
+{
+  hspi.begin(13, 12, 14, 15);                                  // SCK, MISO, MOSI, SS
+  display.epd2.selectSPI(hspi, SPISettings(10000000, MSBFIRST, SPI_MODE0));
+  display.init(115200, true, 2, false);
+  display.setRotation(0);                                      // 960w × 672h landscape
+  display.setFullWindow();
+}
+```
+
+Requisiti: target **ESP32** — il driver usa `SPIClass::writeBytes` e ha i
+`delay(1)` di yield WDT per ESP8266 rimossi dai hot path — e alimentazione
+3,3 V su VCC **e su tutte le data line** del pannello, che non sono
+5V-tolerant. Adafruit_GFX serve solo se `ENABLE_GxEPD2_GFX` è attivo.
+
+Se preferisci non installarla e tenerla dentro il progetto che la usa (come
+submodule), l'include diventa relativo al path del submodule:
+`#include "GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM.h"`.
+
+---
+
+## Selezione del driver
+
+Lo sketch non nomina mai la classe del driver: la sceglie con un `#define` e la
+usa attraverso due macro che [`src/GxEPD2_SOLUM.h`](src/GxEPD2_SOLUM.h) definisce.
+È l'idioma di `GxEPD2_display_selection_new_style.h` upstream, portato dentro la
+libreria invece che negli esempi.
+
+| Simbolo | Cosa fa |
+|---|---|
+| `SOLUM_PANEL_097C` / `SOLUM_PANEL_122C` | selezione del pannello, da definire **prima** dell'include. Esattamente uno: zero o due danno `#error` |
+| `GxEPD2_SOLUM_DRIVER_CLASS` | nome della classe del driver selezionato |
+| `SOLUM_MAX_HEIGHT(EPD)` | altezza della page derivata dal budget RAM, con cap a `EPD::HEIGHT`. Due piani da 1 bpp, quindi il budget si divide per due |
+| `SOLUM_MAX_DISPLAY_BUFFER_SIZE` | budget RAM dei buffer di page. Default 65536 su ESP32 (lo stesso di upstream), 15000 altrove. Definendolo prima dell'include si sovrascrive |
+| `GxEPD2_SOLUM_Pins` | struct di pinout uniforme fra i driver, in [`src/GxEPD2_SOLUM_Pins.h`](src/GxEPD2_SOLUM_Pins.h) |
+
+Con `SOLUM_MAX_DISPLAY_BUFFER_SIZE` al default, su un pannello da 960 px di
+larghezza la page viene di 273 righe, cioè ~65 KB di buffer. Se la RAM serve
+anche ad altro, passare al template un valore proprio: il firmware consumer usa
+`EPD::HEIGHT / 8`, cioè ~20 KB e otto page.
+
+La struct di pinout è ciò che rende sostituibile un driver con l'altro: i
+pannelli non hanno tutti lo stesso numero di segnali (il 12.2" ha due CS e due
+BUSY perchè ha due controller), e senza una firma comune cambiare pannello
+significherebbe riscrivere la riga di costruzione del display.
+
+---
+
+## Aggiungere un driver alla libreria
+
+1. **Header in `src/`**, che include [`GxEPDImage.h`](src/GxEPDImage.h) e
+   [`GxEPD2_SOLUM_Pins.h`](src/GxEPD2_SOLUM_Pins.h). Deve implementare l'API
+   richiesta elencata in testa a `GxEPDImage.h`: `setPaged()`,
+   `showImagePageHint()`, `writeImageYellow()`, `preserveYellow()`,
+   `isYellowPreserved()`. Le tre del giallo sono no-op su un pannello a due
+   piani — il template `showImage()` è unico e non ha rami per driver.
+2. **Costruttore `explicit Driver(const GxEPD2_SOLUM_Pins&)`**, oltre a quelli
+   nativi. È la firma che gli sketch usano.
+3. **Bus SPI da `_pSPIx` / `_spi_settings`** della base `GxEPD2_EPD`, mai
+   dall'oggetto `SPI` globale: uno sketch che chiama `selectSPI()` si aspetta
+   che valga per tutti i driver. Se il driver ha un default proprio, lo imposta
+   nel costruttore chiamando `selectSPI()`, non cablandolo nelle primitive.
+4. **Membro `panel`**: i driver di questa libreria prendono in prestito un
+   valore di `GxEPD2::Panel` di un pannello upstream. Va scelto uno che i
+   template **non** trattino in modo speciale: `GxEPD2_3C` applica workaround
+   confrontando `epd2.panel` con `GDEW0154Z04`, `GxEPD2_BW` con `GDE0213B1`.
+   Riusare uno di quei valori si porta dietro il workaround di un altro
+   pannello.
+5. **Tre righe in [`src/GxEPD2_SOLUM.h`](src/GxEPD2_SOLUM.h)**: il ramo `#elif`
+   con il define di selezione, l'include e `GxEPD2_SOLUM_DRIVER_CLASS`.
+6. `library.properties` non si tocca: espone `GxEPD2_SOLUM.h`, non i driver.
 
 ---
 
@@ -44,64 +162,6 @@ Jean-Marc Zingg, fornendo:
 Per un esempio d'uso completo (sketch, moduli Weather/Calendar, flussi di
 boot, OTA) vedi il progetto che la consuma:
 [ePaper-weather-dashboard](https://github.com/alesimattia/ePaper-weather-dashboard).
-
----
-
-## Indice
-
-- [Installazione](#installazione)
-- [0. Il pannello SOLUM 9.7"](#0-il-pannello-solum-97)
-- [Origine](#origine)
-- [1. `GxEPDImage::showImage()` — unico entry-point pubblico](#1-gxepdimageshowimage--unico-entry-point-pubblico)
-- [2. Tre API siblings single-channel uniformi](#2-tre-api-siblings-single-channel-uniformi)
-- [3. Perchè il yellow è "out-of-band" nel flusso paged](#3-perchè-il-yellow-è-out-of-band-nel-flusso-paged)
-- [4. Sistema di descrittori universali (`namespace GxEPDImage`)](#4-sistema-di-descrittori-universali-namespace-gxepdimage)
-- [5. Ottimizzazioni rispetto al driver stock](#5-ottimizzazioni-rispetto-al-driver-stock)
-- [6. API completa](#6-api-completa)
-- [Licenza](#licenza)
-
----
-
-## Installazione
-
-Libreria Arduino a sè stante che **dipende da GxEPD2**: questo repo non la
-contiene, la estende con il driver di un pannello che upstream non supporta.
-
-1. installa **GxEPD2** (>= 1.6.9) e **Adafruit GFX Library** dal Library
-   Manager dell'IDE;
-2. installa questa libreria: *Sketch → #include libreria → Aggiungi libreria
-   .ZIP*, oppure clonando il repo in `Documents/Arduino/libraries/`;
-3. nello sketch:
-
-```cpp
-#include <GxEPD2_3C.h>
-#include <GxEPD2_SOLUM_097c_960x672.h>
-
-// Globale, non locale a setup(): selectSPI() conserva il puntatore a hspi
-SPIClass hspi(HSPI);
-
-// CS, DC, RST, BUSY come cablati sulla Waveshare E-Paper ESP32 Driver Board
-GxEPD2_3C<GxEPD2_SOLUM_097c_960x672, GxEPD2_SOLUM_097c_960x672::HEIGHT / 8>
-    display(GxEPD2_SOLUM_097c_960x672(15, 27, 26, 25));
-
-void setup()
-{
-  hspi.begin(13, 12, 14, 15);                                  // SCK, MISO, MOSI, SS
-  display.epd2.selectSPI(hspi, SPISettings(10000000, MSBFIRST, SPI_MODE0));
-  display.init(115200, true, 2, false);
-  display.setRotation(0);                                      // 960w × 672h landscape
-  display.setFullWindow();
-}
-```
-
-Requisiti: target **ESP32** — il driver usa `SPIClass::writeBytes` e ha i
-`delay(1)` di yield WDT per ESP8266 rimossi dai hot path — e alimentazione
-3,3 V su VCC **e su tutte le data line** del pannello, che non sono
-5V-tolerant. Adafruit_GFX serve solo se `ENABLE_GxEPD2_GFX` è attivo.
-
-Se preferisci non installarla e tenerla dentro il progetto che la usa (come
-submodule), l'include diventa relativo al path del submodule:
-`#include "GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM_097c_960x672.h"`.
 
 ---
 

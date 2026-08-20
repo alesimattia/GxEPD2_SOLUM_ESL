@@ -105,6 +105,9 @@
 // della libreria, vedi src/GxEPDImage.h.
 #include "GxEPDImage.h"
 
+// Pinout uniforme fra i driver della libreria.
+#include "GxEPD2_SOLUM_Pins.h"
+
 class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
 {
   public:
@@ -122,6 +125,15 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
     static const uint16_t partial_refresh_time = 22000; // ms, e.g. 20476000us
     // constructor
     GxEPD2_SOLUM_097c_960x672(int16_t cs, int16_t dc, int16_t rst, int16_t busy);
+    /**
+     * Costruttore a pinout uniforme: accetta la struct comune ai driver della
+     * libreria e legge i quattro campi che servono a questo pannello. Di cs2 e
+     * busy2 non ha nulla da fare (single-controller) e i pin del bus li apre
+     * lo sketch via selectSPI(), quindi anche quelli vengono ignorati.
+     * È la firma che permette a uno sketch di cambiare pannello senza
+     * riscrivere la riga di costruzione del display.
+     */
+    explicit GxEPD2_SOLUM_097c_960x672(const GxEPD2_SOLUM_Pins& pins);
     // methods (virtual)
     //  Support for Bitmaps (Sprites) to Controller Buffer and to Screen
     void clearScreen(uint8_t value = 0xFF); // init controller memory and screen (default white)
@@ -271,6 +283,11 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
 
 inline GxEPD2_SOLUM_097c_960x672::GxEPD2_SOLUM_097c_960x672(int16_t cs, int16_t dc, int16_t rst, int16_t busy) :
   GxEPD2_EPD(cs, dc, rst, busy, HIGH, 25000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate)
+{
+}
+
+inline GxEPD2_SOLUM_097c_960x672::GxEPD2_SOLUM_097c_960x672(const GxEPD2_SOLUM_Pins& pins) :
+  GxEPD2_SOLUM_097c_960x672(pins.cs, pins.dc, pins.rst, pins.busy)
 {
 }
 

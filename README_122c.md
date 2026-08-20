@@ -39,12 +39,14 @@ Vale quella della libreria, in [README.md](README.md#installazione): questo
 driver è un secondo header dello stesso pacchetto. Nello sketch:
 
 ```cpp
+#define SOLUM_PANEL_122C
 #include <GxEPD2_3C.h>
-#include <GxEPD2_SOLUM_122c_960x768.h>
+#include <GxEPD2_SOLUM.h>
 
-// 9 pin: SCK, MISO, MOSI, CS master, CS slave, DC, RST, BUSY master, BUSY slave
-GxEPD2_3C<GxEPD2_SOLUM_122c_960x768, GxEPD2_SOLUM_122c_960x768::HEIGHT / 8>
-    display(GxEPD2_SOLUM_122c_960x768(13, 12, 14, 15, 33, 27, 26, 25, 35));
+// Pinout: cs, dc, rst, busy, cs2, busy2, sck, miso, mosi
+GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS, SOLUM_MAX_HEIGHT(GxEPD2_SOLUM_DRIVER_CLASS)>
+    display(GxEPD2_SOLUM_DRIVER_CLASS(
+        GxEPD2_SOLUM_Pins{ 15, 27, 26, 25, 33, 35, 13, 12, 14 }));
 ```
 
 Sketch di esempio nella libreria:
@@ -372,28 +374,19 @@ perchè il template è condiviso e perchè i moduli applicativi scritti per il
 9.7" chiamano `preserveYellow()` senza sapere quale pannello è montato. Così
 lo stesso firmware compila contro i due driver senza rami condizionali.
 
-La scelta del pannello si fa quindi a monte, includendo un header solo:
+La scelta del pannello si fa a monte, con il define di selezione che
+[`src/GxEPD2_SOLUM.h`](src/GxEPD2_SOLUM.h) traduce in include e nome della
+classe — vedi [Selezione del driver](README.md#selezione-del-driver). Anche
+l'arità del costruttore è uniforme: entrambi i driver accettano la struct
+`GxEPD2_SOLUM_Pins`, e questo legge `cs2` / `busy2` per il secondo controller
+e `sck` / `miso` / `mosi` per il bus, campi che sul 9.7" restano a -1. Uno
+sketch che cambia pannello non riscrive nè l'include nè la riga di costruzione
+del display.
 
-```cpp
-#if defined(DISPLAY_VARIANT_122C)
-  #include <GxEPD2_SOLUM_122c_960x768.h>
-  using DisplayDriver = GxEPD2_SOLUM_122c_960x768;
-#else
-  #include <GxEPD2_SOLUM_097c_960x672.h>
-  using DisplayDriver = GxEPD2_SOLUM_097c_960x672;
-#endif
-```
-
-Nel progetto consumer questo dispatch vive nei suoi `Layout_*.h`, che
-espongono il tipo come `Layout::Panel` e la costruzione come
-`Layout::makePanel()`: i costruttori dei due driver hanno arità diverse
-(4 pin il 9.7" single-CS, 6 il 12.2" dual-controller) e la factory è ciò che
-tiene lo sketch indipendente dal pannello.
-
-**Attenzione a `selectSPI()`**: il 9.7" lo rispetta, questo driver no — usa
-l'oggetto `SPI` globale a 20 MHz in tutte le primitive di bus. Sul 12.2" il
-bus va configurato con `SPI.begin()` sui pin giusti prima di `init()`, e un
-`selectSPI(hspi, ...)` dello sketch non ha effetto.
+**Bus SPI**: come il 9.7", questo driver passa da `_pSPIx` / `_spi_settings`
+della base `GxEPD2_EPD`, ScreenPart comprese. Il default impostato dai
+costruttori è l'oggetto `SPI` globale a 20 MHz; un `selectSPI(hspi, ...)`
+chiamato prima di `init()` lo sostituisce.
 
 ---
 
@@ -488,20 +481,22 @@ secondo connettore FFC esterno cablato a mano.
 Costruttore corrispondente:
 
 ```cpp
-#include "GxEPD2_SOLUM_122c_960x768.h"
+#define SOLUM_PANEL_122C
+#include <GxEPD2_3C.h>
+#include <GxEPD2_SOLUM.h>
 
-GxEPD2_3C<GxEPD2_SOLUM_122c_960x768,
-          GxEPD2_SOLUM_122c_960x768::HEIGHT / 8>
-    display(GxEPD2_SOLUM_122c_960x768(
-        /*sck   */ 13,
-        /*miso  */ 12,    // -1 se non si legge dal controller
-        /*mosi  */ 14,
-        /*cs_m  */ 15,    // FFC interno della board
-        /*cs_s  */ 33,    // FFC esterno cablato a mano
-        /*dc    */ 27,
-        /*rst   */ 26,
-        /*busy_m*/ 25,
-        /*busy_s*/ 35));
+GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS,
+          SOLUM_MAX_HEIGHT(GxEPD2_SOLUM_DRIVER_CLASS)>
+    display(GxEPD2_SOLUM_DRIVER_CLASS(GxEPD2_SOLUM_Pins{
+        /*cs   */ 15,    // FFC interno della board
+        /*dc   */ 27,
+        /*rst  */ 26,
+        /*busy */ 25,
+        /*cs2  */ 33,    // FFC esterno cablato a mano
+        /*busy2*/ 35,
+        /*sck  */ 13,
+        /*miso */ 12,    // -1 se non si legge dal controller
+        /*mosi */ 14 }));
 ```
 
 > ⚠️ **Caveat board Waveshare.** Il connettore FFC interno è 24-pin
@@ -536,12 +531,12 @@ accessibili sui pin header DIP.
 Costruttore corrispondente (SPI default VSPI):
 
 ```cpp
-GxEPD2_3C<GxEPD2_SOLUM_122c_960x768,
-          GxEPD2_SOLUM_122c_960x768::HEIGHT / 8>
-    display(GxEPD2_SOLUM_122c_960x768(
-        /*cs_m  */ 15, /*cs_s  */ 33,
-        /*dc    */ 27, /*rst   */ 26,
-        /*busy_m*/ 25, /*busy_s*/ 35));
+// I tre campi del bus restano a -1: "quelli di default della board".
+GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS,
+          SOLUM_MAX_HEIGHT(GxEPD2_SOLUM_DRIVER_CLASS)>
+    display(GxEPD2_SOLUM_DRIVER_CLASS(GxEPD2_SOLUM_Pins{
+        /*cs  */ 15, /*dc   */ 27, /*rst  */ 26, /*busy */ 25,
+        /*cs2 */ 33, /*busy2*/ 35 }));
 ```
 
 > ✅ **Setup consigliato per il bring-up.** Tutti i segnali sono fisicamente
@@ -554,7 +549,8 @@ GxEPD2_3C<GxEPD2_SOLUM_122c_960x768,
 1. **Step 1 — solo master cablato.** Collega solo il FFC #1, lascia il #2
    staccato. Usa il costruttore single-CS:
    ```cpp
-   display(GxEPD2_SOLUM_122c_960x768(/*cs=*/15, /*dc=*/27, /*rst=*/26, /*busy=*/25));
+   // cs2 e busy2 a -1: le scritture verso la metà slave vengono saltate.
+   display(GxEPD2_SOLUM_DRIVER_CLASS(GxEPD2_SOLUM_Pins{ 15, 27, 26, 25 }));
    ```
    Risultato atteso: la metà sinistra (cols 0..479) si aggiorna, la metà
    destra resta scura/random. Conferma: init UC8179 OK, BUSY rilasciato

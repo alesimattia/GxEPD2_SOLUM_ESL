@@ -42,7 +42,12 @@
 // =============================================================================
 
 #include <Arduino.h>
-#include <GxEPD2_SOLUM_122c_960x768.h>
+
+// Selezione del pannello: l'ombrello include il driver giusto e ne espone il
+// nome come GxEPD2_SOLUM_DRIVER_CLASS. Questo sketch non nomina mai la classe
+// concreta, quindi per un altro pannello SOLUM basta cambiare questo define.
+#define SOLUM_PANEL_122C
+#include <GxEPD2_SOLUM.h>
 
 // Commenta questa define per il bring-up Step 1 (solo master cablato).
 #define USE_DUAL_CONTROLLER
@@ -59,18 +64,25 @@
 #define PIN_CS_S   33
 #define PIN_BUSY_S 35
 
+/**
+ * Pinout nella struct uniforme della libreria: l'ordine dei campi è
+ * cs, dc, rst, busy, cs2, busy2, sck, miso, mosi. Nel bring-up Step 1 il
+ * secondo controller non è cablato e i suoi due campi restano -1, cioè
+ * assenti: le scritture verso la sua metà del pannello vengono saltate.
+ * La riga di costruzione del display è identica nei due casi e non nomina
+ * il pannello.
+ */
 #if defined(USE_DUAL_CONTROLLER)
-GxEPD2_SOLUM_122c_960x768 display(
-    PIN_SCK, PIN_MISO, PIN_MOSI,
-    PIN_CS_M, PIN_CS_S,
-    PIN_DC, PIN_RST,
-    PIN_BUSY_M, PIN_BUSY_S);
+const GxEPD2_SOLUM_Pins PANEL_PINS{ PIN_CS_M, PIN_DC, PIN_RST, PIN_BUSY_M,
+                                    PIN_CS_S, PIN_BUSY_S,
+                                    PIN_SCK, PIN_MISO, PIN_MOSI };
 #else
-// Bring-up Step 1: costruttore single-CS, lo slave è disabilitato (cs=-1)
-// e le scritture verso la sua metà del pannello vengono saltate.
-GxEPD2_SOLUM_122c_960x768 display(
-    PIN_CS_M, PIN_DC, PIN_RST, PIN_BUSY_M);
+const GxEPD2_SOLUM_Pins PANEL_PINS{ PIN_CS_M, PIN_DC, PIN_RST, PIN_BUSY_M,
+                                    -1, -1,
+                                    PIN_SCK, PIN_MISO, PIN_MOSI };
 #endif
+
+GxEPD2_SOLUM_DRIVER_CLASS display(PANEL_PINS);
 
 // Convenzioni colore UC8179:
 //   cmd 0x10 (black plane): bit=1 -> pixel bianco,  bit=0 -> pixel nero
@@ -104,17 +116,17 @@ void setup() {
   Serial.println(F(" color_cycle — driver SOLUM 12.2\" (960x768 BWR)"));
   Serial.println(F("=================================================="));
   Serial.print  (F(" Risoluzione: "));
-  Serial.print  (GxEPD2_SOLUM_122c_960x768::WIDTH);
+  Serial.print  (GxEPD2_SOLUM_DRIVER_CLASS::WIDTH);
   Serial.print  (F("x"));
-  Serial.println(GxEPD2_SOLUM_122c_960x768::HEIGHT);
+  Serial.println(GxEPD2_SOLUM_DRIVER_CLASS::HEIGHT);
 #if defined(USE_DUAL_CONTROLLER)
-  Serial.println(F(" Modalita': DUAL CONTROLLER (master + slave)"));
+  Serial.println(F(" Modo: DUAL CONTROLLER (master + slave)"));
   Serial.print  (F(" CS_M="));   Serial.print(PIN_CS_M);
   Serial.print  (F(" CS_S="));   Serial.print(PIN_CS_S);
   Serial.print  (F(" BUSY_M=")); Serial.print(PIN_BUSY_M);
   Serial.print  (F(" BUSY_S=")); Serial.println(PIN_BUSY_S);
 #else
-  Serial.println(F(" Modalita': SINGLE-CS (solo master, slave disabilitato)"));
+  Serial.println(F(" Modo: SINGLE-CS (solo master, slave disabilitato)"));
   Serial.print  (F(" CS=")); Serial.print(PIN_CS_M);
   Serial.print  (F(" BUSY=")); Serial.println(PIN_BUSY_M);
 #endif
