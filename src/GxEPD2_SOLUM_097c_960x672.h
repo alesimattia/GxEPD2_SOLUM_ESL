@@ -143,12 +143,12 @@ namespace GxEPDImage
    *     compositing di 2 piani che drawBitmap non fa nativamente.
    *
    * Idempotency canale yellow: il yellow viene scritto al MASSIMO una
-   * volta per loop paged. Le iterazioni 2..8 di nextPage() trovano
-   * isYellowPreserved()==true e saltano writeImageYellow: 7 riscritture da
-   * 80.640 byte evitate, ~450 ms a refresh BWRY con SPI a 10 MHz. Inoltre,
-   * se il chiamante ha già scritto yellow su 0x28 prima di firstPage() e
-   * attivato preserveYellow, showImage NON sovrascrive: rispetta lo stato
-   * preparato dall'utente.
+   * volta per loop paged. La guardia è il page-hint a 0, cioè la prima
+   * iterazione: le iterazioni 2..8 di nextPage() saltano writeImageYellow,
+   * 7 riscritture da 80.640 byte evitate, ~450 ms a refresh BWRY con SPI a
+   * 10 MHz. Un pre-write out-of-band del chiamante su 0x28 non sopprime
+   * questa scrittura: writeImageYellow tocca solo la propria finestra RAM,
+   * quindi aree disgiunte convivono.
    *
    * Costo loop drawPixel: ~24 ms su ESP32 a 240 MHz, irrilevante rispetto
    * ai ~22 s di refresh elettroforetico.
@@ -179,8 +179,13 @@ namespace GxEPDImage
     const int16_t  h      = static_cast<int16_t>(d.height);
     const uint16_t stride = static_cast<uint16_t>((w + 7) / 8);
 
+    /** Il piano yellow va scritto una volta per loop paged e il page-hint a 0
+     *  identifica la prima iterazione. Guardare isYellowPreserved() era un
+     *  bug: quel flag lo alza anche un pre-write del chiamante su un'altra
+     *  area di 0x28 (la barra temp-range dello sketch), e il giallo
+     *  dell'immagine non veniva mai inviato. */
     if (d.format == FORMAT_BWRY_1BPP && d.data2
-        && !display.epd2.isYellowPreserved())
+        && display.epd2.showImagePageHint() == 0)
     {
       display.epd2.writeImageYellow(d.data2, x, y, w, h, true);
       display.epd2.preserveYellow(true);
@@ -323,10 +328,9 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
     // Nota: red non ha un flag analogo perchè il template lo gestisce già.
     void preserveYellow(bool preserve) { _preserve_yellow = preserve; }
 
-    // Getter del flag preserveYellow. Usato da GxEPDImage::showImage come
-    // idempotency-check per evitare di riscrivere il canale 0x28 ad ogni
-    // iterazione del paged loop (8 volte invece di 1) o di sovrascrivere
-    // un yellow già scritto dal chiamante prima di firstPage().
+    // Getter del flag preserveYellow: dice se un yellow out-of-band è già
+    // protetto per il loop paged corrente. L'idempotency di showImage sul
+    // canale 0x28 usa invece showImagePageHint().
     bool isYellowPreserved() const { return _preserve_yellow; }
 
     // L'entry-point pubblico di stampa immagine è la free function template

@@ -34,12 +34,10 @@ the paged loop.
 
 **Yellow channel idempotency.** For BWRY descriptors, `showImage` calls
 `writeImageYellow` at most once per paged loop: iterations 2..8 of
-`nextPage()` find `isYellowPreserved()==true` and skip the rewrite
-(7 rewrites of 80,640 bytes skipped, ~450 ms saved per refresh at
-10 MHz SPI). Additionally, if the caller
-has already written yellow on 0x28 and activated `preserveYellow(true)`
-BEFORE `firstPage()` (custom yellow compositing), `showImage` does not
-overwrite the prepared state.
+`nextPage()` find `showImagePageHint()` already advanced and skip the
+rewrite (7 rewrites of 80,640 bytes skipped, ~450 ms saved per refresh at
+10 MHz SPI). A custom yellow written by the caller BEFORE `firstPage()`
+survives, because `writeImageYellow` only touches the RAM window it sets.
 
 Minimal one-shot full-screen example:
 
@@ -97,9 +95,9 @@ The flag is **automatically reset** inside the driver's `refresh()` at
 the end of the paged loop: the caller does not need to call
 `preserveYellow(false)` manually.
 
-The `isYellowPreserved()` getter is used by `GxEPDImage::showImage` as
-an idempotency-check, to avoid rewriting 0x28 on every iteration of
-the paged loop or overwriting a custom yellow prepared by the user.
+The `isYellowPreserved()` getter reports whether an out-of-band yellow is
+already protected for the current paged loop. `showImage` idempotency on
+channel 0x28 uses `showImagePageHint()` instead.
 
 Details in [README §3 "Why yellow is out-of-band"](README.md#3-perchè-il-yellow-è-out-of-band-nel-flusso-paged).
 

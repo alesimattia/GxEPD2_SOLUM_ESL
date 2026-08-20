@@ -330,16 +330,17 @@ Il chiamante è responsabile di: aprire il loop paged e chiamare
 dentro `refresh()` del driver al termine del loop paged.
 
 **Idempotency canale yellow.** Per i descrittori BWRY, `showImage`
-scrive il canale 0x28 al MASSIMO una volta per loop paged. Le iterazioni
-2..8 di `nextPage()` trovano `isYellowPreserved()==true` e saltano la
+scrive il canale 0x28 al MASSIMO una volta per loop paged. La guardia è
+`showImagePageHint() == 0`, cioè la prima iterazione; le 2..8 saltano la
 chiamata `writeImageYellow`. Una scrittura full-screen del piano giallo sono
 80.640 byte ≈ 65 ms a 10 MHz (vedi [§0.7](#07-spi-e-volumi-di-transfer)):
 le 7 riscritture evitate valgono **~450 ms per refresh**.
 
-In più, se il chiamante ha già scritto yellow su 0x28 e attivato
-`preserveYellow(true)` PRIMA di `firstPage()` (uso avanzato per
-compositing yellow custom), `showImage` rispetta quello stato e non
-sovrascrive.
+Un pre-write out-of-band del chiamante su 0x28 **non** sopprime la scrittura
+di `showImage`: `writeImageYellow` imposta la propria finestra RAM e tocca solo
+quella, quindi un overlay giallo dello sketch e il giallo dell'immagine
+convivono se le aree sono disgiunte. Per far vincere solo il giallo custom si
+passa a `showImage` un descrittore BWR.
 
 **Multi-call per page.** `showImage` può essere chiamata 0, 1 o N volte
 all'interno di una stessa iterazione del paged loop senza problemi: il
@@ -369,13 +370,13 @@ spegnere il pannello. Il reset del flag `preserveYellow(false)` per il
 caso BWRY è gestito automaticamente dentro `refresh()` del driver, non
 serve farlo a mano.
 
-- Per i casi **3** e **5** (BWRY senza pre-write), `showImage` scrive il
-  canale 0x28 una sola volta per refresh grazie all'idempotency-check
-  (le iterazioni 2..8 del paged loop saltano la riscrittura).
-- Per il caso **6**, il pre-write del chiamante su 0x28 ha la precedenza:
-  `showImage` non sovrascrive il yellow custom. Va usato il descrittore
-  BWR (non BWRY) per non passare a `showImage` un `data2` che verrebbe
-  comunque ignorato.
+- Per i casi **3** e **5**, `showImage` scrive il canale 0x28 una sola volta
+  per refresh grazie all'idempotency-check sul page-hint (le iterazioni 2..8
+  del paged loop saltano la riscrittura).
+- Nel caso **6** il descrittore è BWR, quindi `data2` è nullo e `showImage`
+  lascia intatto il giallo custom. Con un descrittore BWRY scriverebbe anche
+  il proprio `data2`: le due scritture convivono se le aree sono disgiunte,
+  si sovrappongono altrimenti.
 
 Il caso **7** bypassa il template GFX e si chiama standalone (incluso
 `refresh()` esplicito).
@@ -458,12 +459,12 @@ deve solo aprire il loop paged.
 
 **Idempotency.** `showImage` è idempotente sul canale 0x28: scrive
 `writeImageYellow` al massimo una volta per loop paged grazie al check
-`isYellowPreserved()`. Le iterazioni 2..8 di `nextPage()` trovano il
-flag attivo e saltano la riscrittura: ~450 ms risparmiati per refresh
+`showImagePageHint() == 0`. Le iterazioni 2..8 di `nextPage()` trovano il
+page-hint avanzato e saltano la riscrittura: ~450 ms risparmiati per refresh
 (7 × 80.640 byte a 0,8 µs/byte, vedi [§0.7](#07-spi-e-volumi-di-transfer)).
-Se il chiamante ha già scritto yellow su 0x28 e attivato `preserveYellow(true)`
-prima di `firstPage()`, `showImage` non sovrascrive — utile per
-compositing yellow custom (vedi caso 6 della tabella in §1).
+Un yellow custom scritto dal chiamante prima di `firstPage()` sopravvive
+comunque, perchè `writeImageYellow` scrive solo dentro la finestra RAM che
+imposta (vedi caso 6 della tabella in §1).
 
 I 3 siblings `writeImageBlack` / `writeImageRed` / `writeImageYellow`
 sono **simmetrici a livello di API**, ma in pratica B+R sono scritti
@@ -637,15 +638,8 @@ paged full-window (`writeImagePart` solo con `setPartialWindow`).
 
 ## Licenza
 
-**GPL-3.0**, come GxEPD2. Non è una scelta: il driver nasce come copia
-modificata di
+**GPL-3.0**: il driver nasce come copia modificata di
 [`GxEPD2_1330c_GDEM133Z91`](https://github.com/ZinggJM/GxEPD2/blob/1.6.9/src/gdem3c/GxEPD2_1330c_GDEM133Z91.cpp)
-di Jean-Marc Zingg, di cui eredita sequenza di init, write RAM e refresh, ed
-è quindi codice derivato da una libreria GPL-3.0.
 
-Questo repo è un **fork** di [ZinggJM/GxEPD2](https://github.com/ZinggJM/GxEPD2)
-— la derivazione è registrata da GitHub — ma non ne duplica l'albero: contiene
-solo questa libreria. I riferimenti ai sorgenti upstream in questa doc puntano
-al **tag 1.6.9**, la versione su cui il driver è stato scritto e verificato,
-non a `master`: così le righe citate restano valide anche quando upstream
-avanza.
+Questo repo è un **fork** di [ZinggJM/GxEPD2](https://github.com/ZinggJM/GxEPD2) ma non ne duplica l'albero: contiene solo questa libreria. 
+I riferimenti ai sorgenti upstream in questa doc puntano al **tag 1.6.9**, la versione su cui il driver è stato scritto e verificato, non a `master`: così le righe citate restano valide anche quando upstream avanza.
