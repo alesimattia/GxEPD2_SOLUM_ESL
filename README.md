@@ -1,4 +1,24 @@
-# GxEPD2_SOLUM_097c_960x672 — Driver custom
+# GxEPD2_SOLUM_ESL — driver custom per pannelli SOLUM ESL
+
+Libreria Arduino che estende [GxEPD2](https://github.com/ZinggJM/GxEPD2) con i
+driver di pannelli e-paper recuperati da etichette elettroniche SOLUM, che
+upstream non supporta.
+
+| Driver | Pannello | Controller | Colori | Stato |
+|---|---|---|---|---|
+| [`src/GxEPD2_SOLUM_097c_960x672.h`](src/GxEPD2_SOLUM_097c_960x672.h) | Newton Pro 9.7", 960w × 672h | SSD1677 | B/W/R verificati, 4° colore [questione aperta](#010-il-4-colore-non-appare-questione-aperta) | in uso |
+| [`src/GxEPD2_SOLUM_122c_960x768.h`](src/GxEPD2_SOLUM_122c_960x768.h) | Newton Core 12.2", 960w × 768h | UC8179 dual-controller, **assumption** | B/W/R | **non validato**, vedi [README_122c.md](README_122c.md) |
+
+Il namespace `GxEPDImage` (descrittori immagine e `showImage()`) sta in
+[`src/GxEPDImage.h`](src/GxEPDImage.h) e lo condividono tutti i driver: due
+header driver possono coesistere nella stessa translation unit.
+
+Il resto di questo documento riguarda il **9.7"**; per il 12.2" vedi
+[README_122c.md](README_122c.md).
+
+---
+
+## Il driver 9.7"
 
 Driver header-only per pannello e-paper **SOLUM ESL 9.7"** (672w × 960h px
 native portrait → `setRotation(0)` → 960w × 672h px landscape,
