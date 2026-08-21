@@ -1,15 +1,20 @@
 # GxEPD2_SOLUM_122c_960x768 — driver custom
 
-> **Driver non validato su hardware.** Nessuna delle assumption di questo
-> documento è stata confermata sul pannello, a partire dal controller: il
-> Newton-Core 12.2" potrebbe rispondere a SSD16xx e non a UC8179. La misura
-> che lo decide è `examples/12_2c/dual_panel_finder`, e va eseguita prima di
-> mettere mano al driver. Fino ad allora questo è un init proposto, non un
-> driver funzionante — vedi [§5](#5-punti-todoverify-da-validare-al-bring-up).
+> **La sequenza di init di questo driver è da riscrivere.** Il bring-up ha
+> stabilito due cose che il codice non riflette ancora: il pannello risponde a
+> **SSD16xx**, non a UC8179, e ogni controller pilota **960×384** con lo split
+> sull'**asse corto**, non le colonne 0..479 / 480..959. Resta valido tutto lo
+> scheletro dual-controller (`ScreenPart`, `_writeCommandAll`,
+> `_waitWhileAnyBusy`, dispatch outer-class) e resta valida l'infrastruttura
+> immagine. Le evidenze e le misure sono in
+> [docs/122c/identificazione_pannello.md](docs/122c/identificazione_pannello.md),
+> lo stato punto per punto in
+> [§5](#5-punti-todoverify-da-validare-al-bring-up).
 
-Driver header-only per pannello e-paper **SOLUM Newton-Core 12.2"**
-(960×768 px, 3 colori nativi: bianco/nero/rosso, controller assumption
-**UC8179 dual-controller**) su **ESP32**. Estende
+Driver header-only per pannello e-paper **SOLUM 12.2"** (linee Newton PRO e
+Newton Core / M3, stesso pannello)
+(960×768 px, 3 colori nativi: bianco/nero/rosso, **2 controller SSD16xx**
+da 960×384 ciascuno) su **ESP32**. Estende
 [GxEPD2](https://github.com/ZinggJM/GxEPD2) di Jean-Marc Zingg, fornendo:
 
 - **API `showImage()` unificata** come unico entry-point one-shot di
@@ -22,9 +27,10 @@ Driver header-only per pannello e-paper **SOLUM Newton-Core 12.2"**
   [§6](#6-convivenza-con-il-driver-solum-97);
 - **sistema di descrittori universali** (`GxEPDImage::Descriptor`) condiviso
   con il driver 9.7", di cui qui sono utili i formati BW e BWR;
-- **dispatch dual-controller master/slave** trasparente al chiamante
-  (split colonne 0..479 → master, 480..959 → slave) — `TODO[VERIFY]`
-  al bring-up.
+- **dispatch dual-controller master/slave** trasparente al chiamante: le due
+  metà del pannello sono bande da 960×384 sull'asse corto, il codice le
+  spartisce ancora per colonne e va allineato — vedi
+  [§3](#3-architettura-dual-controller-masterslave).
 
 Il driver 9.7" della stessa libreria è documentato in [README.md](README.md).
 Per il contesto applicativo (sketch principale, moduli Weather/Calendar,
@@ -51,10 +57,20 @@ GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS, SOLUM_MAX_HEIGHT(GxEPD2_SOLUM_DRIVER_CLASS)
 
 Sketch di esempio nella libreria:
 
-- `examples/12_2c/dual_panel_finder` — sonda di identificazione del
-  controller, non usa questo driver;
-- `examples/12_2c/color_cycle` — ciclo bianco / nero / rosso full-screen,
-  primo test d'uso del driver con bring-up in due passi.
+- `examples/12_2c/dual_panel_finder` — **unico example del 12.2", in due fasi
+  separabili**. La *fase probe* è una sonda a SPI diretta su una coda alla
+  volta, che non usa nè questo driver nè GxEPD2: confronta tre candidate di
+  init, misura le gate line reali col righello numerato, stabilisce il verso
+  della banda, stampa le quattro combinazioni dei piani e i colori pieni, e
+  senza guardare un pixel misura se le alte tensioni salgono (HV Ready
+  Detection 0x14) tentando anche i registri in lettura. Verifica inoltre
+  l'addressing a finestra parziale con x diverso da zero, cronometra power on e
+  power off, prova entrambi i parametri di deep sleep e ripete il pattern a
+  20 MHz per validare il clock che il driver usa per default.
+  La *fase driver* esercita invece **questo** driver
+  attraverso l'ombrello di selezione: `clearScreen()` sui tre colori pieni,
+  dispatch a due controller e un frame di tile a cavallo della giunzione fra le
+  bande. Il vecchio `color_cycle` è stato assorbito qui.
 
 ---
 
@@ -91,25 +107,29 @@ SOLUM 9.7" del progetto
 Il driver SOLUM 9.7" del progetto era stato fork dal
 [`GxEPD2_1330c_GDEM133Z91`](https://github.com/ZinggJM/GxEPD2/blob/master/src/gdem3c/GxEPD2_1330c_GDEM133Z91.cpp)
 (SSD1677, single-controller). Per il 12.2" la scelta del driver di
-partenza è stata riconsiderata: il pannello Solum 12.2" presenta **2
-cavi FFC da 21 pin**, evidenza fisica forte di un'architettura
-**dual-controller master/slave**. Il 1330c non gestisce nativamente questo
-pattern, mentre il 1248c sì.
+partenza è stata riconsiderata: il pannello presenta **2 cavi FFC**, cioè
+un'architettura **dual-controller master/slave**, che il 1330c non gestisce
+nativamente e il 1248c sì.
 
 | Criterio | 1330c (base 9.7") | **1248c (base 12.2")** |
 |---|---|---|
 | Cavi FFC supportati nativamente | 1 | **2** (master + slave) |
-| Risoluzione driver | 960×680 | **1304×984** — più vicina al 12.2" in pixel count |
-| Dimensione fisica panel | 13.3" | **12.48"** — quasi coincidente al 12.2" |
 | Costruttore | `(cs, dc, rst, busy)` | **`(cs_m, cs_s, dc, rst, busy_m, busy_s)`** |
 | Pattern split-buffer | assente | **implementato** (`_writeCommandAll`, `_writeCommandMaster`, `_waitWhileAnyBusy`, `ScreenPart`) |
 | Controller IC | SSD1677 | UC8179 |
 
-### Sequenza comandi UC8179
+La scelta è stata giusta per lo **scheletro** e sbagliata per il **command
+set**: il pannello è a controller SSD16xx, quindi il 1248c resta il modello
+della struttura a `ScreenPart` mentre le sequenze di init, power e refresh
+vanno prese dal 9.7". Il perchè in
+[docs/122c/identificazione_pannello.md §4](docs/122c/identificazione_pannello.md#4-controller-perchè-è-ssd16xx-e-non-uc8179):
+l'SSD1677 ha 960 source × 680 gate, e con 768 gate da coprire in due chip
+nessuna spartizione sta dentro i 800×600 dell'UC8179.
 
-Il driver implementa la sequenza specifica del controller UC8179, portata
-1:1 dal 1248c con i parametri di resolution adattati a 480×768 per
-ScreenPart (split verticale del pannello 960×768):
+### Sequenza comandi UC8179 (da sostituire)
+
+Il codice implementa ancora la sequenza UC8179, portata 1:1 dal 1248c con i
+parametri di resolution a 480×768 per ScreenPart. È la parte da riscrivere:
 
 - panel setting (`0x00 = 0x0f` master, `0x03` slave reverse scan)
 - booster soft start (`0x06 = 0x27 0x27 0x18 0x17`)
@@ -212,7 +232,7 @@ allinearsi alla polarity nativa UC8179 (bit=1 in RAM = colorante acceso).
 
 Differenza rispetto al 9.7": **nessuna** `writeImageYellow`. Il driver
 12.2" è BWR-only, il quarto colore non è supportato dal pannello
-Newton-Core. Stub no-op `isYellowPreserved()` / `writeImageYellow()`
+Newton PRO 12.2" (l'etichetta di fabbrica dice BWR). Stub no-op `isYellowPreserved()` / `writeImageYellow()`
 sono presenti SOLO per ODR-compatibility con il template `showImage<>`
 del 9.7" se entrambi gli header finissero inclusi nello stesso TU
 (scenario non supportato — vedi §6).
@@ -222,8 +242,8 @@ del 9.7" se entrambi gli header finissero inclusi nello stesso TU
 ## 3. Architettura dual-controller master/slave
 
 A differenza del 9.7" (single-controller SSD1677), il 12.2" è pilotato
-da **2 controller UC8179** in configurazione master/slave, ciascuno
-collegato a uno dei 2 cavi FFC da 21 pin del pannello.
+da **2 controller SSD16xx** in configurazione master/slave, ciascuno
+collegato a uno dei 2 cavi FFC del pannello e responsabile di **960×384**.
 
 ### ScreenPart inner class
 
@@ -234,32 +254,32 @@ Ogni `ScreenPart` gestisce le scritture verso un singolo controller:
 - proprio CS, DC condiviso col master (i 2 controller condividono SCK,
   MOSI, MISO, DC, RST a livello hardware);
 - `WIDTH` e `HEIGHT` riferiti alla **metà** del pannello che gestisce;
-- flag `_rev_scan` per applicare reverse scan ai pixel della metà
-  destra (cmd 0x00 panel setting con valore `0x03` invece di `0x0f`).
+- flag `_rev_scan` per applicare reverse scan alla metà che scandisce dal
+  proprio bordo verso il centro nel verso opposto all'altra.
 
 ### Split del frame buffer
 
-`TODO[VERIFY]` Assumption iniziale: **split verticale** delle colonne.
+Lo split cade sull'**asse corto** del pannello: ogni controller pilota una
+**banda 960×384**. Misurato al bring-up stampando un rettangolo 960×384 con
+l'ESP32 su una sola coda FFC.
 
 ```
-                  WIDTH = 960
-   ┌─────────────────────┬─────────────────────┐
-   │                     │                     │
-   │   MASTER (cs_m)     │   SLAVE (cs_s)      │  HEIGHT = 768
-   │   columns 0..479    │   columns 480..959  │
-   │   480 × 768         │   480 × 768         │
-   │   FFC #1            │   FFC #2            │
-   │                     │                     │
-   └─────────────────────┴─────────────────────┘
+                       WIDTH = 960
+   ┌───────────────────────────────────────────────────┐
+   │   MASTER (cs_m)   960 × 384   righe 0..383        │  FFC #1
+   ├───────────────────────────────────────────────────┤  HEIGHT = 768
+   │   SLAVE  (cs_s)   960 × 384   righe 384..767      │  FFC #2
+   └───────────────────────────────────────────────────┘
 ```
 
-Coerente col pattern del 1248c che mette M1/M2 a sinistra e S1/S2 a
-destra. Se al bring-up solo metà del display si aggiorna o ci sono
-artefatti sulla giunzione, valutare:
+I 960 px sono l'asse **source** (le due code si attaccano al centro dei bordi
+lunghi, che sono i bordi dei source), i 768 px sono l'asse **gate**, spartito
+384 + 384. Quale delle due bande stia su quale coda è ancora da annotare, e
+una delle due va scandita in reverse perchè le bande risultino contigue e
+con lo stesso verso.
 
-- swap master ↔ slave (cs_m e cs_s scambiati a livello hardware);
-- split orizzontale (master = righe 0..383 alto, slave = 384..767);
-- reverse scan diverso (cmd 0x00 panel setting: scambiare 0x0f ↔ 0x03).
+Il codice implementa ancora lo split per colonne (`x - M.WIDTH` sul dispatch,
+`0x61` a 480×768): entrambi vanno rifatti su righe e su `960×384`.
 
 ### Dispatch outer-class
 
@@ -334,26 +354,24 @@ flag BWR (no canale giallo).
 
 ## 5. Punti `TODO[VERIFY]` da validare al bring-up
 
-Il datasheet
-[Newton-Core_Specifications.pdf](docs/Newton-Core_Specifications.pdf) è
-materiale marketing e **non dichiara**:
+I datasheet di prodotto sono materiale marketing e **non dichiarano** nè il
+controller IC, nè come i 2 FFC si dividano i pixel, nè la sequenza di init.
+Quello che si sa lo si sa dalle etichette di fabbrica, dalle foto del teardown
+di certificazione e dalle misure di bring-up: tutto raccolto in
+[docs/122c/identificazione_pannello.md](docs/122c/identificazione_pannello.md).
 
-1. Il **controller IC** del pannello.
-2. La **divisione fisica** dei 2 FFC sui pixel.
-3. La sequenza di **init e LUT** specifica del pannello.
+Stato punto per punto, con il valore che il codice usa oggi:
 
-Il driver implementa una serie di assumption marcate `TODO[VERIFY]` da
-confermare con hardware reale al bring-up:
-
-| TODO | Default | Sintomo se sbagliato | Mitigazione |
+| Punto | Nel codice oggi | Stato | Cosa fare |
 |---|---|---|---|
-| Controller IC | UC8179 (sequenza 1248c) | Pannello non risponde, busy mai rilasciato | Sostituire `_InitDisplay`/`_PowerOn`/`_PowerOff`/`_Update_Full`/`hibernate` con sequenza SSD1677 dal 9.7" |
-| Split master/slave | Verticale: M = colonne 0..479, S = colonne 480..959 | Solo metà schermo aggiorna | Swap M↔S oppure split orizzontale (righe 0..383 / 384..767) |
-| Reverse scan slave | M = `0x0f` (normal), S = `0x03` (reverse) | Metà destra appare specchiata | Scambiare i valori al cmd `0x00` panel setting in `_InitDisplay` |
-| Resolution setting | cmd `0x61` = 480×768 per ogni controller | Bordo nero o artefatti sulla giunzione | Verificare i 4 byte BE (0x01 0xE0 / 0x03 0x00) |
-| Booster soft start | `0x27 0x27 0x18 0x17` (cmd `0x06`) | Contrasto basso o ghosting | Calibrare leggendo il datasheet UC8179 |
-| Refresh time | `full_refresh_time = 25000` ms | Refresh interrotto a metà o timeout | Aumentare a 30000 ms se persiste |
-| LUT | OTP del controller (no LUT custom) | Ghosting visibile | Scrivere LUT esplicite dal datasheet UC8179 |
+| Controller IC | UC8179 (sequenza 1248c) | **risolto: SSD16xx** | Sostituire `_InitDisplay`/`_PowerOn`/`_PowerOff`/`_Update_Full`/`hibernate` con la sequenza SSD1677 del 9.7" |
+| Split master/slave | colonne 0..479 / 480..959 | **risolto: 960×384 sull'asse corto** | Rifare il dispatch su righe 0..383 / 384..767 (traslazione `y - M.HEIGHT` invece di `x - M.WIDTH`) |
+| Geometria per controller | `0x61` = 480×768 | **risolto: 960×384** | In SSD1677 diventano `0x01` driver output control (384 gate), `0x44`/`0x45` window (0..119 byte × 0..383) e `0x4E`/`0x4F` |
+| Quale coda è quale banda | M = prima metà | aperto | Annotare al bring-up del secondo controller, eventualmente swap M↔S via cablaggio |
+| Reverse scan | `0x00` panel setting `0x0f`/`0x03` | aperto, il comando non esiste su SSD1677 | Usare data entry mode `0x11` + bit di `0x01`, una banda sola in reverse |
+| Booster soft start | `0x06 = 0x27 0x27 0x18 0x17` | comando inesistente su SSD1677 | Sostituire con `0x0C` soft start dal 9.7" |
+| Refresh time | `full_refresh_time = 25000` ms | da misurare | Allineare al tempo reale misurato sulla banda che stampa |
+| LUT | OTP del controller | da verificare | Se ghosting, LUT esplicite via `0x32` |
 
 ---
 
@@ -398,8 +416,7 @@ ereditati dalla base class è documentata in
 (o la versione inglese
 [drawImage_overloads.md](drawImage_overloads.md))
 — le firme sono identiche per i 2 driver, cambia solo l'implementazione
-sottostante (single-controller SSD1677 nel 9.7", dual-controller UC8179
-qui).
+sottostante (single-controller nel 9.7", dual-controller qui).
 
 Sono override di virtual del base class `GxEPD2_EPD` necessari al
 contratto della libreria — non sono pensati per uso diretto: lo sketch
@@ -546,22 +563,27 @@ GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS,
 
 ### Strategia di bring-up step-by-step
 
-1. **Step 1 — solo master cablato.** Collega solo il FFC #1, lascia il #2
-   staccato. Usa il costruttore single-CS:
+1. **Step 1 — una sola coda cablata: fatto.** Con il costruttore single-CS
    ```cpp
    // cs2 e busy2 a -1: le scritture verso la metà slave vengono saltate.
    display(GxEPD2_SOLUM_DRIVER_CLASS(GxEPD2_SOLUM_Pins{ 15, 27, 26, 25 }));
    ```
-   Risultato atteso: la metà sinistra (cols 0..479) si aggiorna, la metà
-   destra resta scura/random. Conferma: init UC8179 OK, BUSY rilasciato
-   entro ~25 s, refresh time ragionevole.
-2. **Step 2 — entrambi i controller cablati.** Se la metà destra non
-   funziona, prova nell'ordine:
-   - swap CS_M ↔ CS_S (inverti i 2 jumper);
-   - cambia il valore reverse-scan in `_InitDisplay()` (`0x00 = 0x03` →
-     `0x0f` per lo slave);
-   - se i pixel sono "scambiati di posizione" tra le metà, lo split fisico
-     è per riga invece che per colonna — vedi sezione 5.
+   una banda **960×384** si stampa correttamente: il controller risponde,
+   BUSY viene rilasciato, la geometria per controller è quella. Da qui vengono
+   le conclusioni su famiglia del controller e split.
+2. **Step 2 — seconda coda: non stampa nulla.** Lo stesso cablaggio spostato
+   sull'altro FFC non produce alcun aggiornamento. Da escludere in quest'ordine:
+   - **ordine dei pin ribaltato** sulla seconda coda: le due code escono da
+     bordi opposti, se sono la stessa parte la seconda è ruotata di 180° e il
+     pin *n* cade sul pin *N+1-n*. Verifica di continuità sui GND prima di
+     alimentare;
+   - **rail di boost non portati** sul secondo attacco: logica presente,
+     elettroforesi impossibile, quindi nessun pixel si muove;
+   - **BUSY o RST fuori posizione**: il driver resta appeso in attesa e non
+     arriva alcun comando.
+
+   Dettaglio delle tre ipotesi e come distinguerle in
+   [docs/122c/identificazione_pannello.md §6](docs/122c/identificazione_pannello.md#6-perchè-la-seconda-coda-resta-muta).
 
 ### Approvigionamento breakout FFC: usare 22 / 24 pin con 1 pin libero
 
