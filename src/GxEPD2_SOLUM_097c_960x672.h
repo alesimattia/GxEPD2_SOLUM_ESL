@@ -27,7 +27,7 @@
 //   SOLUM_M3_BWR_97. Dall'altra parte il datasheet SOLUM del donor dichiara
 //   PIXEL COLORS = BWRY per la 9.7".
 //   La contraddizione la risolve la misura, non la documentazione: la fa
-//   examples/panel_diagnostic/panel_diagnostic.ino di questa libreria, che
+//   examples/097c/panel_diagnostic/panel_diagnostic.ino di questa libreria, che
 //   esercita tutte le combinazioni dei due piani più il canale 0x28 e chiude
 //   con la scheda di osservazione che mappa ogni esito sulla conseguenza per
 //   questo file.

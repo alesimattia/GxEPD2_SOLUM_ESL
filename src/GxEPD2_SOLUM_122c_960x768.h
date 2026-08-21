@@ -1,47 +1,51 @@
 // =============================================================================
-// Driver custom per pannello e-paper SOLUM Newton-Core 12.2" 960x768 BWR su ESP32.
+// Driver custom per pannello e-paper SOLUM 12.2" 960x768 BWR su ESP32.
 //
 // Origine:
 //   - Libreria base: GxEPD2 (https://github.com/ZinggJM/GxEPD2).
-//   - Scheletro strutturale: GxEPD2_1248c (Good Display GDEY1248Z51,
-//     controller UC8179, dual-controller master/slave). Per maggiori
-//     informazioni: src/epd3c/GxEPD2_1248c.h e GxEPD2_1248c.cpp.
+//   - Scheletro strutturale dual-controller: GxEPD2_1248c (ScreenPart,
+//     _writeCommandAll, _waitWhileAnyBusy, dispatch outer-class). Per
+//     maggiori informazioni: src/epd3c/GxEPD2_1248c.h e GxEPD2_1248c.cpp.
+//   - Command set SSD16xx: GxEPD2_SOLUM_097c_960x672.h (driver SOLUM 9.7"
+//     del progetto) e lo stock GxEPD2_1160c_GDEY116Z91, che concordano su
+//     init, piani RAM, addressing, power e refresh.
 //   - Custom features (showImage page-hint, bulk-SPI writeBytes,
-//     _cleanAccentIfDirty): portate da GxEPD2_SOLUM_097c_960x672.h
-//     (driver SOLUM 9.7" del progetto, controller SSD1677 single-channel).
+//     _cleanAccentIfDirty): portate dal driver SOLUM 9.7".
 //
 // Pannello pilotato:
-//   - Produttore: SOLUM (modulo ESL Newton-Core 12.2" riusato).
-//   - Risoluzione: 960x768 (datasheet PDF Newton-Core_Specifications.pdf).
+//   - Produttore: SOLUM, modulo ESL 12.2" riusato. La diagonale esiste in due
+//     linee, Newton PRO (modello EL122H6W4A, etichetta di fabbrica
+//     "Newton PRO 12.2" BWR normal") e Newton Core / M3 (etichetta
+//     "M3 12.2" NEWTON BWR Normal"), con lo stesso pannello: cambiano scheda
+//     tag e guscio. Quale sia un dato esemplare lo dice l'etichetta sul vetro.
+//   - Risoluzione: 768x960 nativi, pilotati in landscape come 960x768.
 //   - Colori: 3 colori nativi (bianco / nero / rosso). Niente giallo,
 //     a differenza del driver SOLUM 9.7" del progetto.
-//   - Connettività: 2 cavi FFC da 21 pin -> assumption "dual-controller
-//     master/slave" coerente con il pattern del 1248c.
+//   - Connettività: 2 code FFC, una per controller, al centro dei due bordi
+//     lunghi del pannello.
 //   - Refresh: solo full refresh (~25 s), niente fast partial update.
 //
-// !!! ASSUMPTION CONTROLLER (TODO[VERIFY] al bring-up):
-//   Il datasheet Newton-Core è marketing-only e NON dichiara il controller
-//   IC. La scelta UC8179 è motivata da:
-//     - 2 FFC da 21 pin = pattern dual-controller (coerente con 1248c).
-//     - 12.2" ~ 12.48" (1248c) per dimensione fisica.
-//   Piano B: se al bring-up il pannello non risponde con la sequenza UC8179,
-//   sostituire _InitDisplay/_PowerOn/_PowerOff/_Update_Full/hibernate con la
-//   sequenza SSD1677 del driver 9.7" (file GxEPD2_SOLUM_097c_960x672.h).
-//   Lo scheletro dual-controller in questo header (ScreenPart M/S,
-//   _writeCommandAll/_writeDataAll, _waitWhileAnyBusy) resta valido in
-//   entrambi i casi.
+// Controller e geometria (misurati, vedi docs/122c/identificazione_pannello.md):
+//   Ogni controller pilota 960x384 e lo split cade sull'asse corto del
+//   pannello: in coordinate driver sono due bande orizzontali, righe 0..383
+//   al master e 384..767 allo slave. Il silicio è SSD16xx: i 960 source
+//   dell'SSD1677 coincidono con l'asse lungo, i suoi 680 gate non bastano per
+//   768 linee e da qui i due controller da 384 gate ciascuno. Con due soli
+//   controller l'UC8179 (800x600) non copre il pannello in nessuna
+//   spartizione, quindi il suo command set non è utilizzabile.
 //
-// !!! ASSUMPTION SPLIT MASTER/SLAVE (TODO[VERIFY] al bring-up):
-//   Il datasheet non dichiara come i 2 FFC mappino sui pixel del pannello.
-//   Assumption iniziale: split verticale, master = colonne 0..479
-//   (sinistra), slave = colonne 480..959 (destra). Coerente con il pattern
-//   del 1248c che mette M1/M2 a sinistra e S1/S2 a destra.
-//   Se al bring-up solo metà del display si aggiorna o ci sono artefatti
-//   sulla giunzione, valutare:
-//     - split orizzontale: master = righe 0..383 (alto), slave = 384..767;
-//     - swap master <-> slave: cs_m e cs_s scambiati a livello hardware;
-//     - reverse scan diverso (cmd 0x00 panel setting): cambiare _PANEL_S
-//       da 0x03 (reverse) a 0x0f (normale) o viceversa.
+// !!! ORIENTAMENTO DELLE DUE BANDE (da verificare al bring-up):
+//   Le due code escono da bordi opposti, quindi il secondo controller è
+//   presumibilmente ruotato di 180° rispetto al primo. L'SSD1677 non offre
+//   una reverse scan hardware (cmd 0x01 bit TB = 1 è dichiarato Reserved dal
+//   datasheet), quindi il ribaltamento vive nel data path: ordine delle righe
+//   e dei byte invertito, bit invertiti dentro il byte, finestra RAM
+//   riposizionata di conseguenza. Default: master normale, slave ruotato di
+//   180°. Se l'immagine esce specchiata su una delle due bande, le quattro
+//   combinazioni si provano dallo sketch con setMasterMirror() /
+//   setSlaveMirror() senza toccare questo file. Se poi le misure dicessero
+//   che la seconda banda ha lo stesso verso della prima, il default corretto
+//   diventa setSlaveMirror(false, false).
 //
 // Requisiti build:
 //   - HW SPI (HSPI su ESP32 tramite la Waveshare E-Paper ESP32 Driver Board
@@ -74,12 +78,14 @@
 //   i moduli applicativi scritti per il 9.7" compilano contro questo driver
 //   senza rami condizionali.
 //
-// !!! DRIVER NON VALIDATO SU HARDWARE:
-//   Nessuna delle assumption qui sotto è stata confermata sul pannello. Il
-//   controller stesso è in discussione: examples/12_2c/dual_panel_finder
-//   esiste per stabilire se il Newton-Core risponda a SSD16xx invece che a
-//   UC8179. Finchè quella misura non c'è, questo file va letto come una
-//   proposta di init, non come un driver funzionante.
+// !!! STATO DEL BRING-UP:
+//   Una sola banda è stata validata sul pannello: con un solo FFC cablato e
+//   un driver stock SSD16xx si stampa correttamente un rettangolo 960x384.
+//   Da qui vengono il command set e la geometria di questo file. Non è ancora
+//   validato niente di ciò che riguarda le due bande insieme: la seconda coda
+//   non risponde (ipotesi in docs/122c/identificazione_pannello.md §6), quindi
+//   il dispatch a due controller, l'orientamento relativo delle bande e la
+//   giunzione fra loro restano da provare sul pannello.
 //
 // BUS SPI:
 //   le primitive di bus passano da _pSPIx / _spi_settings della base
@@ -116,25 +122,27 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
     static const uint16_t WIDTH = 960;
     static const uint16_t WIDTH_VISIBLE = WIDTH;
     static const uint16_t HEIGHT = 768;
-    // Riuso GDEY1248Z51 come Panel enum (stesso pattern del driver 9.7" che
-    // riusa GDEM133Z91): evita la modifica invasiva di GxEPD2.h. La scelta è
-    // motivata dal fatto che 1248c è la base strutturale di questo driver.
-    static const GxEPD2::Panel panel = GxEPD2::GDEY1248Z51;
+    /** Identificatore preso a prestito, non una dichiarazione di modello: il
+     *  pannello è un SOLUM 12.2" 960x768 e non esiste un enum per lui.
+     *  GxEPD2.h è upstream e non si tocca, quindi si riusa il valore di un
+     *  pannello SSD1677, come fa già il driver 9.7" della libreria.
+     *  GxEPD2::Panel non ha usi funzionali nei template (l'unico confronto è
+     *  su GDEW0154Z04), quindi la scelta non ha effetti sul comportamento. */
+    static const GxEPD2::Panel panel = GxEPD2::GDEM133Z91;
     static const bool hasColor = true;
     static const bool hasPartialUpdate = true; // partial window addressing, full window refresh
     static const bool hasFastPartialUpdate = false;
-    static const uint16_t power_on_time = 200;       // ms (come 1248c)
-    static const uint16_t power_off_time = 50;       // ms (come 1248c)
+    static const uint16_t power_on_time = 200;       // ms
+    static const uint16_t power_off_time = 50;       // ms
     static const uint16_t full_refresh_time = 25000; // ms, conservativo per 12.2"
     static const uint16_t partial_refresh_time = 25000;
 
-    // Split master/slave (TODO[VERIFY]): metà larghezza per ogni controller,
-    // altezza piena. Coerente con il pattern del 1248c (M = sinistra,
-    // S = destra). Le costanti sono usate sia dalla classe outer per dispatch
-    // delle scritture sia dalle ScreenPart per l'addressing locale.
-    static const uint16_t M_WIDTH = 480;  // master = colonne 0..479
-    static const uint16_t S_WIDTH = 480;  // slave  = colonne 480..959
-    static const uint16_t PART_HEIGHT = HEIGHT;
+    // Split master/slave: larghezza piena per ogni controller, metà altezza.
+    // I 960 px sono l'asse source, i 768 l'asse gate, spartito 384 + 384 fra i
+    // due controller. Le costanti sono usate sia dalla classe outer per il
+    // dispatch delle scritture sia dalle ScreenPart per l'addressing locale.
+    static const uint16_t PART_WIDTH = WIDTH;       // 960 source per controller
+    static const uint16_t PART_HEIGHT = HEIGHT / 2; // master righe 0..383, slave 384..767
 
     // ----- Costruttori -----
 #if defined(ESP32)
@@ -196,9 +204,9 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
 
     // ------------------------------------------------------------------
     // API siblings per scrittura single-channel (senza refresh).
-    // Stessa shape per i 2 canali del controller UC8179:
-    //   writeImageBlack -> cmd 0x10 (black/white plane, no invert)
-    //   writeImageRed   -> cmd 0x13 (red accent, invert applicato)
+    // Stessa shape per i 2 piani RAM del controller SSD16xx:
+    //   writeImageBlack -> cmd 0x24 (black/white plane, no invert)
+    //   writeImageRed   -> cmd 0x26 (red accent, invert applicato)
     // Convenzione bitmap input: bit=1 dove il pixel NON appartiene al canale
     // (stesso formato prodotto da epd_image_converter.pyw e image2cpp).
     // ------------------------------------------------------------------
@@ -230,6 +238,18 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
     void writeImageYellow(const uint8_t* /*bitmap*/, int16_t /*x*/, int16_t /*y*/,
                           int16_t /*w*/, int16_t /*h*/, bool /*pgm*/ = true) {}
 
+    /**
+     * Orientamento delle due bande. Le due code del pannello escono da bordi
+     * opposti, quindi il secondo controller è presumibilmente ruotato di 180°
+     * rispetto al primo: default master (false, false), slave (true, true).
+     * L'SSD1677 non ha una reverse scan hardware, quindi il ribaltamento è nel
+     * data path e queste chiamate lo governano senza ricompilare il driver.
+     * Da chiamare prima del primo write; servono a provare le combinazioni al
+     * bring-up quando una banda esce specchiata.
+     */
+    void setMasterMirror(bool mirror_x, bool mirror_y) { M.setMirror(mirror_x, mirror_y); }
+    void setSlaveMirror(bool mirror_x, bool mirror_y)  { S.setMirror(mirror_x, mirror_y); }
+
   private:
     // ------------------------------------------------------------------
     // ScreenPart: gestisce un singolo controller (master o slave).
@@ -241,7 +261,7 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
       public:
         const uint16_t WIDTH;
         const uint16_t HEIGHT;
-        ScreenPart(uint16_t width, uint16_t height, bool rev_scan, int16_t cs, int16_t dc,
+        ScreenPart(uint16_t width, uint16_t height, bool mirror_x, bool mirror_y, int16_t cs, int16_t dc,
                    SPIClass*& pSPIx, SPISettings& spi_settings);
         void writeScreenBuffer(uint8_t command, uint8_t value);
         void writeImagePart(uint8_t command, const uint8_t bitmap[], int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
@@ -249,8 +269,12 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
         void writeCommand(uint8_t c);
         void writeData(uint8_t d);
         bool isActive() const { return _cs >= 0; }
+        // Ribaltamento della banda gestita da questa ScreenPart, vedi
+        // setSlaveMirror() nella classe outer.
+        void setMirror(bool mirror_x, bool mirror_y) { _mirror_x = mirror_x; _mirror_y = mirror_y; }
       private:
-        bool    _rev_scan;
+        bool    _mirror_x;
+        bool    _mirror_y;
         int16_t _cs;
         int16_t _dc;
         // Riferimenti allo stato SPI del driver, non copie: così un
@@ -258,6 +282,10 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
         SPIClass*&   _pSPIx;
         SPISettings& _spi_settings;
         void _setPartialRamArea(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
+        // Inverte l'ordine degli 8 bit di un byte: serve quando la banda è
+        // specchiata lungo X, perchè il ribaltamento dei soli byte lascerebbe
+        // i pixel invertiti dentro ogni gruppo di 8.
+        static uint8_t _reverseBits(uint8_t b);
     };
 
     // ------------------------------------------------------------------
@@ -288,12 +316,11 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
     int16_t _dc_pin;
     int16_t _rst_pin;
     int16_t _busy_m, _busy_s;
-    int8_t  _temperature;
 
     ScreenPart M;
     ScreenPart S;
 
-    // Dirty flag canale rosso (cmd 0x13). Permette di saltare la pulizia
+    // Dirty flag canale rosso (cmd 0x26). Permette di saltare la pulizia
     // pre-draw quando non serve (catena di immagini B/N consecutive).
     bool _color_dirty = false;
 
@@ -314,13 +341,12 @@ inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(
     int16_t cs_m, int16_t cs_s,
     int16_t dc, int16_t rst,
     int16_t busy_m, int16_t busy_s) :
-  GxEPD2_EPD(cs_m, dc, rst, busy_m, LOW, 30000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
+  GxEPD2_EPD(cs_m, dc, rst, busy_m, HIGH, 30000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
   _sck(sck), _miso(miso), _mosi(mosi),
   _cs_m(cs_m), _cs_s(cs_s), _dc_pin(dc), _rst_pin(rst),
   _busy_m(busy_m), _busy_s(busy_s),
-  _temperature(20),
-  M(M_WIDTH, PART_HEIGHT, false, cs_m, dc, _pSPIx, _spi_settings),
-  S(S_WIDTH, PART_HEIGHT, true,  cs_s, dc, _pSPIx, _spi_settings)
+  M(PART_WIDTH, PART_HEIGHT, false, false, cs_m, dc, _pSPIx, _spi_settings),
+  S(PART_WIDTH, PART_HEIGHT, true,  true,  cs_s, dc, _pSPIx, _spi_settings)
 {
   // Default storico di questo driver: SPI globale a 20 MHz. Passa dai membri
   // della base invece di essere cablato nelle primitive, così un selectSPI()
@@ -333,13 +359,12 @@ inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(
     int16_t cs_m, int16_t cs_s,
     int16_t dc, int16_t rst,
     int16_t busy_m, int16_t busy_s) :
-  GxEPD2_EPD(cs_m, dc, rst, busy_m, LOW, 30000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
+  GxEPD2_EPD(cs_m, dc, rst, busy_m, HIGH, 30000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
   _sck(SCK), _miso(MISO), _mosi(MOSI),
   _cs_m(cs_m), _cs_s(cs_s), _dc_pin(dc), _rst_pin(rst),
   _busy_m(busy_m), _busy_s(busy_s),
-  _temperature(20),
-  M(M_WIDTH, PART_HEIGHT, false, cs_m, dc, _pSPIx, _spi_settings),
-  S(S_WIDTH, PART_HEIGHT, true,  cs_s, dc, _pSPIx, _spi_settings)
+  M(PART_WIDTH, PART_HEIGHT, false, false, cs_m, dc, _pSPIx, _spi_settings),
+  S(PART_WIDTH, PART_HEIGHT, true,  true,  cs_s, dc, _pSPIx, _spi_settings)
 {
   // Default storico di questo driver: SPI globale a 20 MHz. Passa dai membri
   // della base invece di essere cablato nelle primitive, così un selectSPI()
@@ -349,16 +374,15 @@ inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(
 
 // Variante single-CS: utile per bring-up con un solo controller cablato
 // fisicamente. Lo slave riceve cs=-1, quindi le scritture verso S sono no-op.
-// Mezzo display non aggiornerà (probabilmente metà destra) ma il bring-up
+// La banda bassa del pannello (righe 384..767) non si aggiorna, ma il bring-up
 // del master si può validare in isolamento.
 inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(int16_t cs, int16_t dc, int16_t rst, int16_t busy) :
-  GxEPD2_EPD(cs, dc, rst, busy, LOW, 30000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
+  GxEPD2_EPD(cs, dc, rst, busy, HIGH, 30000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
   _sck(SCK), _miso(MISO), _mosi(MOSI),
   _cs_m(cs), _cs_s(-1), _dc_pin(dc), _rst_pin(rst),
   _busy_m(busy), _busy_s(-1),
-  _temperature(20),
-  M(M_WIDTH, PART_HEIGHT, false, cs, dc, _pSPIx, _spi_settings),
-  S(S_WIDTH, PART_HEIGHT, true,  -1, dc, _pSPIx, _spi_settings)
+  M(PART_WIDTH, PART_HEIGHT, false, false, cs, dc, _pSPIx, _spi_settings),
+  S(PART_WIDTH, PART_HEIGHT, true,  true,  -1, dc, _pSPIx, _spi_settings)
 {
   // Default storico di questo driver: SPI globale a 20 MHz. Passa dai membri
   // della base invece di essere cablato nelle primitive, così un selectSPI()
@@ -404,8 +428,8 @@ inline void GxEPD2_SOLUM_122c_960x768::writeScreenBuffer(uint8_t value)
   writeScreenBuffer(value, 0x00);
 }
 
-// Init dei buffer del controller: B/N (cmd 0x10) e rosso (cmd 0x13).
-// UC8179 polarity: cmd 0x10 bit=1=white bit=0=black; cmd 0x13 bit=1=red.
+// Init dei buffer del controller: B/N (cmd 0x24) e rosso (cmd 0x26).
+// SSD16xx polarity: cmd 0x24 bit=1=white bit=0=black; cmd 0x26 bit=1=red.
 // I parametri sono valori RAW da scrivere nel piano RAM (no inversione).
 // Esempi pratici per i 3 colori puri:
 //   (black=0xFF, color=0x00) -> bianco totale
@@ -417,8 +441,8 @@ inline void GxEPD2_SOLUM_122c_960x768::writeScreenBuffer(uint8_t value)
 inline void GxEPD2_SOLUM_122c_960x768::writeScreenBuffer(uint8_t black_value, uint8_t color_value)
 {
   if (!_init_display_done) _InitDisplay();
-  _writeScreenBuffer(0x10, black_value);
-  _writeScreenBuffer(0x13, color_value);
+  _writeScreenBuffer(0x24, black_value);
+  _writeScreenBuffer(0x26, color_value);
   _initial_write = false;
   _color_dirty = false;
 }
@@ -433,8 +457,8 @@ inline void GxEPD2_SOLUM_122c_960x768::_writeScreenBuffer(uint8_t command, uint8
 // Pulisce il canale rosso se dirty e poi scrive il piano BW.
 inline void GxEPD2_SOLUM_122c_960x768::writeImage(const uint8_t bitmap[], int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
-  if (!_initial_write) _cleanAccentIfDirty(0x13, _color_dirty);
-  _writeImage(0x10, bitmap, x, y, w, h, invert, mirror_y, pgm);
+  if (!_initial_write) _cleanAccentIfDirty(0x26, _color_dirty);
+  _writeImage(0x24, bitmap, x, y, w, h, invert, mirror_y, pgm);
 }
 
 inline void GxEPD2_SOLUM_122c_960x768::_writeImage(uint8_t command, const uint8_t* bitmap, int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
@@ -442,18 +466,20 @@ inline void GxEPD2_SOLUM_122c_960x768::_writeImage(uint8_t command, const uint8_
   if (_initial_write) writeScreenBuffer();
   if (!_init_display_done) _InitDisplay();
   if (!bitmap) return;
-  // Dispatch master/slave: master gestisce le X 0..M.WIDTH-1, slave le X
-  // M.WIDTH..WIDTH-1. La ScreenPart::writeImagePart fa il clipping interno.
+  // Dispatch master/slave: master gestisce le Y 0..M.HEIGHT-1, slave le Y
+  // M.HEIGHT..HEIGHT-1. La ScreenPart::writeImagePart fa il clipping interno,
+  // e la Y negativa passata allo slave diventa l'offset con cui pesca le righe
+  // sorgente della propria banda.
   M.writeImagePart(command, bitmap, 0, 0, w, h, x, y, w, h, invert, mirror_y, pgm);
   if (S.isActive())
-    S.writeImagePart(command, bitmap, 0, 0, w, h, x - int16_t(M.WIDTH), y, w, h, invert, mirror_y, pgm);
+    S.writeImagePart(command, bitmap, 0, 0, w, h, x, y - int16_t(M.HEIGHT), w, h, invert, mirror_y, pgm);
 }
 
 inline void GxEPD2_SOLUM_122c_960x768::writeImagePart(const uint8_t bitmap[], int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
     int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
-  if (!_initial_write) _cleanAccentIfDirty(0x13, _color_dirty);
-  _writeImagePart(0x10, bitmap, x_part, y_part, w_bitmap, h_bitmap, x, y, w, h, invert, mirror_y, pgm);
+  if (!_initial_write) _cleanAccentIfDirty(0x26, _color_dirty);
+  _writeImagePart(0x24, bitmap, x_part, y_part, w_bitmap, h_bitmap, x, y, w, h, invert, mirror_y, pgm);
 }
 
 inline void GxEPD2_SOLUM_122c_960x768::_writeImagePart(uint8_t command, const uint8_t* bitmap, int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
@@ -464,7 +490,7 @@ inline void GxEPD2_SOLUM_122c_960x768::_writeImagePart(uint8_t command, const ui
   if (!bitmap) return;
   M.writeImagePart(command, bitmap, x_part, y_part, w_bitmap, h_bitmap, x, y, w, h, invert, mirror_y, pgm);
   if (S.isActive())
-    S.writeImagePart(command, bitmap, x_part, y_part, w_bitmap, h_bitmap, x - int16_t(M.WIDTH), y, w, h, invert, mirror_y, pgm);
+    S.writeImagePart(command, bitmap, x_part, y_part, w_bitmap, h_bitmap, x, y - int16_t(M.HEIGHT), w, h, invert, mirror_y, pgm);
 }
 
 // HOT PATH (paged full-window): GxEPD2_3C::nextPage() in modalità full-window
@@ -473,10 +499,10 @@ inline void GxEPD2_SOLUM_122c_960x768::_writeImagePart(uint8_t command, const ui
 // nella prossima iterazione skippa le righe già scritte.
 inline void GxEPD2_SOLUM_122c_960x768::writeImage(const uint8_t* black, const uint8_t* color, int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
-  if (black) _writeImage(0x10, black, x, y, w, h, invert, mirror_y, pgm);
+  if (black) _writeImage(0x24, black, x, y, w, h, invert, mirror_y, pgm);
   if (color)
   {
-    _writeImage(0x13, color, x, y, w, h, !invert, mirror_y, pgm);
+    _writeImage(0x26, color, x, y, w, h, !invert, mirror_y, pgm);
     _color_dirty = true;
   }
   _show_image_page_hint++;
@@ -485,10 +511,10 @@ inline void GxEPD2_SOLUM_122c_960x768::writeImage(const uint8_t* black, const ui
 inline void GxEPD2_SOLUM_122c_960x768::writeImagePart(const uint8_t* black, const uint8_t* color, int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
     int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
-  if (black) _writeImagePart(0x10, black, x_part, y_part, w_bitmap, h_bitmap, x, y, w, h, invert, mirror_y, pgm);
+  if (black) _writeImagePart(0x24, black, x_part, y_part, w_bitmap, h_bitmap, x, y, w, h, invert, mirror_y, pgm);
   if (color)
   {
-    _writeImagePart(0x13, color, x_part, y_part, w_bitmap, h_bitmap, x, y, w, h, !invert, mirror_y, pgm);
+    _writeImagePart(0x26, color, x_part, y_part, w_bitmap, h_bitmap, x, y, w, h, !invert, mirror_y, pgm);
     _color_dirty = true;
   }
 }
@@ -545,15 +571,19 @@ inline void GxEPD2_SOLUM_122c_960x768::powerOff()
   _PowerOff();
 }
 
-// Deep sleep UC8179: cmd 0x07 0xA5. Protetto contro chiamate multiple.
+/** Deep sleep SSD16xx: cmd 0x10 con A[1:0] = 11. Il datasheet SSD1677 per 0x10
+ *  definisce solo 00 (normale) e 11 (deep sleep), da cui 0x03; è anche il
+ *  valore che usa OpenEPaperLink sulla stessa famiglia. Per uscirne serve un
+ *  HW reset, che _InitDisplay() fa già quando _hibernating è alto.
+ *  Protetto contro chiamate multiple. */
 inline void GxEPD2_SOLUM_122c_960x768::hibernate()
 {
   if (_hibernating) return;
   _PowerOff();
   if (_rst >= 0)
   {
-    _writeCommandAll(0x07);
-    _writeDataAll(0xA5);
+    _writeCommandAll(0x10);
+    _writeDataAll(0x03);
     _hibernating = true;
     _init_display_done = false;
     _color_dirty = false;
@@ -566,21 +596,21 @@ inline void GxEPD2_SOLUM_122c_960x768::writeImageBlack(const uint8_t* bitmap,
     int16_t x, int16_t y, int16_t w, int16_t h, bool pgm)
 {
   if (!bitmap) return;
-  _writeImage(0x10, bitmap, x, y, w, h, false, false, pgm);
+  _writeImage(0x24, bitmap, x, y, w, h, false, false, pgm);
 }
 
 inline void GxEPD2_SOLUM_122c_960x768::writeImageRed(const uint8_t* bitmap,
     int16_t x, int16_t y, int16_t w, int16_t h, bool pgm)
 {
   if (!bitmap) return;
-  _writeImage(0x13, bitmap, x, y, w, h, true, false, pgm);
+  _writeImage(0x26, bitmap, x, y, w, h, true, false, pgm);
   _color_dirty = true;
 }
 
 // ----- Helper privati outer-class -----
 
 // Pulizia selettiva di un canale accent: scrive 0x00 ovunque (polarity nativa
-// UC8179 = "accent spento") e resetta il flag dirty.
+// SSD16xx = "accent spento") e resetta il flag dirty.
 inline void GxEPD2_SOLUM_122c_960x768::_cleanAccentIfDirty(uint8_t command, bool& dirty_flag)
 {
   if (dirty_flag)
@@ -673,7 +703,11 @@ inline void GxEPD2_SOLUM_122c_960x768::_PowerOn()
 {
   if (!_power_is_on)
   {
-    _writeCommandMaster(0x04); // power on (UC8179)
+    // SSD16xx: display update sequence "solo power on" + master activation.
+    // Va a entrambi i controller, che alimentano ciascuno la propria banda.
+    _writeCommandAll(0x22);
+    _writeDataAll(0xc0);
+    _writeCommandAll(0x20);
     _waitWhileAnyBusy("_PowerOn", power_on_time);
   }
   _power_is_on = true;
@@ -683,83 +717,77 @@ inline void GxEPD2_SOLUM_122c_960x768::_PowerOff()
 {
   if (_power_is_on)
   {
-    _writeCommandMaster(0x02); // power off (UC8179)
+    _writeCommandAll(0x22);
+    _writeDataAll(0xc3); // sequence "solo power off"
+    _writeCommandAll(0x20);
     _waitWhileAnyBusy("_PowerOff", power_off_time);
   }
   _power_is_on = false;
 }
 
-// Sequenza UC8179 portata da GxEPD2_1248c::_InitDisplay, semplificata per
-// 2 controller (M, S) invece di 4 (M1, S1, M2, S2). Tutti i valori di
-// resolution setting (cmd 0x61) sono ricalcolati per WIDTH=960 HEIGHT=768
-// con split master/slave 480/480.
-//
-// TODO[VERIFY] al bring-up:
-//   - cmd 0x00 panel setting: M=0x0f (BWROTP normal scan), S=0x03 (BWROTP
-//     reverse scan). Speculare al pattern 1248c. Se al bring-up solo metà
-//     del display si aggiorna o lo split è invertito, scambiare i valori.
-//   - cmd 0x61 resolution: 480x768. Il valore "768" in 2 byte BE = 0x0300.
-//   - cmd 0x06 booster soft start: valori 0x27 0x27 0x18 0x17 mantenuti
-//     dal 1248c. Se il pannello ha contrasto basso o ghosting persistente,
-//     calibrare leggendo il datasheet UC8179.
+/** Init SSD16xx, identico per i due controller e quindi mandato in broadcast
+ *  con _writeCommandAll: ogni controller pilota la stessa geometria
+ *  (960 source x 384 gate) e differisce solo per l'orientamento della banda,
+ *  che vive nel data path e non nei registri.
+ *
+ *  La sequenza è quella del driver 9.7" della libreria, che gira su questo
+ *  stesso silicio; lo stock GxEPD2_1160c_GDEY116Z91 concorda sui comandi e si
+ *  limita a un init più corto (SWRESET + VBD, tutto il resto dai default OTP).
+ *
+ *  Nessun power on qui: su SSD16xx è la display update sequence di
+ *  _Update_Full (0x22 = 0xF7) a fare power on, refresh e power off.
+ *
+ *  MUX derivato da PART_HEIGHT: sono le gate line che ogni controller pilota
+ *  davvero, oggi 384. Il POR del registro è 680, che farebbe scandire a ogni
+ *  refresh 296 linee inesistenti.
+ *
+ *  Il valore NON va cablato: era scritto qui come `0x7F 0x01` e la stessa
+ *  informazione stava anche in PART_HEIGHT, quindi un conteggio gate diverso
+ *  misurato al bring-up avrebbe richiesto due modifiche coordinate, e
+ *  dimenticarne una dà un pannello che scandisce il numero sbagliato di linee
+ *  senza che niente lo segnali. Ora la sola PART_HEIGHT decide. */
 inline void GxEPD2_SOLUM_122c_960x768::_InitDisplay()
 {
   if (_hibernating) _resetDual();
-  // panel setting (cmd 0x00)
-  M.writeCommand(0x00);
-  M.writeData(0x0f);  // BWROTP, scan normale
-  if (S.isActive())
-  {
-    S.writeCommand(0x00);
-    S.writeData(0x03);  // BWROTP, scan reverse (per la meta' destra)
-  }
-  // booster soft start (cmd 0x06, solo master, lo slave segue via cascade setting)
-  M.writeCommand(0x06);
-  M.writeData(0x27);
-  M.writeData(0x27);
-  M.writeData(0x18);
-  M.writeData(0x17);
-  // resolution setting (cmd 0x61) per ogni ScreenPart: 480 source x 768 gate
-  // 480 = 0x01E0, 768 = 0x0300
-  M.writeCommand(0x61);
-  M.writeData(0x01); M.writeData(0xE0);  // source 480
-  M.writeData(0x03); M.writeData(0x00);  // gate 768
-  if (S.isActive())
-  {
-    S.writeCommand(0x61);
-    S.writeData(0x01); S.writeData(0xE0);
-    S.writeData(0x03); S.writeData(0x00);
-  }
-  // DUSPI: SPI mode = single DIN
-  _writeCommandAll(0x15);
-  _writeDataAll(0x20);
-  // Vcom and data interval setting
-  _writeCommandAll(0x50);
-  _writeDataAll(0x11); // border KW
-  _writeDataAll(0x07);
-  // TCON setting
-  _writeCommandAll(0x60);
-  _writeDataAll(0x22);
-  // Spacing (cmd 0xE3) e cascade setting (cmd 0xE0): copiati dal 1248c.
-  _writeCommandAll(0xE3);
+  delay(10);
+  _writeCommandAll(0x12);  // SWRESET
+  delay(200);              // SSD16xx: ~100-300 ms prima di accettare comandi
+  _writeCommandAll(0x0C);  // soft start
+  _writeDataAll(0xAE);
+  _writeDataAll(0xC7);
+  _writeDataAll(0xC3);
+  _writeDataAll(0xC0);
+  _writeDataAll(0x80);
+  // driver output control: MUX = (gate line - 1) su 10 bit, little endian,
+  // più un terzo byte di direzione di scansione a 0 (GD/SM/TB ai default: sul
+  // SSD1677 TB = 1 è dichiarato Reserved, quindi la reverse scan hardware non
+  // esiste ed è per questo che il ribaltamento sta nel data path)
+  const uint16_t mux = PART_HEIGHT - 1;
+  _writeCommandAll(0x01);
+  _writeDataAll(uint8_t(mux & 0xFF));
+  _writeDataAll(uint8_t(mux >> 8));
   _writeDataAll(0x00);
-  _writeCommandAll(0xE0);
+  _writeCommandAll(0x3C);  // border waveform
+  _writeDataAll(0x01);     // LUT1, bianco
+  _writeCommandAll(0x18);  // temperatura dal sensore interno
+  _writeDataAll(0x80);
+  // Entry mode x/y increase: la finestra RAM la riscrive ogni write, ma il
+  // verso di avanzamento del contatore è uguale per tutti i write.
+  _writeCommandAll(0x11);
   _writeDataAll(0x03);
-  // Force temperature (cmd 0xE5): 20 default, da affinare con
-  // _getMasterTemperature se ghosting termico osservabile.
-  _writeCommandAll(0xE5);
-  _writeDataAll(_temperature);
-
-  _PowerOn();
   _init_display_done = true;
 }
 
-// Esegue il refresh elettroforetico full-window (~25 s). UC8179 usa cmd 0x12
-// Display Refresh che innesca il ciclo completo (load LUT + scan).
+/** Esegue il refresh elettroforetico full-window (~25 s). Su SSD16xx la
+ *  display update sequence 0xF7 comprende power on, load LUT dalla OTP, scan e
+ *  power off: da qui _power_is_on = false all'uscita. */
 inline void GxEPD2_SOLUM_122c_960x768::_Update_Full()
 {
-  _writeCommandAll(0x12);
+  _writeCommandAll(0x22);
+  _writeDataAll(0xF7);
+  _writeCommandAll(0x20);  // master activation
   _waitWhileAnyBusy("_Update_Full", full_refresh_time);
+  _power_is_on = false;
   _show_image_page_hint = 0;
 }
 
@@ -788,6 +816,14 @@ inline void GxEPD2_SOLUM_122c_960x768::_writeDataMaster(uint8_t d)
   _pSPIx->endTransaction();
 }
 
+/** Abbassa entrambi i CS e manda il byte una volta sola: i due controller lo
+ *  ricevono in parallelo. Va bene perchè CS è un ingresso e MOSI è condiviso,
+ *  quindi non c'è contesa.
+ *
+ *  Vale solo in scrittura: se un giorno si cablasse la linea di lettura del
+ *  pannello (SDO) su entrambe le code, con due CS bassi i due controller
+ *  piloterebbero insieme lo stesso filo. Una lettura va fatta selezionando un
+ *  solo controller. */
 inline void GxEPD2_SOLUM_122c_960x768::_writeCommandAll(uint8_t c)
 {
   _pSPIx->beginTransaction(_spi_settings);
@@ -812,9 +848,16 @@ inline void GxEPD2_SOLUM_122c_960x768::_writeDataAll(uint8_t d)
   _pSPIx->endTransaction();
 }
 
-// Attende che entrambi i controller (master + slave) abbiano rilasciato il
-// pin BUSY. Pattern OR-degli-AND-negati: usciamo solo quando NON è busy
-// alcuno dei due. Se _busy_s < 0 (single-controller bring-up) ignora lo slave.
+/** Attende che entrambi i controller (master + slave) abbiano rilasciato il pin
+ *  BUSY. Pattern OR-degli-AND-negati: usciamo solo quando NON è busy alcuno dei
+ *  due.
+ *
+ *  Lo slave viene ignorato se manca il suo BUSY (`_busy_s < 0`) **oppure se
+ *  manca il suo CS** (`_cs_s < 0`): un controller che non viene mai selezionato
+ *  non può essere occupato, e nel bring-up con una sola coda cablata il suo pin
+ *  BUSY è flottante. Senza la guardia su `_cs_s` un pinout con `cs2 = -1` e
+ *  `busy2` valorizzato manderebbe ogni attesa al timeout, perchè un input-only
+ *  senza pull (GPIO35 sulla board Waveshare) può restare letto come occupato. */
 inline void GxEPD2_SOLUM_122c_960x768::_waitWhileAnyBusy(const char* comment, uint16_t busy_time)
 {
   if (_busy_m >= 0)
@@ -825,7 +868,7 @@ inline void GxEPD2_SOLUM_122c_960x768::_waitWhileAnyBusy(const char* comment, ui
     {
       delay(1);
       bool nb_m = (_busy_level != digitalRead(_busy_m));
-      bool nb_s = (_busy_s >= 0) ? (_busy_level != digitalRead(_busy_s)) : true;
+      bool nb_s = ((_cs_s >= 0) && (_busy_s >= 0)) ? (_busy_level != digitalRead(_busy_s)) : true;
       if (nb_m && nb_s) break;
       if (micros() - start > _busy_timeout)
       {
@@ -845,9 +888,9 @@ inline void GxEPD2_SOLUM_122c_960x768::_waitWhileAnyBusy(const char* comment, ui
 // IMPLEMENTAZIONI INLINE — ScreenPart (controller singolo: master o slave)
 // =============================================================================
 
-inline GxEPD2_SOLUM_122c_960x768::ScreenPart::ScreenPart(uint16_t width, uint16_t height, bool rev_scan, int16_t cs, int16_t dc,
+inline GxEPD2_SOLUM_122c_960x768::ScreenPart::ScreenPart(uint16_t width, uint16_t height, bool mirror_x, bool mirror_y, int16_t cs, int16_t dc,
                                                          SPIClass*& pSPIx, SPISettings& spi_settings) :
-  WIDTH(width), HEIGHT(height), _rev_scan(rev_scan), _cs(cs), _dc(dc),
+  WIDTH(width), HEIGHT(height), _mirror_x(mirror_x), _mirror_y(mirror_y), _cs(cs), _dc(dc),
   _pSPIx(pSPIx), _spi_settings(spi_settings)
 {
 }
@@ -856,9 +899,12 @@ inline GxEPD2_SOLUM_122c_960x768::ScreenPart::ScreenPart(uint16_t width, uint16_
 // (=46080 byte per controller = 0.36s a 1.5us/byte), pre-riempiamo un buffer
 // di stack e lo scarichiamo a chunk via writeBytes(). Saving ~290 ms per
 // refresh full-screen rispetto al pattern per-byte del 1248c originale.
+// La finestra RAM va sempre riscritta prima del piano: su SSD16xx il contatore
+// di indirizzo resta dov'era finito il write precedente.
 inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeScreenBuffer(uint8_t command, uint8_t value)
 {
   if (_cs < 0) return; // ScreenPart non attiva
+  _setPartialRamArea(0, 0, WIDTH, HEIGHT);
   writeCommand(command);
   uint8_t buf[256];
   memset(buf, value, sizeof(buf));
@@ -875,14 +921,19 @@ inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeScreenBuffer(uint8_t com
   _pSPIx->endTransaction();
 }
 
-// Scrittura partial della metà di pannello pertinente a questa ScreenPart.
-// Bulk-SPI per riga: buffer di max WIDTH/8 byte (60 byte per WIDTH=480),
-// flush via writeBytes una volta per riga invece di per-byte transfer().
-//
-// L'addressing usa cmd 0x91 (partial in) / 0x90 (partial window setting) /
-// 0x92 (partial out), pattern del 1248c. Il _setPartialRamArea applica
-// _rev_scan se la ScreenPart è marked reverse (= metà destra del display
-// con scan invertito).
+/** Scrittura partial della banda di pannello pertinente a questa ScreenPart.
+ *  Bulk-SPI per riga: buffer di max WIDTH/8 byte (120 byte a WIDTH=960), flush
+ *  via writeBytes una volta per riga invece di per-byte transfer().
+ *
+ *  L'addressing è quello SSD16xx di _setPartialRamArea (0x44/0x45 finestra,
+ *  0x4E/0x4F contatore), che vale per un solo write: va riscritto ogni volta.
+ *
+ *  Se la banda è specchiata, il ribaltamento è qui e non nei registri, perchè
+ *  l'SSD1677 non ha una reverse scan hardware: le righe si leggono in ordine
+ *  inverso dentro la banda, i byte in ordine inverso dentro la riga e i bit in
+ *  ordine inverso dentro il byte. Il flag mirror_y del chiamante è un'altra
+ *  cosa e si compone con questo: quello ribalta il bitmap sorgente, questo la
+ *  banda fisica. */
 inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeImagePart(uint8_t command, const uint8_t bitmap[],
     int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
     int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
@@ -907,22 +958,25 @@ inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeImagePart(uint8_t comman
   h1 -= dy;
   if ((w1 <= 0) || (h1 <= 0)) return;
 
-  writeCommand(0x91); // partial in
   _setPartialRamArea(x1, y1, w1, h1);
   writeCommand(command);
 
   const int16_t rowBytes = w1 / 8;
-  uint8_t rowBuf[64]; // max WIDTH/8 = 480/8 = 60
+  uint8_t rowBuf[PART_WIDTH / 8]; // 120 byte: una riga piena a 960 px
   _pSPIx->beginTransaction(_spi_settings);
   digitalWrite(_cs, LOW);
   for (int16_t i = 0; i < h1; i++)
   {
+    // Riga e byte sorgente: il ribaltamento della banda si applica dentro la
+    // banda stessa, quindi sugli indici locali i e j.
+    const int16_t si = _mirror_y ? (h1 - 1 - i) : i;
     for (int16_t j = 0; j < rowBytes; j++)
     {
+      const int16_t sj = _mirror_x ? (rowBytes - 1 - j) : j;
       uint8_t data;
       int32_t idx = mirror_y
-          ? x_part / 8 + j + dx / 8 + ((h_bitmap - 1 - (y_part + i + dy))) * wb_bitmap
-          : x_part / 8 + j + dx / 8 + (y_part + i + dy) * wb_bitmap;
+          ? x_part / 8 + sj + dx / 8 + ((h_bitmap - 1 - (y_part + si + dy))) * wb_bitmap
+          : x_part / 8 + sj + dx / 8 + (y_part + si + dy) * wb_bitmap;
       if (pgm)
       {
 #if defined(__AVR) || defined(ESP8266) || defined(ESP32)
@@ -933,14 +987,13 @@ inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeImagePart(uint8_t comman
       }
       else data = bitmap[idx];
       if (invert) data = ~data;
+      if (_mirror_x) data = _reverseBits(data);
       rowBuf[j] = data;
     }
     _pSPIx->writeBytes(rowBuf, rowBytes);
   }
   digitalWrite(_cs, HIGH);
   _pSPIx->endTransaction();
-
-  writeCommand(0x92); // partial out
 }
 
 inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeCommand(uint8_t c)
@@ -965,22 +1018,42 @@ inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeData(uint8_t d)
   _pSPIx->endTransaction();
 }
 
-// Imposta la finestra parziale RAM del controller (cmd 0x90, UC8179).
-// Se _rev_scan è true (slave / metà destra del pannello fisico), riflette
-// X attorno al centro della ScreenPart per allineare l'addressing alla
-// numerazione fisica delle source line invertite.
+/** Imposta la finestra RAM del controller: 0x44/0x45 per gli estremi,
+ *  0x4E/0x4F per il contatore di indirizzo. Coordinate in pixel, non in byte
+ *  (il POR di XEnd è 0x3BF = 959).
+ *
+ *  Se la banda è specchiata, i dati arrivano già ribaltati dal data path e la
+ *  finestra va riposizionata in modo simmetrico, altrimenti l'immagine
+ *  risulterebbe ribaltata ma nel posto sbagliato. */
 inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::_setPartialRamArea(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
 {
-  if (_rev_scan) x = WIDTH - w - x;
-  uint16_t xe = (x + w - 1) | 0x0007; // byte boundary inclusivo
-  uint16_t ye = y + h - 1;
-  x &= 0xFFF8; // byte boundary
-  writeCommand(0x90);
-  writeData(x  / 256); writeData(x  % 256);
-  writeData(xe / 256); writeData(xe % 256);
-  writeData(y  / 256); writeData(y  % 256);
-  writeData(ye / 256); writeData(ye % 256);
-  writeData(0x01);
+  if (_mirror_x) x = WIDTH - w - x;
+  if (_mirror_y) y = HEIGHT - h - y;
+  writeCommand(0x44);
+  writeData(x % 256);
+  writeData(x / 256);
+  writeData((x + w - 1) % 256);
+  writeData((x + w - 1) / 256);
+  writeCommand(0x45);
+  writeData(y % 256);
+  writeData(y / 256);
+  writeData((y + h - 1) % 256);
+  writeData((y + h - 1) / 256);
+  writeCommand(0x4E);
+  writeData(x % 256);
+  writeData(x / 256);
+  writeCommand(0x4F);
+  writeData(y % 256);
+  writeData(y / 256);
+}
+
+// Inversione dell'ordine dei bit dentro il byte, per la banda specchiata su X.
+inline uint8_t GxEPD2_SOLUM_122c_960x768::ScreenPart::_reverseBits(uint8_t b)
+{
+  b = uint8_t((b & 0xF0) >> 4 | (b & 0x0F) << 4);
+  b = uint8_t((b & 0xCC) >> 2 | (b & 0x33) << 2);
+  b = uint8_t((b & 0xAA) >> 1 | (b & 0x55) << 1);
+  return b;
 }
 
 #endif

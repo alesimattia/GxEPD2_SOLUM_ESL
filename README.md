@@ -390,7 +390,7 @@ pin 12 è SDI e basta (vedi
 [§0.6](#06-interfaccia-elettrica-dallo-schematico-waveshare-v3)), quindi `0x27`
 read RAM, `0x2E` User ID read e `0x2F` status sono inutilizzabili. L'unica
 diagnostica possibile è scrivere un pattern e guardare il pannello: lo fa
-[`examples/panel_diagnostic`](examples/panel_diagnostic/panel_diagnostic.ino),
+[`examples/097c/panel_diagnostic`](examples/097c/panel_diagnostic/panel_diagnostic.ino),
 che vive in questa libreria perchè serve a costruire il driver, non il progetto
 consumer. Stampa in un solo refresh le quattro combinazioni della tabella su
 bande orizzontali numerate, più una fascia di controllo con `0x28 = 0xFF`, poi

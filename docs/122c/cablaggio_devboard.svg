@@ -60,26 +60,26 @@
   <text x="785" y="106" font-size="14" font-weight="bold"
         text-anchor="middle">Pannello SOLUM 12.2"</text>
   <text x="785" y="124" fill="#656d76" font-size="11"
-        text-anchor="middle">960 × 768 BWR</text>
-  <rect x="650" y="140" width="135" height="300" rx="4"
+        text-anchor="middle">960 × 768 BWR — 2 controller da 960 × 384</text>
+  <rect x="650" y="140" width="280" height="140" rx="4"
         fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
-  <text x="717" y="165" fill="#0969da" font-size="12" font-weight="bold"
-        text-anchor="middle">MASTER</text>
-  <text x="717" y="183" fill="#656d76" font-size="11"
-        text-anchor="middle">cols 0..479</text>
-  <rect x="667" y="220" width="100" height="30" rx="3"
+  <rect x="667" y="150" width="100" height="28" rx="3"
         fill="#fff" stroke="#0969da"/>
-  <text x="717" y="240" fill="#0969da" font-size="11"
+  <text x="717" y="169" fill="#0969da" font-size="11"
         text-anchor="middle" font-weight="bold">FFC #1</text>
-  <rect x="795" y="140" width="135" height="300" rx="4"
+  <text x="845" y="205" fill="#0969da" font-size="12" font-weight="bold"
+        text-anchor="middle">MASTER</text>
+  <text x="845" y="223" fill="#656d76" font-size="11"
+        text-anchor="middle">righe 0..383</text>
+  <rect x="650" y="300" width="280" height="140" rx="4"
         fill="#fbefff" stroke="#8250df" stroke-width="1.5"/>
-  <text x="862" y="165" fill="#8250df" font-size="12" font-weight="bold"
+  <text x="845" y="340" fill="#8250df" font-size="12" font-weight="bold"
         text-anchor="middle">SLAVE</text>
-  <text x="862" y="183" fill="#656d76" font-size="11"
-        text-anchor="middle">cols 480..959</text>
-  <rect x="812" y="220" width="100" height="30" rx="3"
+  <text x="845" y="358" fill="#656d76" font-size="11"
+        text-anchor="middle">righe 384..767</text>
+  <rect x="667" y="402" width="100" height="28" rx="3"
         fill="#fff" stroke="#8250df"/>
-  <text x="862" y="240" fill="#8250df" font-size="11"
+  <text x="717" y="421" fill="#8250df" font-size="11"
         text-anchor="middle" font-weight="bold">FFC #2</text>
   <line x1="300" y1="220" x2="380" y2="180" stroke="#bf8700" stroke-width="1.5"
         marker-end="url(#readmeArrow2)"/>
@@ -89,8 +89,8 @@
         marker-end="url(#readmeArrow2)"/>
   <line x1="300" y1="380" x2="380" y2="390" stroke="#8250df" stroke-width="1.5"
         marker-end="url(#readmeArrow2)"/>
-  <line x1="540" y1="180" x2="667" y2="235" stroke="#0969da" stroke-width="2"
+  <line x1="540" y1="180" x2="667" y2="164" stroke="#0969da" stroke-width="2"
         marker-end="url(#readmeArrow2)"/>
-  <line x1="540" y1="370" x2="812" y2="235" stroke="#8250df" stroke-width="2"
+  <line x1="540" y1="370" x2="667" y2="412" stroke="#8250df" stroke-width="2"
         marker-end="url(#readmeArrow2)"/>
 </svg>

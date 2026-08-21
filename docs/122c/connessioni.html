@@ -245,30 +245,30 @@
   <text x="790" y="86" fill="#c9d1d9" font-size="14" font-weight="bold"
         text-anchor="middle">Pannello SOLUM 12.2"</text>
   <text x="790" y="104" fill="#8b949e" font-size="11"
-        text-anchor="middle">960 × 768 BWR</text>
+        text-anchor="middle">960 × 768 BWR — 2 controller da 960 × 384</text>
 
-  <!-- Master half -->
-  <rect x="660" y="120" width="130" height="280" rx="4"
+  <!-- Banda master: righe 0..383 -->
+  <rect x="660" y="120" width="270" height="130" rx="4"
         fill="rgba(88,166,255,0.08)" stroke="#58a6ff" stroke-width="1.5"/>
-  <text x="725" y="145" fill="#58a6ff" font-size="12" font-weight="bold"
-        text-anchor="middle">MASTER</text>
-  <text x="725" y="165" fill="#8b949e" font-size="11"
-        text-anchor="middle">cols 0..479</text>
-  <rect x="675" y="200" width="100" height="30" rx="3"
+  <rect x="675" y="130" width="100" height="28" rx="3"
         fill="#0d1117" stroke="#58a6ff"/>
-  <text x="725" y="220" fill="#58a6ff" font-size="11"
+  <text x="725" y="149" fill="#58a6ff" font-size="11"
         text-anchor="middle" font-weight="bold">FFC #1</text>
+  <text x="845" y="180" fill="#58a6ff" font-size="12" font-weight="bold"
+        text-anchor="middle">MASTER</text>
+  <text x="845" y="198" fill="#8b949e" font-size="11"
+        text-anchor="middle">righe 0..383</text>
 
-  <!-- Slave half -->
-  <rect x="800" y="120" width="130" height="280" rx="4"
+  <!-- Banda slave: righe 384..767 -->
+  <rect x="660" y="270" width="270" height="130" rx="4"
         fill="rgba(210,168,255,0.08)" stroke="#d2a8ff" stroke-width="1.5"/>
-  <text x="865" y="145" fill="#d2a8ff" font-size="12" font-weight="bold"
+  <text x="845" y="310" fill="#d2a8ff" font-size="12" font-weight="bold"
         text-anchor="middle">SLAVE</text>
-  <text x="865" y="165" fill="#8b949e" font-size="11"
-        text-anchor="middle">cols 480..959</text>
-  <rect x="815" y="200" width="100" height="30" rx="3"
+  <text x="845" y="328" fill="#8b949e" font-size="11"
+        text-anchor="middle">righe 384..767</text>
+  <rect x="675" y="362" width="100" height="28" rx="3"
         fill="#0d1117" stroke="#d2a8ff"/>
-  <text x="865" y="220" fill="#d2a8ff" font-size="11"
+  <text x="725" y="381" fill="#d2a8ff" font-size="11"
         text-anchor="middle" font-weight="bold">FFC #2</text>
 
   <!-- Adattatore esterno: spostato in basso per non sovrapporsi alla freccia diretta master -->
@@ -286,9 +286,9 @@
         text-anchor="middle">si infila in breadboard</text>
 
   <!-- Connessione FFC interno -> FFC #1 master (cavo diretto, in alto) -->
-  <line x1="300" y1="260" x2="675" y2="215" stroke="#58a6ff" stroke-width="2"
+  <line x1="300" y1="260" x2="675" y2="146" stroke="#58a6ff" stroke-width="2"
         marker-end="url(#arrowBlue)"/>
-  <text x="490" y="225" fill="#58a6ff" font-size="11" font-style="italic"
+  <text x="485" y="180" fill="#58a6ff" font-size="11" font-style="italic"
         text-anchor="middle">cavo FFC diretto (master)</text>
 
   <!-- Connessioni header espansione -> breakout esterno -->
@@ -299,10 +299,10 @@
   <line x1="300" y1="392" x2="400" y2="395" stroke="#f0883e" stroke-width="1.5"
         stroke-dasharray="4 3" marker-end="url(#arrowOrange)"/>
 
-  <!-- breakout -> FFC #2 slave (sale verso destra) -->
-  <line x1="600" y1="370" x2="815" y2="220" stroke="#d2a8ff" stroke-width="2"
+  <!-- breakout -> FFC #2 slave (banda bassa) -->
+  <line x1="600" y1="370" x2="675" y2="376" stroke="#d2a8ff" stroke-width="2"
         marker-end="url(#arrowPurple)"/>
-  <text x="705" y="305" fill="#d2a8ff" font-size="11" font-style="italic"
+  <text x="637" y="358" fill="#d2a8ff" font-size="10" font-style="italic"
         text-anchor="middle">FFC #2 ribbon</text>
 </svg>
 </div>
@@ -462,28 +462,30 @@ GxEPD2_3C&lt;GxEPD2_SOLUM_DRIVER_CLASS,
   <text x="785" y="106" fill="#c9d1d9" font-size="14" font-weight="bold"
         text-anchor="middle">Pannello SOLUM 12.2"</text>
   <text x="785" y="124" fill="#8b949e" font-size="11"
-        text-anchor="middle">960 × 768 BWR</text>
+        text-anchor="middle">960 × 768 BWR — 2 controller da 960 × 384</text>
 
-  <rect x="650" y="140" width="135" height="300" rx="4"
+  <!-- Banda master: righe 0..383 -->
+  <rect x="650" y="140" width="280" height="140" rx="4"
         fill="rgba(88,166,255,0.08)" stroke="#58a6ff" stroke-width="1.5"/>
-  <text x="717" y="165" fill="#58a6ff" font-size="12" font-weight="bold"
-        text-anchor="middle">MASTER</text>
-  <text x="717" y="183" fill="#8b949e" font-size="11"
-        text-anchor="middle">cols 0..479</text>
-  <rect x="667" y="220" width="100" height="30" rx="3"
+  <rect x="667" y="150" width="100" height="28" rx="3"
         fill="#0d1117" stroke="#58a6ff"/>
-  <text x="717" y="240" fill="#58a6ff" font-size="11"
+  <text x="717" y="169" fill="#58a6ff" font-size="11"
         text-anchor="middle" font-weight="bold">FFC #1</text>
+  <text x="845" y="205" fill="#58a6ff" font-size="12" font-weight="bold"
+        text-anchor="middle">MASTER</text>
+  <text x="845" y="223" fill="#8b949e" font-size="11"
+        text-anchor="middle">righe 0..383</text>
 
-  <rect x="795" y="140" width="135" height="300" rx="4"
+  <!-- Banda slave: righe 384..767 -->
+  <rect x="650" y="300" width="280" height="140" rx="4"
         fill="rgba(210,168,255,0.08)" stroke="#d2a8ff" stroke-width="1.5"/>
-  <text x="862" y="165" fill="#d2a8ff" font-size="12" font-weight="bold"
+  <text x="845" y="340" fill="#d2a8ff" font-size="12" font-weight="bold"
         text-anchor="middle">SLAVE</text>
-  <text x="862" y="183" fill="#8b949e" font-size="11"
-        text-anchor="middle">cols 480..959</text>
-  <rect x="812" y="220" width="100" height="30" rx="3"
+  <text x="845" y="358" fill="#8b949e" font-size="11"
+        text-anchor="middle">righe 384..767</text>
+  <rect x="667" y="402" width="100" height="28" rx="3"
         fill="#0d1117" stroke="#d2a8ff"/>
-  <text x="862" y="240" fill="#d2a8ff" font-size="11"
+  <text x="717" y="421" fill="#d2a8ff" font-size="11"
         text-anchor="middle" font-weight="bold">FFC #2</text>
 
   <!-- Connessioni jumper ESP32 -> breakout #1 (shared via condivisi + master only) -->
@@ -498,15 +500,15 @@ GxEPD2_3C&lt;GxEPD2_SOLUM_DRIVER_CLASS,
   <line x1="300" y1="380" x2="380" y2="390" stroke="#d2a8ff" stroke-width="1.5"
         marker-end="url(#arrowPurple2)"/>
 
-  <!-- breakout #1 -> FFC #1 -->
-  <line x1="540" y1="180" x2="667" y2="235" stroke="#58a6ff" stroke-width="2"
+  <!-- breakout #1 -> FFC #1 (banda alta) -->
+  <line x1="540" y1="180" x2="667" y2="164" stroke="#58a6ff" stroke-width="2"
         marker-end="url(#arrowBlue2)"/>
-  <text x="600" y="200" fill="#58a6ff" font-size="11" font-style="italic">FFC ribbon</text>
+  <text x="600" y="158" fill="#58a6ff" font-size="11" font-style="italic">FFC ribbon</text>
 
-  <!-- breakout #2 -> FFC #2 -->
-  <line x1="540" y1="370" x2="812" y2="235" stroke="#d2a8ff" stroke-width="2"
+  <!-- breakout #2 -> FFC #2 (banda bassa) -->
+  <line x1="540" y1="370" x2="667" y2="412" stroke="#d2a8ff" stroke-width="2"
         marker-end="url(#arrowPurple2)"/>
-  <text x="600" y="350" fill="#d2a8ff" font-size="11" font-style="italic">FFC ribbon</text>
+  <text x="600" y="376" fill="#d2a8ff" font-size="11" font-style="italic">FFC ribbon</text>
 </svg>
 </div>
 
