@@ -1,0 +1,567 @@
+E-Paper ESP32 Driver Board - Waveshare Wiki
+Navigation menu
+Toggle navigation
+Raspberry Pi
+Boards/Kits
+Displays
+Cameras
+Expansions
+All-in-one
+Robots
+Portable Gaming
+Accessories
+Other Android/Linux Boards
+AI
+Boards/Kits
+Displays
+Cameras
+Expansions
+Robots
+Displays
+LCD/OLED
+e-Paper
+IoT
+Long Range Wireless
+Short Range Wireless
+Wired Comm / Converter
+Cameras / Audio / Video
+Sensors
+Motors / Servos
+others
+Robotics
+Mobile Robots
+Dog-like Robots
+Drivers / Sensors
+Robot Arm / Control
+MCU/FPGA
+Arduino
+micro:bit
+STM32
+FPGA
+Support
+E-Paper ESP32 Driver Board
+From Waveshare Wiki
+Jump to:
+navigation
+,
+search
+E-Paper ESP32 Driver Board
+Universal e-Paper Driver HAT
+supports various Waveshare SPI e-Paper raw panels
+{{{name2}}}
+{{{name3}}}
+{{{name4}}}
+{{{name5}}}
+{{{name6}}}
+Primary Attribute
+Category:
+Expansions
+,
+e-Paper
+,
+Raspberry Pi
+{{{userDefinedInfo}}}:
+{{{userdefinedvalue}}}
+Brand:
+Waveshare
+Website
+International:
+Waveshare website
+Chinese:
+Onboard Interfaces
+Related Products
+4.3inch e-Paper UART Module
+13.3inch e-Paper HAT
+13.3inch HDMI e-Paper
+12.48inch e-Paper Module
+12.48inch e-Paper Module (B)
+10.3inch HDMI e-Paper
+10.3inch e-Paper HAT (D)
+10.3inch e-Paper HAT
+9.7inch HDMI e-Paper
+9.7inch e-Paper HAT
+7.8inch e-Paper HAT
+7.8inch HDMI e-Paper
+7.5inch HD e-Paper HAT
+7.5inch HD e-Paper HAT (B)
+7.5inch e-Paper HAT
+7.5inch e-Paper HAT (B)
+7.5inch e-Paper HAT (C)
+7.5inch e-Paper (G)
+7.5inch NFC-Powered e-Paper
+7.5inch NFC-Powered HD e-Paper
+6inch e-Paper HAT
+6inch HD e-Paper HAT
+5.83inch e-Paper HAT
+5.83inch e-Paper HAT (B)
+5.83inch e-Paper HAT (C)
+5.65inch e-Paper Module (F)
+4.2inch e-Paper Cloud Module
+4.2inch e-Paper Module
+4.2inch e-Paper Module (B)
+4.2inch e-Paper Module (C)
+4.2inch NFC-Powered e-Paper
+4.01inch e-Paper (F)
+4.01inch e-Paper HAT (F)
+3.7inch e-Paper
+3.7inch e-Paper HAT
+2.9inch e-Paper Module
+2.9inch e-Paper Module (B)
+2.9inch e-Paper Module (C)
+2.9inch e-Paper HAT (D)
+2.9inch Touch e-Paper HAT
+2.9inch NFC-Powered e-Paper
+2.7inch NFC-Powered e-Paper Module
+2.7inch e-Paper HAT
+2.7inch e-Paper HAT (B)
+2.66.inch e-Paper
+2.66inch e-Paper Module
+2.66inch e-Paper (B)
+2.66inch e-Paper Module (B)
+2.13inch e-Paper Cloud Module
+2.13inch e-Paper HAT
+2.13inch e-Paper HAT (B)
+2.13inch e-Paper HAT (C)
+2.13inch e-Paper HAT (D)
+2.13inch Touch e-Paper HAT
+2.13inch NFC-Powered e-Paper
+1.54inch NFC-Powered e-Paper (BB)
+1.54inch NFC-Powered e-Paper (BW)
+1.54inch e-Paper Module
+1.54inch e-Paper Module (B)
+1.54inch e-Paper Module (C)
+1.02inch e-paper Module
+e-Paper Driver HAT
+EINK-DISP-103
+E-Paper Shield
+e-Paper ESP8266 Driver Board
+E-Paper ESP32 Driver Board
+Contents
+1
+Support Models
+2
+Overview
+2.1
+Revision Description
+2.2
+Introduction
+2.3
+Specifications
+2.4
+Pins
+2.5
+Features
+2.6
+Applications
+3
+Preparation
+3.1
+Hardware Connection
+3.2
+Download Demo
+3.3
+Environment Configuration
+3.4
+Image Processing Algorithms
+3.4.1
+Color Scale Method
+3.4.2
+Dithering
+3.4.3
+Comparison
+4
+Bluetooth Demo
+4.1
+Demo Usage
+5
+WiFi Demo
+5.1
+Demo Usage
+6
+Local Demo
+6.1
+Demo Usage
+7
+Resources
+7.1
+Documentation
+7.2
+Demo
+7.3
+Serial Driver
+7.3.1
+CP2102 (Old version, used before July 2022)
+7.3.2
+CH343 (New version, used after July 2022)
+7.4
+Related Resources
+8
+FAQ
+9
+Support
+Support Models
+This Wiki mainly introduces the specific operation of this product, if you want to get the e-Paper display models supported by this product, please go to the bottom of the product details on the official website.
+Official website link:
+https://www.waveshare.com/e-paper-esp32-driver-board.htm
+E-Paper demo reference table
+Model
+Demo
+1.54inch e-Paper
+epd1in54_V2-demo
+1.54inch e-Paper (B)
+epd1in54b_V2-demo
+2.13inch e-Paper
+epd2in13_V3-demo
+2.13inch e-Paper (B)
+epd2in13b_V4-demo
+2.13inch e-Paper (D)
+epd2in13d-demo
+2.66inch e-Paper
+epd2in66-demo
+2.66inch e-Paper (B)
+epd2in66b-demo
+2.7inch e-Paper
+epd2in7_V2-demo
+2.7inch e-Paper (B)
+epd2in7b_V2-demo
+2.9inch e-Paper
+epd2in9_V2-demo
+2.9inch e-Paper (B)
+epd2in9b_V3-demo
+3.7inch e-Paper
+epd3in7-demo
+4.01inch e-Paper (F)
+epd4in01f-demo
+4.2inch e-Paper
+epd4in2-demo
+4.2inch e-Paper (B)
+epd4in2b_V2-demo
+4.26inch e-Paper
+epd4in26-demo
+5.65inch e-Paper (F)
+epd5in65f-demo
+5.83inch e-Paper
+epd5in83_V2-demo
+5.83inch e-Paper (B)
+epd5in83b_V2-demo
+7.5inch e-Paper
+epd7in5_V2-demo
+7.5inch e-Paper (B)
+epd7in5b_V2-demo
+13.3inch e-Paper (B)
+epd13in13b-demo
+13.3inch e-Paper (K)
+epd13in3k-demo
+Note: The corresponding demo only takes the latest version of the screen as an example, if you are using an older version, please refer to the version label on the back of the screen.
+Overview
+Revision Description
+20241230: The version is updated, and the USB interface is replaced with type-C interface; The hardware is basically compatible.
+20220728: The serial port chip is changed from CP2102 to CH343, please pay attention to the driver selection.
+Introduction
+This is an e-Paper display driver board with wireless network function, which can obtain picture information from a PC or smartphone through WiFi or Bluetooth, and display the information through the e-Paper display. It supports Arduino development, and you can use it just like any other Arduino board.
+Specifications
+WiFi Standard: 802.11b/g/n
+Communication Interface:SPI/IIC
+Bluetooth Standard: 4.2, BR/EDR, and BLE included
+Communication Interface: 3-wire SPI, 4-wire SPI (default)
+Operating Voltage: 5V
+Operating Current: 50mA ~ 150mA
+Outline Dimensions: 29.46mm x 48.25mm
+Flash Size: 4 MB
+SRAM Size: 520 KB
+ROM Size: 448 KB
+Pins
+PIN
+ESP32
+Description
+VCC
+3V3
+Power positive (3.3V power supply input)
+GND
+GND
+Ground
+DIN
+P14
+SPI's MOSI, data input
+SCLK
+P13
+SPI's CLK, clock signal input
+CS
+P15
+Chip selection, low active
+DC
+P27
+Data/Command, low for command, high for data
+RST
+P26
+Reset, low active
+BUSY
+P25
+Busy status output pin (indicating busy)
+PS: The above is the board fixed connection, with no additional operation by the user.
+Features
+Onboard ESP32, supports Arduino development
+Provides an Android mobile APP program, which can update the display content through Bluetooth EDR, easy to use
+Provides HTML host computer program, which can remotely update the display content through the web page, which is convenient to integrate into various network applications
+Supports Floyd-Steinberg's dithering algorithm for more color combinations and better shadows rendering of the original image
+Supports many common image formats (BMP, JPEG, GIF, PNG, etc.)
+Factory built-in e-Paper display driver (open source)
+5V pin supports 3.6V to 5.5V voltage input and can be powered by a lithium battery
+Comes with online resources and manual
+Applications
+This product is suitable for the application scenario of wireless image refreshing with e-Paper display.
+Electronic price tags in supermarkets
+Electronic name card
+Serial information display board, etc.
+Preparation
+Hardware operation, environment setup, and program description, etc.
+Hardware Connection
+This product is shipped with an ESP32 network driver board, an adapter board, and an FFC extension cable.
+When using it, you can directly connect the screen to the driver board, or connect it through extension cables and adapter boards.
+Connect the display to the ESP32 driver board:
+Direct access to the driver board:
+Access via extension cord:
+Set the mode switch: Set the No.1 switch according to the model of the EPD used. There are many model of display. If it is not listed, please use "A” to try. If the display effect is poor or cannot be driven, please try switching the switch.
+Resistor (Display Config)
+Screen
+0.47R (B)
+2.13inch e-Paper (D), 2.7inch e-Paper, 2.9inch e-Paper (D)
+4.01inch e-Paper (F), 4.2inch e-Paper (C), 5.65inch e-Paper (F)
+5.83inch e-Paper, 5.83inch e-Paper (B), 7.5inch e-Paper
+7.5inch e-Paper (B)
+3R (A)
+1.54inch e-Paper, 1.54inch e-Paper(B), 2.13inch e-Paper
+2.13inch e-Paper (B), 2.66inch e-Paper, 2.66inch e-Paper (B)
+2.9inch e-Paper, 2.9inch e-Paper (B), 3.7inch e-Paper
+4.2inch e-Paper, 4.2inch e-Paper (B), 13.3inch e-Paper (B)
+13.3inch e-Paper
+The choice of resistor mainly affects the display, if you find that the display is abnormal you can flick the switch to the other end.
+Turn on the serial port module: Toggle the No. 2 switch to "ON", this switch controls the power supply of the USB to the UART module. When you don't need to use it, you can manually turn off the module to save power (if switch 2 is in the OFF state, you cannot upload the program).
+Use a micro USB cable to connect the ESP32 driver board to a computer or 5V power supply.
+Download Demo
+We provide three kinds of demos: local, Bluetooth, and WiFi. The demos can be found in
+#Resources
+, or click
+Demo
+to download.
+Unzip the downloaded compressed package, you can get the following files:
+ePape_Esp32_Loader_APP: Bluetooth App source code (Android Studio)
+examples: local demo
+Loader_esp32bt: Bluetooth demos
+Loader_esp32wf: WiFi demo
+app-release.apk: Bluetooth demo App installation package
+Environment Configuration
+Arduino ESP32/8266 Online Installation
+Image Processing Algorithms
+In the Bluetooth and WiFi demos, two image processing algorithms are provided, namely Level and Dithering.
+Color Scale Method
+An image can be divided into several large color gamuts, and each pixel on the image is divided into these color gamuts according to how close the color is to these color gamuts.
+This method is more suitable for images with few colors, such as bright or tri-color shapes or text images. Taking the black, white and red e-Paper display as an example, when processing the image, we hope to process it into black, white, and red, so for an image, we can divide all the colors of the image into three large color areas: black area, white area, and red area.
+For example, according to the figure below, if the value of a pixel in the grayscale image is equal to or less than 127, we regard this pixel as a black pixel, otherwise, it is white.
+For color images, we all know that RGB has three color channels. Compared with the red channel, we can refer to blue and green as the blue-green channel or the non-red channel.
+According to the figure below, a pixel on a color image, if it has a high value in the red channel, but a low value in the blue-green channel, we classify it as a red pixel; if its red channel and blue-green channel have low values, we classify it as a black pixel; if the red and blue-green channel values are high, we classify it as white.
+In the algorithm, the color definition is calculated based on the difference between the RGB value and the sum of the squares of the expected color value.
+The expected color value refers to the color value that the pixel is closest to, and these values are stored in the curPal array.
+Dithering
+For those images with more colors or more gradient areas, the above color scale method is not suitable. In many cases, the pixels in the gradient area in the image may be very close to all color gamuts. If the color scale method is used, the image will lose a lot of details. Many images are taken by cameras, by mixing colors to paint shadows and transition areas, in these images, the gradient area accounts for the majority.
+For the human eyes, it's easy to confuse very small colors. For example, if red and blue colors are placed side by side and are shrunk to be small enough, to the human eye, they will appear as a color mixed from red and blue. The defect of the human eye means that we can deceive the human eye and use the "mixing" method to obtain more colors that can be expressed. The dithering algorithm uses this phenomenon.
+The demo we provide uses the Floyd-Steinberg dithering algorithm - based on error diffusion (published by Robert Floy and Louis Steinberg in 1976).
+The formula is based on the error diffusion in following image:
+X is the error (a scalar (vector) difference between the original color and the gray value (color value)), this error will spread to the right, lower right, lower, and lower left in four directions, respectively 7/16, 1/16, 5/16 and 3/16 weights are added to the values of these four pixels. If you're interested in this, you can learn about the algorithm, there are plenty of resources on the web.
+Comparison
+Original image
+"Black and white grading" and "Multicolor grading"
+"Black and White Dithering" and "Multicolor Dithering"
+Bluetooth Demo
+It provides a demo for Bluetooth communication with an Android APP.
+Demo Usage
+Open Loader_esp32bt directory and double-click on the Loader_esp32bt.ino file to open the Arduino project.
+Select Tools->Boards-> ESP32 Dev Module, and select the corresponding serial port: Tools->Port.
+Then click Upload, compile and download the program to the ESP32 development board.
+Install and open the APP on your phone:
+APP has five buttons on the main page:
+BLUETOOTH CONNECTION: This button is used to connect the ESP32 device via Bluetooth.
+SELECT DISPLAY TYPE: This button is used to select the type of display you connect to the drive board.
+LOAD IMAGE FILE: Click it and choose a picture to open. It is only available after choosing the display type.
+SELECT IMAGE FILTER: Since the pictures in the phone may not meet the requirements of the e-Paper display model, the pictures need to be processed first.
+UPLOAD IMAGE: Upload the processed image to e-Paper display and refresh it onto the screen.
+Please first open the Bluetooth function of your phone. Click the BLUETOOTH CONNECTION button -> Click the SCAN icon on the top-right to scan the Bluetooth device.
+Find the ESP32 device and click to connect. If your phone is the first time to connect this device, it requires pairing, complete the pairing process according to the prompt.
+(Note: If the device is not paired, the image will not be uploaded normally, and the APP may crash.)
+Click "SELECT DISPLAY TYPE" to select the corresponding type of display you connect to.
+Click "LOAD IMAGE FILE" to select a gallery and open an image. A rectangular cropping frame will appear based on the model chosen in the previous step. Drag the crop to the part you want.
+Click "SELECT IMAGE FILTER" to select the corresponding processing algorithm and confirm.
+Level: mono (Process the image into black and white and cuts the image size according to the e-Paper display resolution).
+Level: color (Process the image into multi-color and cut the image size according to the e-Paper display resolution, only applicable to multi-color e-Paper display).
+Dithering: mono (Process the image into black and white and cut the image size according to the e-Paper display resolution).
+Dithering: color (Process the image into multi-color and cut the image size according to the e-Paper display resolution, only applicable to multi-color e-Paper display).
+Click "Upload image" to upload the processed image to the e-Paper for display.
+WiFi Demo
+It provides WiFi demos with an HTML host computer.
+Note: The module only supports the 2.4G network band.
+Demo Usage
+Go to the Loader_esp32wf directory, double click Loader_esp32wf.ino file to open the project.
+Select Tools->Boards-> ESP32 Dev Module, and select the corresponding serial port: Tools->Port.
+Open the srvr.h file and change the ssid and password to the actual WiFi username and password used.
+Modify the WiFi username and password at this location to the WiFi username and password of your router or mobile hotspot. In this program, the ESP32 acts as a slave, not a host, so it will not transmit the WiFi hotspot message outward.
+Press win + R and type CMD to open the command line and get the IP of your computer.
+Open the srvr.h file, modify the network segment in the location shown in the picture to the corresponding network segment.
+Note: the IP address of ESP32 (that is, the fourth bit) should not be the same as the address of the computer, and the rest should be the same as the IP address of the computer.
+Then click upload to compile and download the demo to the ESP8266 driver board.
+Open the serial monitor and set the baud rate to 115200, you can see the serial port print out the IP address of the ESP32 driver board as follows:
+Open the browser on your computer or cell phone (note that the network you are accessing needs to be on the same network segment as the wifi accessed by ESP32), enter the IP address of the ESP32 in the URL input field, and open it, you can see the operation interface as follows:
+The entire operation interface is divided into five areas:
+Image Operation Area:
+Select image file: Click to choose an image from your computer or phone
+Level: mono: Black and white image processing algorithm
+Level: color: Multi-color image processing algorithm (only effective for multi-color screens)
+Dithering: mono: Black dithering image processing algorithm
+Dithering: color: Multi-color dithering image processing algorithm (only effective for multi-color screens)
+Update image: Upload image
+IP information display area:
+This displays the IP address information of the module you are currently connected to
+Image size setting area
+: Here, x and y can be set to specify the starting position of the display, which is relative to the image file you have selected. For example, if you choose an 800x480 image but the e-Paper screen you are connected to is 2.9inch, the screen will not be able to display the entire image. In this case, the processing algorithm will automatically crop the image from the upper left corner and send a portion of it to the e-Paper screen for display. You can set x and y to customize the starting position of the cropping. W and h represent the resolution of the current e-Paper screen.
+Note: If you modify the x and y coordinates, you need to click on the processing algorithm again to generate a new image.
+Model selection area:
+Here, you can choose the e-Paper screen model you are connected to.
+Image display area:
+Here, the selected image and the processed image will be displayed.
+PS: During image upload, the upload progress will be displayed at the bottom.
+Area ①: Click "Select Image file" to choose an image, or drag and drop the image directly into the "Original image" area.
+Area ④: Choose the corresponding e-Paper model, for example, 1.54b.
+Area ①: Click on an image processing algorithm, for example, "Dithering: color".
+Area ①: Click "Upload image" to upload the image to the e-Paper screen display.
+Local Demo
+It provides local ESP32-based demos without WiFi, Bluetooth, and other devices.
+Demo Usage
+Open Arduino IDE to view the project file folder location (please do not modify it).
+Go to the E-Paper_ESP32_Driver_Board_Code\examples directory and copy the entire esp32-waveshare-epd folder to the libraries directory in the project folder.
+Close all Arduino IDE windows, reopen the Arduino IDE, and select the corresponding example demo as shown:
+Choose the corresponding board and COM port.
+Resources
+It provides a full set of documents, procedures, data manuals, etc.
+Documentation
+Schematic
+E-Paper ESP32 Driver Board V3 Schematic (current version)
+User Manual
+ESP32 datasheet
+Demo
+Sample demo
+Serial Driver
+CP2102 (Old version, used before July 2022)
+Window CP2102 driver
+Mac_OSX_VCP driver
+CH343 VCP driver for Windows
+CH343 driver for MacOS
+MacOS guide
+CH343 (New version, used after July 2022)
+Windows VCP driver
+MAC driver
+Related Resources
+ESP32 Resouces
+E-Paper Floyd-Steinberg
+Zimo221
+Image2Lcd Image Bitmap Conversion
+Image2Lcd.7z
+FAQ
+Question:  Which ESP32 module is used?
+Answer:
+ESP32 specifications:
+Flash: 4M
+SRAM: 520KB
+ROM: 448KB
+PARAM: 0
+Freq.: 240MHz
+{{{5}}}
+Question:  The Arduino software does not detect the port number?
+Answer:
+Open the Device Manager and check if the corresponding port number is used for the corresponding location.
+If the corresponding driver is not installed, it will be displayed as follows, or in the unknown device.
+Possible reasons could be:
+1. The computer port is broken.
+2. There is a problem with the data cable.
+3. The switch on the board is not toggled to ON.
+{{{5}}}
+Question:  The 2.13inch e-Paper screen cannot be refreshed. Please confirm if there is a V2 logo on the back of the screen. If not, the following parts of the program need to be modified
+Answer:
+Open epd2in13.h in the project and change the following value to 1.
+Question:  The 1.54inch e-Paper screen cannot be refreshed. Please confirm if there is a V2 logo on the back of the screen. If not, the following parts of the program need to be modified
+Answer:
+* Open epd1in54.h in the project and change the following value to 1.
+Question:  ESP32 downloads the Bluetooth demo, and the module reports an error: "Guru Meditation Error: Core 0 panic'ed (LoadProhibited). Exception was unhandled." And the Bluetooth cannot be turned on successfully. What should I do?
+Answer:
+Download
+Arduino-ESP32 Package
+. Unzip the files in the compressed package to the hardware\espressif\esp32 path in the Arduino IDE installation directory, select "OK to overwrite the file" (remember to back up the original file), and then re-run the routine after powering off. (Note: If the path does not exist in the installation directory, you can create it manually).
+Question:  Downloading ESP32 program with Arduino sometimes succeeds and sometimes fails, how to solve it?
+Answer:
+Try to reduce the baud rate, you can try to adjust to 115200, as shown in the figure below:
+Question:  The wifi demo upload is normal, the serial port outputs the IP address, but the computer input IP address cannot be accessed, it is necessary to check that the network segment of the IP is consistent with the network segment value of the wifi, and the IP does not conflict?
+Answer:
+Modify the IP network segment, as shown in the following figure:
+Question:  What should we do if the computer can't recognize the driver board?
+Answer:
+First confirm whether the serial port driver has been installed, and then try to replace the USB cable and USB interface as much as possible.
+Question:  Flashing and uploading program error: Connecting........................................................................................................................................................................_____....._____.... .____Error uploading project_A fatal error occurred: Failed to connect to ESP32: Timed out waiting for packet header
+Answer:
+You need to press and hold the Boot button on the ESP32 baseboard when the Connecting... prompt appears.
+Question:  Bluetooth demo stuck at 0%?
+Answer:
+It is necessary to confirm that the hardware connection is correct and select the corresponding e-Paper screen model.
+Question:  When uploading the program, an error is reported that the development board does not exist or is empty, you need to confirm that the port and development board are selected correctly, you need to confirm that the hardware connection is correct, and select the corresponding e-Paper screen model.
+Answer:
+Select the port and driver board as shown below:
+Question:  The development board manager cannot search for esp32 and needs to fill in the esp32 development board management website in the menu bar: File ->Preferences
+https://dl.espressif.com/dl/package_esp32_index.json
+(esp8266:
+http://arduino.esp8266.com/stable/package_esp8266com_index.json
+)
+Answer:
+Fill in the ESP32 development board management website as shown in the following figure:
+Question:  What are the functions of keys A and B on the E-Paper ESP32 driver board?
+Answer:
+Compatible with more e-Paper screen models, which can be adjusted according to the display effect.
+Question:  What is the spacing between J3 and J4 of the E-Paper ESP32 driver board?
+Answer:
+The spacing is 22.65mm
+Question:  What is the thickness of the 2.13inch e-Paper Cloud module?
+Answer:
+About 6mm without battery, about 14.5mm with battery
+{{{5}}}
+Question:  When using a Mac computer, the ESP32 driver board can be recognized by the computer, but the Arduino IDE cannot recognize the development board?
+Answer:
+Please check the system security settings to see if the relevant driver installation settings are blocked. Please check the installation of relevant drivers in the system settings.
+{{{5}}}
+Question:  The full pinout for the ESP32 e-paper driver board?
+Answer:
+Check with the image below.
+{{{5}}}
+Question:  The board manager cannot search for esp32?
+Answer:
+Open File -> Preferences, you need to fill in the esp32 development board management URL:
+https://dl.espressif.com/dl/package_esp32_index.json
+(esp8266：
+http://arduino.esp8266.com/stable/package_esp8266com_index.json
+):
+{{{5}}}
+Question:  Using the provided Android app and software for the ESP board, I can detect the ESP32 in the Bluetooth settings of my phone, but the app's scan feature doesn't work to find any devices?
+Answer:
+Turn on the location and check it again.
+{{{5}}}
+Support
+Technical Support
+If you need technical support or have any feedback/review, please click the
+Submit Now
+button to submit a ticket, Our support team will check and reply to you within 1 to 2 working days. Please be patient as we make every effort to help you to resolve the issue.
+Working Time: 9 AM - 6 PM GMT+8 (Monday to Friday)
+Submit Now
+Retrieved from "
+https://www.waveshare.com/w/index.php?title=E-Paper_ESP32_Driver_Board&oldid=110437
+"
+Categories
+:
+Expansions
+E-Paper
+Raspberry Pi
+Login / Create Account

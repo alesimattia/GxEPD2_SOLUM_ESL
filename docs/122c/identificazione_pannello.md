@@ -37,6 +37,22 @@ l'etichetta serigrafata sul vetro**, che va letta sull'esemplare in mano;
 `normal` distingue la versione non freezer. Il barcode dell'esemplare PRO è
 `FF00C9A6E59B`, quello Core `0B1A1612E5D2`, entrambi lotto `031`.
 
+**Come si legge un codice modello SOLUM** (§3.6 "Label Marking" del datasheet
+PRO, `../Newton-PRO_Data-sheet_C-Lab_G_240320.pdf`):
+
+```
+EL <taglia> <generazione> <colore scocca> <colore display> <tipo tag>
+   122       H6            W               4                A
+```
+
+`R` nel campo colore = BWR, `4` = RED, YELLOW (BWRY). Attenzione però: nel
+datasheet **ogni** taglia della linea PRO è elencata come `...W4A`, quindi la
+cifra `4` marca la **linea** (PRO nominalmente a 4 colori, Core `R` a 3) e non
+il film della singola unità. La tabella qui sotto lo dimostra: 9.7", 11.6" e
+12.2" PRO hanno tutte la cifra `4`, ma la serigrafia sul vetro dice BWRY solo
+per la 9.7". **Il colore reale lo dice il vetro, non il codice.** Dettaglio in
+[`../fonti_esterne.md` §2](../fonti_esterne.md).
+
 | | 9.7" | 11.6" | **12.2"** |
 |---|---|---|---|
 | Modello ESL | EL097F6W4A | EL116F6W4A | **EL122H6W4A** |
@@ -138,7 +154,19 @@ Sul campo, una metà del pannello stampa correttamente un rettangolo
 960 × 384 pilotata come singolo controller di famiglia SSD16xx: il riferimento
 di init più vicino è il 9.7" della stessa libreria
 ([`GxEPD2_SOLUM_097c_960x672.h`](../../src/GxEPD2_SOLUM_097c_960x672.h)), che
-è SSD1677 e sullo stesso asse source da 960.
+è SSD1677 e sullo stesso asse source da 960. Riferimento upstream indipendente
+sulla stessa geometria: `epd/GxEPD2_1160_T91` di GxEPD2 (Good Display
+GDEH116T91, 960 × 640, SSD1677), il cui init coincide con il nostro tranne
+l'ultimo byte del soft start `0x0C` (`0x40` invece del `0x80` di fabbrica
+SOLUM) e un `0x22 = 0xB1` + `0x20` in coda.
+
+**L'hardware di cascade sta nel pin table dell'SSD1677 stesso**, solo
+classificato come riservato: `M/S#` è dato *"reserved pin, should be connected
+to VDDIO"* e `CL` è dichiarato **I/O**, *"should be left open in application"*,
+e compare nelle caratteristiche elettriche sia fra i VIH d'ingresso sia fra i
+VOH d'uscita — un pin da lasciare aperto non ha bisogno di poter pilotare. Sono
+gli stessi due pin che l'SSD1683 §6.12 usa per la cascade. Non è più analogia
+con un chip fratello: i pin ci sono nel controller che abbiamo in mano.
 
 ## 5. Scheda tag originale (utile come schema di riferimento)
 
@@ -158,27 +186,51 @@ di init più vicino è il 9.7" della stessa libreria
   scala della fotografia: prevale la misura fisica del cavo, 21 pin, su cui è
   costruita la documentazione di cablaggio in
   [README_122c §8](../../README_122c.md#8-cablaggio-hardware-waveshare-board--esp32-dev-board-generica).
-- **Due reti di boost identiche** (switcher SOT-23 + induttore + catena di
-  diodi + condensatori), una per controller, entrambe nella zona del primo
-  connettore, con un fascio di piste che scende verso il secondo:
-  [dettaglio](fcc/122_pcb_ffc_con_boost.jpg) e
-  [secondo connettore](fcc/122_pcb_ffc_secondo.jpg). Le schede
-  [9.7"](../097c/fcc/097_pcb.jpg) e [11.6"](fcc/116_pcb.jpg), single-controller, ne
-  hanno **una sola**: il rapporto 1 rete per controller è il pattern della
-  famiglia.
+- **I due connettori non sono simmetrici.** Attorno al primo c'è tutta
+  l'elettronica analogica — switcher SOT-23, induttore schermato, catena di
+  diodi, banco di condensatori:
+  [dettaglio](fcc/122_pcb_ffc_con_boost.jpg). Il **secondo è nudo**, senza un
+  solo componente attorno, e i suoi pin escono in un fascio di piste parallele
+  che arriva dalla zona del primo:
+  [secondo connettore](fcc/122_pcb_ffc_secondo.jpg). La stessa asimmetria si
+  legge sulla scheda Core, dove le foto sono a 4032 × 3024
+  ([scheda intera](fcc/122_core_tag_board_due_FFC.jpg)). Le schede
+  [9.7"](../097c/fcc/097_pcb.jpg) e [11.6"](fcc/116_pcb.jpg), single-controller,
+  hanno la loro unica rete accanto all'unico connettore.
 
-Le due reti di boost sono l'argomento contro l'ipotesi che lo slave dipenda dal
-master per le alte tensioni: nel tag di fabbrica ciascuna coda ha la propria
-generazione VGH/VGL. Il tracciamento pista-per-pista non è risolvibile alla
-risoluzione delle foto, quindi la conferma definitiva resta la prova col
-multimetro fra i due FFC a pannello scollegato.
+Questa asimmetria è la firma della **cascade mode** della famiglia SSD16xx: il
+chip slave ha oscillatore e booster **disabilitati** e riceve dal master il
+clock CL e tutte le tensioni generate. Lo dice il datasheet SSD1683 §6.12
+([`SSD1683_Rev1.0_2021-01_Solomon-Systech.pdf`](../SSD1683_Rev1.0_2021-01_Solomon-Systech.pdf)):
+*"When the chip is configured as a slave chip, its oscillator and booster &
+regulator circuit will be disabled. The oscillator clock and all booster
+voltages will come from the master chip. Therefore the corresponding pins
+including CL, VDD, VGH, VGL, VSH1, VSH2, VSL, VGL and VCOM must be connected to
+the master chip."* Il ruolo lo fissa il pin `M/S#` (VDDIO = master, VSS =
+slave), e il master va messo in cascade dal registro `0x21`, secondo parametro,
+bit B[4] *ckouten*.
+
+Conseguenza diretta, e spiega il bring-up: **la coda slave non può funzionare da
+sola**, per costruzione. Nessun clock, nessuna alta tensione. Il fascio di piste
+che va dal primo connettore al secondo è il collegamento di quei rail.
 
 ## 6. Perchè la seconda coda resta muta
 
 Stato attuale del bring-up: con l'ESP32 su una coda si stampa 960 × 384
-correttamente; spostando lo stesso cablaggio sull'altra coda non si stampa
-nulla. Ipotesi in ordine di probabilità.
+correttamente — è la metà che il firmware di produzione già disegna — mentre
+spostando lo stesso cablaggio sull'altra coda non si stampa nulla. Ipotesi in
+ordine di probabilità.
 
+0. **È la coda dello slave di una coppia in cascade, e da sola non può
+   funzionare.** È la spiegazione che copre tutti i sintomi senza ipotesi
+   aggiuntive, ed è sostenuta dall'asimmetria dei due connettori sul tag di
+   fabbrica (§5): lo slave non ha oscillatore nè booster, quindi su un breakout
+   che gli porta solo SPI e 3.3 V riceve i comandi e non può fare nulla. Ne
+   segue anche che il secondo controller non vuole un CS proprio: sul tag c'è
+   **un solo chip select** per il pannello, e lo slave si indirizza sommando
+   `0x80` all'opcode. Le tre ipotesi che seguono restano possibili, ma spiegano
+   solo il silenzio, non il fatto che il tag di fabbrica non abbia nè un secondo
+   CS nè un secondo boost.
 1. **Pinout della seconda coda ribaltato.** Le due code escono da bordi
    opposti e, se sono la stessa parte, la seconda è ruotata di 180° rispetto al
    pannello: il pin 1 finisce sul lato opposto del cavo. Riusando lo stesso
@@ -202,11 +254,12 @@ cablati anche sul secondo attacco.
 
 | Punto | Stato |
 |---|---|
-| Colori | **chiuso**: BWR, nessun giallo (etichetta pannello) |
+| Colori | **chiuso**: BWR, nessun giallo — lo dice la serigrafia sul vetro (`Newton PRO 12.2" BWR normal`), che prevale sulla cifra `4` del codice modello, costante su tutta la linea PRO |
 | Geometria per controller | **chiuso**: 960 × 384, split sull'asse corto |
-| Famiglia del controller | **chiuso in pratica**: SSD16xx, base di init dal 9.7" |
+| Famiglia del controller | **chiuso in pratica**: SSD16xx, base di init dal 9.7". Il fratello a 4 colori della stessa taglia (SSD2677, 960 × 680, RAM a 2 bit/pixel) parla invece UC: non è questo |
 | Part number esatto del controller | aperto: nessuna serigrafia leggibile, il COF è schermato. Si chiuderebbe leggendo `0x2E` (User ID da OTP), che richiede un SDO: il connettore interno della board non lo porta, la coda cablata a mano forse sì — vedi il punto 7 in testa a `examples/12_2c/dual_panel_finder` |
 | Quale metà è quale coda | aperto: da annotare al bring-up del secondo controller |
 | Verso della scansione della seconda metà | aperto: una delle due va in reverse |
-| Alimentazione della seconda coda | aperto: due reti di boost sul tag originale, piste non tracciabili dalle foto |
+| Alimentazione della seconda coda | **chiuso in pratica**: nessun boost sul secondo connettore, i rail arrivano dal primo — cascade mode, §5 |
+| Indirizzamento del secondo controller | opcode `\|0x80` su un solo CS, più `0x21` B[4] = 1 sul master: da verificare sul pannello |
 | Ordine dei pin sulla seconda coda | aperto: possibile ribaltamento, vedi §6 |
