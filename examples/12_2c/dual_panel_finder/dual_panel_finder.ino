@@ -149,20 +149,42 @@
  *    restare alto, e allora ogni attesa va in timeout e ogni detection sembra
  *    fallita anche senza che il controller abbia ricevuto niente.
  *
- * NON misurato di proposito: il DISPLAY Mode 2 (0x22 = 0xFF / 0xFC), cioè il
- * banco waveform differenziale. Sul 9.7", stesso silicio, è già stabilito che
- * usa la seconda RAM come frame precedente e che su un pannello a 3 colori
- * quella RAM è l'accent, quindi non è utilizzabile per il fast partial update:
- * hasFastPartialUpdate = false nel driver non è un'assunzione ma una
- * conseguenza. Idem le varianti di 0x3C (border) e la LUT via 0x32, che si
- * toccano solo se i colori pieni mostrano ghosting.
+ * 14. Il refresh parziale d'area: se restringendo la finestra RAM il controller
+ *    aggiorna davvero solo quella porzione della banda, e a che prezzo in
+ *    tempo. Il punto 9 misura l'addressing in SCRITTURA, cioè dove finiscono i
+ *    byte; questo misura il REFRESH, cioè quali gate line vengono davvero
+ *    scandite quando si manda la master activation. Sono due cose diverse e
+ *    l'una non implica l'altra.
+ *
+ *    Il discriminante è una fascia di trappola scritta nera in 0x24 che nessuna
+ *    finestra di refresh comprende: se resta bianca le finestre sono
+ *    rispettate, se compare il refresh ha percorso tutta la banda. Senza la
+ *    trappola non si distinguerebbe, perchè la RAM accumula le scritture e le
+ *    due ipotesi danno la stessa immagine finale.
+ *
+ *    Vengono provate finestre di altezza diversa (dice se la durata scala con
+ *    le gate line), una ristretta anche lungo X, una riscrittura ripetuta della
+ *    stessa area, i due valori di bordo 0x3C, e infine 0x22 = 0xF4, cioè Mode 1
+ *    su finestra, che è la strada che resta se il banco differenziale non c'è.
+ *
+ *    IL PREZZO È ACCETTATO IN PARTENZA: con 0x22 = 0xFC la RAM 0x26 smette di
+ *    essere l'accent e diventa il frame precedente, quindi quello che si misura
+ *    lì vale per un pannello bianco e nero. La scelta è per frame, non per
+ *    pixel: o accent o partial.
+ *
+ * NON misurato di proposito: la LUT via 0x32, cioè la waveform caricata da
+ * host invece che da OTP, che si tocca solo se i colori pieni mostrano
+ * ghosting che nessun banco OTP corregge.
  *
  * SEQUENZA DI UNA ESECUZIONE
  *   fase probe:  init -> prova di vita (pattern hardware, power on, HV/VCI
  *                detect, registri) -> frame 1: pattern di identificazione
  *                (righelli, angoli, lettera) -> frame 2: 4 bande numerate con
- *                le combinazioni dei due piani -> frame 3..5: colori pieni, se
- *                SHOW_SOLID_COLORS -> deep sleep -> riepilogo
+ *                le combinazioni dei due piani -> frame delle finestre
+ *                parziali -> frame 3..5: colori pieni, se SHOW_SOLID_COLORS ->
+ *                pattern a 20 MHz, se SHOW_FAST_CLOCK_FRAME -> sonda del
+ *                partial d'area, se SHOW_PARTIAL_PROBE -> deep sleep ->
+ *                riepilogo
  *   fase driver: init del driver (che riparte da un reset hardware, quindi
  *                sveglia il pannello) -> clearScreen bianco / nero / accent ->
  *                frame di 5 tile, uno a cavallo della giunzione -> hibernate
@@ -207,19 +229,25 @@
 // ##   suo costo in tempo. Un refresh su questo pannello è dell'ordine ##
 // ##   dei 20 s, una pausa di osservazione dura OBSERVE_MS.           ##
 // ##                                                                 ##
-// ##   DURATA CON I DEFAULT: circa 11 minuti, così composti           ##
+// ##   DURATA CON I DEFAULT: circa 13 minuti, così composti           ##
 // ##     fase probe     7 refresh + 6 pause .............. ~6:50      ##
+// ##     sonda partial  7 refresh + 2 pause .............. ~1:55      ##
 // ##     passaggio fra le due fasi, 1 pausa .............. ~0:45      ##
 // ##     fase driver    4 refresh + 3 pause .............. ~3:35      ##
+// ##   La sonda partial arriva a ~3:50, e il totale a ~15:00, se il   ##
+// ##   partial ricade sulla waveform piena: sono 5 refresh che        ##
+// ##   durano 20 s invece di 1 s.                                     ##
 // ##                                                                 ##
 // ##   COME ACCORCIARLA                                               ##
 // ##     SHOW_SOLID_COLORS 0 ....... -3 refresh, -3 pause  -3:15      ##
+// ##     SHOW_PARTIAL_PROBE 0 ...... -7 refresh, -2 pause  -1:55      ##
 // ##     SHOW_FAST_CLOCK_FRAME 0 ... -1 refresh, -1 pause  -1:05      ##
-// ##     OBSERVE_MS 0 .............. via tutte le pause    -7:30      ##
+// ##     OBSERVE_MS 0 .............. via tutte le pause    -9:00      ##
 // ##     RUN_DRIVER_PHASE 0 ........                       -4:20      ##
-// ##     RUN_PROBE_PHASE 0 .........                       -6:50      ##
+// ##     RUN_PROBE_PHASE 0 .........                       -8:45      ##
 // ##   Giro minimo utile: solo probe, senza colori pieni, senza frame ##
-// ##   a 20 MHz e senza pause = 4 refresh, circa 1:20.                ##
+// ##   a 20 MHz, senza sonda partial e senza pause = 4 refresh,       ##
+// ##   circa 1:20.                                                    ##
 // ##                                                                 ##
 // #####################################################################
 
@@ -310,11 +338,30 @@ static const uint16_t MUX_LINES = 384;
 #define SHOW_FAST_CLOCK_FRAME  1
 
 /**
+ * Sonda del refresh parziale d'area. [OPZIONALE, +1:55, fino a +3:50]
+ *
+ * Risponde alla sola domanda che il resto del test non tocca: se restringendo
+ * la finestra RAM il controller aggiora solo quella porzione della banda,
+ * cioè se il partial d'area esiste su questo pannello. Il frame delle finestre
+ * parziali verifica dove finiscono i byte in SCRITTURA, questa verifica quali
+ * gate line vengono davvero scandite dal REFRESH.
+ *
+ * Costa 7 refresh: 1 di baseline, 5 su finestra con 0x22 = 0xFC e 1 con
+ * 0x22 = 0xF4. Se il partial è reale durano circa 1 s l'uno e il conto è
+ * ~1:55 con le pause; se ricadono sulla waveform piena sono 20 s l'uno e si
+ * arriva a ~3:50.
+ *
+ * Nelle passate 0xFC la RAM 0x26 fa da frame precedente e non da accent: la
+ * sonda misura quindi un pannello bianco e nero, ed è il compromesso accettato.
+ */
+#define SHOW_PARTIAL_PROBE  1
+
+/**
  * Pausa di osservazione fra due frame. [OPZIONALE, ma vedi sotto]
  *
  * Il refresh successivo cancella il precedente e il test non può guardare il
  * pannello al posto tuo: con 0 non si ferma, e va bene solo se stai cronometrando
- * e non guardando. Con i default le pause sono 10 e pesano 7:30 sugli 11 minuti.
+ * e non guardando. Con i default le pause sono 12 e pesano 9:00 sui 13 minuti.
  */
 static const uint32_t OBSERVE_MS = 45000;
 
@@ -460,6 +507,10 @@ static int32_t  driverTilesMs = -1;                  // refresh del frame dei ti
 static int32_t  powerOnMs = -1;       // BUSY del power on 0xC0
 static int32_t  powerOffMs = -1;      // BUSY del power off 0xC3
 static int32_t  partialMs = -1;       // refresh del frame a finestre parziali
+// Sonda del partial d'area, -1 se la passata non si e' conclusa o non e' stata fatta
+static int32_t  areaMsFirst = -1;     // prima passata 0xFC, finestra alta
+static int32_t  areaMsThin  = -1;     // passata 0xFC su 24 righe
+static int32_t  areaMsMode1 = -1;     // passata 0xF4, Mode 1 su finestra
 static int32_t  fastMs = -1;          // refresh del frame riscritto a 20 MHz
 static uint32_t fastPlaneMs = 0;      // push di un piano a 20 MHz
 static bool     busyStuckAtRest = false;  // BUSY già alto prima di ogni comando
@@ -897,12 +948,21 @@ static int32_t waitRefresh(uint32_t timeout_ms)
  * Lancia la display update sequence e ne misura i tempi. Verifica prima di
  * tutto che il BUSY salga: se non sale, il controller non ha preso il comando e
  * niente di quanto segue ha valore.
+ *
+ * I default sono il refresh pieno, l'unico che serviva finchè non c'era la
+ * sonda del partial. Gli altri valori di 0x22 che il test usa: 0xFC è Mode 2
+ * senza power down, cioè la waveform differenziale, e 0xF4 è Mode 1 senza
+ * power down. Attesa e timeout sono parametri perchè una passata su finestra,
+ * se il banco esiste, dura tre ordini di grandezza meno di una piena, e
+ * annunciare venti secondi per poi attenderne quaranta non avrebbe senso.
  */
-static int32_t runRefresh()
+static int32_t runRefresh(uint8_t updateSequence = 0xF7,
+                          const char* attesa = "una ventina di secondi",
+                          uint32_t timeout_ms = 40000)
 {
-  Serial.println(F("\nrefresh (0x22 = 0xF7 + 0x20), una ventina di secondi"));
+  Serial.printf("\nrefresh (0x22 = 0x%02X + 0x20), %s\n", updateSequence, attesa);
   writeCommand(0x22);
-  writeData(0xF7);
+  writeData(updateSequence);
   writeCommand(0x20);   // master activation
 
   const uint32_t tAct = millis();
@@ -915,9 +975,10 @@ static int32_t runRefresh()
   }
   Serial.printf("BUSY salito dopo %lu ms\n", (unsigned long)(millis() - tAct));
 
-  const int32_t ms = waitRefresh(40000);
+  const int32_t ms = waitRefresh(timeout_ms);
   if (ms < 0)
-    Serial.println(F("ATTENZIONE: timeout BUSY a 40000 ms, refresh non concluso"));
+    Serial.printf("ATTENZIONE: timeout BUSY a %lu ms, refresh non concluso\n",
+                  (unsigned long)timeout_ms);
   else
     Serial.printf("refresh concluso in %ld ms\n", (long)ms);
   return ms;
@@ -1221,6 +1282,368 @@ static int32_t showPartialWindowFrame()
   return runRefresh();
 }
 
+// --- refresh parziale d'area -----------------------------------------
+
+/**
+ * Mappa verticale della sonda del partial d'area, espressa in frazioni della
+ * banda: le stesse fasce restano disgiunte sia con MUX_LINES = 384 sia con
+ * 680, che sono i due valori che il test prevede. A sonda finita si leggono
+ * tutte insieme sullo stesso schermo.
+ *
+ * Il riquadro è l'unica finestra ristretta anche lungo X. x e w multipli di 8:
+ * sull'asse source la RAM è organizzata a byte.
+ */
+static const uint16_t AREA_BAND   = MUX_LINES;
+static const uint16_t AREA_P1_Y   = 0;                    // passata 1, poi la 4
+static const uint16_t AREA_P1_H   = AREA_BAND / 6;
+static const uint16_t AREA_TRAP_Y = AREA_P1_H + 16;       // fascia di trappola
+static const uint16_t AREA_TRAP_H = AREA_BAND / 12;
+static const uint16_t AREA_THIN_Y = AREA_BAND / 3;        // finestra sottile
+static const uint16_t AREA_THIN_H = 24;
+static const uint16_t AREA_M1_Y   = AREA_BAND / 3 + 40;   // passata Mode 1
+static const uint16_t AREA_M1_H   = AREA_BAND / 12;
+static const uint16_t AREA_P2_Y   = AREA_BAND / 2 + 32;   // passata 2
+static const uint16_t AREA_P2_H   = AREA_BAND / 6;
+static const uint16_t AREA_BOX_X  = 448;                  // riquadro, ristretto in X
+static const uint16_t AREA_BOX_W  = 128;
+static const uint16_t AREA_BOX_Y  = AREA_BAND * 3 / 4 + 32;
+static const uint16_t AREA_BOX_H  = AREA_BAND / 8;
+
+// Banda minima perchè le fasce della mappa restino disgiunte
+static const uint16_t AREA_BAND_MIN = 320;
+
+// Valore di digit che significa "fascia uniforme, senza cifra"
+static const uint8_t AREA_NO_DIGIT = 0xFF;
+
+/**
+ * Scrive una fascia a larghezza piena su un piano: fondo uniforme con la cifra
+ * della passata sovraimpressa, per riconoscere a colpo d'occhio quale passata
+ * ha dipinto cosa. Riusa paintGlyph, cioè lo stesso font dei righelli del
+ * pattern di identificazione. La cifra viene disegnata solo se la fascia è
+ * abbastanza alta da contenerla: sotto quell'altezza la fascia esce uniforme e
+ * la si riconosce dalla posizione.
+ */
+static void writeStripeWithDigit(uint8_t planeCommand, uint16_t y, uint16_t h,
+                                 uint8_t bg, uint8_t digit, uint8_t fg)
+{
+  uint8_t row[ROW_BYTES];
+  const int32_t glyphH = (int32_t)GLYPH_H * LABEL_SCALE;
+  const bool fits = (digit < 10) && ((int32_t)h >= glyphH + 8);
+  const int32_t gy = fits ? ((int32_t)h - glyphH) / 2 : -glyphH;
+
+  setRamWindow(0, y, SRC, h);
+  writeCommand(planeCommand);
+  digitalWrite(PIN_DC, HIGH);
+  hspi.beginTransaction(spiSettings);
+  digitalWrite(PIN_CS, LOW);
+  for (int16_t r = 0; r < (int16_t)h; ++r)
+  {
+    memset(row, bg, ROW_BYTES);
+    if (fits)
+      paintGlyph(row, r, digit, 32, gy, LABEL_SCALE, fg);
+    hspi.writeBytes(row, ROW_BYTES);
+  }
+  digitalWrite(PIN_CS, HIGH);
+  hspi.endTransaction();
+}
+
+/**
+ * Esito di una passata della sonda d'area, tenuto per il riepilogo: il
+ * confronto fra passate serve più del valore singolo.
+ */
+struct AreaPass
+{
+  const char* label;
+  uint16_t x, y, w, h;
+  uint8_t  sequence;   // parametro di 0x22 usato per aggiornare
+  uint32_t pushMs;     // scrittura della finestra su 0x24
+  int32_t  ms;         // BUSY del refresh, -1 se non conclusa
+};
+
+static AreaPass areaPasses[6];
+static uint8_t  areaPassCount = 0;
+
+/**
+ * Una passata della sonda d'area: scrive la finestra su 0x24, aggiorna con la
+ * sequenza indicata e poi riallinea la stessa finestra su 0x26, perchè la
+ * passata successiva trovi come frame precedente quello che il pannello sta
+ * davvero mostrando. È lo stesso schema di writeImagePartToPrevious del driver
+ * monocromatico GxEPD2_1330_GDEM133T91, che gira sullo stesso silicio.
+ *
+ * La finestra viene reimpostata subito prima della master activation: sono i
+ * registri 0x44/0x45 presenti in quel momento a definire l'area che il refresh
+ * percorre, ed è esattamente il punto in prova.
+ *
+ * Con digit sotto 10 la fascia porta la cifra e deve essere a larghezza piena;
+ * con AREA_NO_DIGIT esce uniforme e può essere ristretta anche in X. Ritorna i
+ * ms del refresh, -1 se non si è concluso.
+ */
+static int32_t areaPass(const char* label, uint16_t x, uint16_t y, uint16_t w, uint16_t h,
+                        uint8_t value, uint8_t digit, uint8_t fg,
+                        uint8_t updateSequence, uint32_t timeout_ms)
+{
+  const bool withDigit = (digit < 10) && (w == SRC);
+
+  Serial.printf("\n-- %s\n   finestra x=%u..%u  y=%u..%u  %u righe  %lu byte\n",
+                label, (unsigned)x, (unsigned)(x + w - 1),
+                (unsigned)y, (unsigned)(y + h - 1), (unsigned)h,
+                (unsigned long)((uint32_t)(w / 8) * h));
+
+  const uint32_t t0 = millis();
+  if (withDigit)
+    writeStripeWithDigit(0x24, y, h, value, digit, fg);
+  else
+    writeBoxConst(0x24, x, y, w, h, value);
+  const uint32_t pushMs = millis() - t0;
+  Serial.printf("   0x24 scritto in %lu ms\n", (unsigned long)pushMs);
+
+  setRamWindow(x, y, w, h);
+  const char* attesa = (updateSequence == 0xF4)
+                       ? "Mode 1 su finestra: fra meno di un secondo e una ventina, si misura"
+                       : "atteso sotto il secondo se finestra e banco differenziale valgono";
+  const int32_t ms = runRefresh(updateSequence, attesa, timeout_ms);
+
+  // frame precedente allineato a quello che si vede adesso, nella stessa finestra
+  if (withDigit)
+    writeStripeWithDigit(0x26, y, h, value, digit, fg);
+  else
+    writeBoxConst(0x26, x, y, w, h, value);
+
+  if (areaPassCount < (uint8_t)(sizeof(areaPasses) / sizeof(areaPasses[0])))
+  {
+    AreaPass& p = areaPasses[areaPassCount++];
+    p.label = label;
+    p.x = x;
+    p.y = y;
+    p.w = w;
+    p.h = h;
+    p.sequence = updateSequence;
+    p.pushMs = pushMs;
+    p.ms = ms;
+  }
+  return ms;
+}
+
+/**
+ * Riepilogo della sonda d'area: la tabella delle passate e le letture che
+ * contano, cioè se la durata scala con l'altezza della finestra e quanto
+ * costerebbe un aggiornamento B/N fatto per finestre su questa banda.
+ */
+static void reportAreaPasses()
+{
+  Serial.println(F("\nesito della sonda del partial d'area:"));
+  if (areaPassCount == 0)
+  {
+    Serial.println(F("  nessuna passata eseguita"));
+    return;
+  }
+
+  Serial.println(F("  finestra                    righe  0x22   push   refresh"));
+  for (uint8_t k = 0; k < areaPassCount; ++k)
+  {
+    const AreaPass& p = areaPasses[k];
+    Serial.printf("  x=%3u..%3u y=%3u..%3u    %5u  0x%02X  %4lu ms  ",
+                  (unsigned)p.x, (unsigned)(p.x + p.w - 1),
+                  (unsigned)p.y, (unsigned)(p.y + p.h - 1), (unsigned)p.h,
+                  p.sequence, (unsigned long)p.pushMs);
+    if (p.ms < 0)
+      Serial.println(F("non conclusa"));
+    else
+      Serial.printf("%ld ms\n", (long)p.ms);
+  }
+
+  /**
+   * Scala con l'altezza. Se la durata è proporzionale alle gate line, al
+   * driver conviene passare la finestra minima che contiene il disegno
+   * cambiato; se è costante, il costo è tutto della waveform e restringere la
+   * finestra fa risparmiare solo push SPI.
+   */
+  if (areaMsFirst > 0 && areaMsThin > 0)
+  {
+    Serial.printf("  %u righe %ld ms contro %u righe %ld ms: tempi 1:%.2f, righe 1:%.2f\n",
+                  (unsigned)AREA_P1_H, (long)areaMsFirst,
+                  (unsigned)AREA_THIN_H, (long)areaMsThin,
+                  (double)areaMsFirst / (double)areaMsThin,
+                  (double)AREA_P1_H / (double)AREA_THIN_H);
+    if ((double)areaMsFirst / (double)areaMsThin > 1.5)
+      Serial.println(F("  la durata scala con le gate line coinvolte"));
+    else
+      Serial.println(F("  la durata non dipende dall'altezza: il costo è della waveform"));
+  }
+
+  if (areaMsFirst > 0 && refreshMs > 0)
+    Serial.printf("  passata d'area %ld ms contro %ld ms del refresh pieno: %.1fx\n",
+                  (long)areaMsFirst, (long)refreshMs,
+                  (double)refreshMs / (double)areaMsFirst);
+
+  if (areaMsFirst > 0)
+    Serial.printf("  partial_refresh_time da mettere nel driver: %ld ms con margine\n",
+                  (long)(areaMsFirst * 2 + 200));
+
+  if (areaMsMode1 > 0)
+  {
+    Serial.printf("  Mode 1 su finestra (0x22 = 0xF4) %ld ms su %u righe",
+                  (long)areaMsMode1, (unsigned)AREA_M1_H);
+    if (refreshMs > 0)
+      Serial.printf(", contro %ld ms del pieno", (long)refreshMs);
+    Serial.println();
+    if (refreshMs > 0 && areaMsMode1 * 2 < refreshMs)
+      Serial.println(F("  Mode 1 si accorcia con la finestra: anche senza banco\n"
+                       "  differenziale un refresh d'area costa meno di uno pieno, e non\n"
+                       "  consuma 0x26, quindi resterebbe compatibile con l'accent"));
+    else if (refreshMs > 0)
+      Serial.println(F("  Mode 1 dura come il pieno: la finestra non accorcia la waveform"));
+  }
+
+  Serial.println(F("  le passate 0xFC valgono per frame in bianco e nero: lì 0x26 fa da\n"
+                   "  frame precedente, quindi in quella modalità l'accent non esiste"));
+  Serial.println(F("  su due controller c'è un secondo guadagno: una finestra tutta dentro\n"
+                   "  una banda impegna un solo controller, e l'altro non va nemmeno svegliato"));
+}
+
+/**
+ * Sonda del partial d'area: verifica se restringendo la finestra RAM il
+ * controller aggiorna davvero solo quella porzione della banda, e a che prezzo
+ * in tempo.
+ *
+ * È la domanda che il resto del test non tocca. showPartialWindowFrame()
+ * verifica l'addressing in SCRITTURA, cioè dove finiscono i byte; qui si
+ * verifica il REFRESH, cioè quali gate line vengono scandite quando parte la
+ * master activation. Sul fratello monocromatico dello stesso silicio,
+ * GxEPD2_1330_GDEM133T91, refresh(x,y,w,h) fa _setPartialRamArea seguito da
+ * 0x22 = 0xFC, oppure 0xF4 quando il banco differenziale non c'è; il driver
+ * 122c invece manda sempre _Update_Full a finestra piena da entrambi gli
+ * overload, quindi qui non c'è niente di già verificato sul campo.
+ *
+ * COME SI DISTINGUE UNA FINESTRA RISPETTATA DA UNA IGNORATA. Il contenuto
+ * finale non basta: la RAM accumula le scritture, quindi un refresh che
+ * ripassa tutta la banda mostra la stessa identica immagine di uno che ripassa
+ * solo la finestra. Serve una discordanza voluta fra RAM e schermo, ed è la
+ * fascia di trappola: nera in 0x24, e nessuna finestra di refresh la comprende.
+ * Se resta bianca le finestre sono rispettate, se compare il refresh ha
+ * percorso tutta la banda.
+ *
+ * Le passate sono disgiunte lungo Y, così a sonda finita si leggono insieme:
+ *   fascia 1   passata 1, nera con la cifra 1, poi la passata 4 la riporta a
+ *              bianca con la cifra 3: due scritture sulla stessa area dicono
+ *              se una catena di partial regge
+ *   fascia 2   trappola, scritta in RAM e mai refreshata
+ *   fascia 3   finestra sottile di 24 righe: dice se la durata scala con
+ *              l'altezza o è tutta della waveform
+ *   fascia 4   passata Mode 1 (0x22 = 0xF4), la strada che resta se 0xFC non va
+ *   fascia 5   passata 2, nera con la cifra 2, con bordo 0x3C = 0x80
+ *   riquadro   ristretto anche in X, x = 448..575
+ *
+ * Con OBSERVE_MS = 0 la pausa prima della passata Mode 1 salta, e allora una
+ * trappola nera a fine sonda non dice più se è stata una passata 0xFC o quella
+ * Mode 1 a farla comparire: per questa sonda la pausa non è decorativa.
+ *
+ * Il prezzo è accettato in partenza: nelle passate 0xFC la 0x26 fa da frame
+ * precedente e non da accent, quindi quello che si misura lì vale per un
+ * pannello bianco e nero.
+ */
+static void probePartialProbe()
+{
+  Serial.println(F("\n=== sonda del partial d'area: la finestra RAM limita il refresh? ==="));
+  Serial.println(F("nelle passate 0xFC si misura un pannello B/N: 0x26 fa da frame precedente"));
+
+  /**
+   * Con una banda troppo bassa le fasce della mappa si sovrapporrebbero e il
+   * risultato non sarebbe leggibile: meglio non misurare che misurare male.
+   */
+  if (AREA_BAND < AREA_BAND_MIN)
+  {
+    Serial.printf("banda di %u righe sotto il minimo di %u: sonda saltata\n",
+                  (unsigned)AREA_BAND, (unsigned)AREA_BAND_MIN);
+    return;
+  }
+
+  // baseline bianca col pattern hardware: fondo su cui il nero si legge subito
+  Serial.println(F("\nbaseline: banda bianca col pattern, poi refresh pieno Mode 1"));
+  patternFill(0x47, 0xF7, "B/N   ");   // 0x24 tutto bianco
+  patternFill(0x46, 0x77, "accent");   // 0x26 spento: il refresh pieno lo legge come accent
+  if (runRefresh() < 0)
+  {
+    Serial.println(F("baseline non riuscita: sonda del partial d'area abbandonata"));
+    return;
+  }
+
+  /**
+   * Ora che la banda è bianca, 0x26 va portata a bianco: da questo punto non è
+   * più l'accent ma il frame precedente, e deve contenere quello che si vede.
+   * Il pattern hardware lo fa senza spingere 46 KB sul bus.
+   */
+  patternFill(0x46, 0xF7, "prec. ");
+
+  Serial.printf("\ntrappola: fascia nera scritta in 0x24 a y=%u..%u, che nessuna finestra\n"
+                "di refresh comprende. Se compare, la finestra non è rispettata\n",
+                (unsigned)AREA_TRAP_Y, (unsigned)(AREA_TRAP_Y + AREA_TRAP_H - 1));
+  writeBoxConst(0x24, 0, AREA_TRAP_Y, SRC, AREA_TRAP_H, 0x00);
+
+  // bordo come lo lascia l'init, cioè come lo tiene il driver oggi
+  writeCommand(0x3C);
+  writeData(0x01);
+  areaMsFirst = areaPass("passata 1: fascia alta a nero, cifra 1, bordo 0x3C = 0x01",
+                         0, AREA_P1_Y, SRC, AREA_P1_H, 0x00, 1, 0xFF, 0xFC, 30000);
+
+  /**
+   * Se la prima passata non si è conclusa, le altre quattro con 0xFC sarebbero
+   * solo altrettanti timeout: si va diritti a Mode 1, che è la strada che resta.
+   */
+  if (areaMsFirst > 0)
+  {
+    /**
+     * Bordo su VCOM invece che sulla LUT: su questa famiglia di controller è il
+     * valore che tiene ferma la cornice durante un partial. Le due passate
+     * differiscono solo per questo, quindi il confronto è pulito.
+     */
+    writeCommand(0x3C);
+    writeData(0x80);
+    areaPass("passata 2: fascia centrale a nero, cifra 2, bordo 0x3C = 0x80",
+             0, AREA_P2_Y, SRC, AREA_P2_H, 0x00, 2, 0xFF, 0xFC, 30000);
+
+    areaPass("passata 3: riquadro ristretto anche in X",
+             AREA_BOX_X, AREA_BOX_Y, AREA_BOX_W, AREA_BOX_H, 0x00,
+             AREA_NO_DIGIT, 0x00, 0xFC, 30000);
+
+    // seconda scrittura sulla stessa area della passata 1: la catena regge?
+    areaPass("passata 4: la fascia alta torna bianca, cifra 3",
+             0, AREA_P1_Y, SRC, AREA_P1_H, 0xFF, 3, 0x00, 0xFC, 30000);
+
+    areaMsThin = areaPass("passata 5: finestra sottile di 24 righe",
+                          0, AREA_THIN_Y, SRC, AREA_THIN_H, 0x00,
+                          AREA_NO_DIGIT, 0x00, 0xFC, 30000);
+  }
+  else
+    Serial.println(F("\nla prima passata 0xFC non si è conclusa: le altre quattro\n"
+                     "sarebbero altrettanti timeout, si passa a Mode 1 su finestra"));
+
+  observePause(OBSERVE_MS,
+               "parte la passata Mode 1, che se ignora la finestra fa comparire la\n"
+               "fascia di trappola: GUARDA ORA se è ancora bianca");
+
+  /**
+   * Mode 1 su finestra. 0xF4 è 0xF7 senza il power down finale, ed è quello che
+   * il driver monocromatico manda quando hasFastPartialUpdate è false: waveform
+   * piena, ma sempre delimitata dalla finestra. Vale la misura in ogni caso, e
+   * a differenza di 0xFC non consuma 0x26, quindi resterebbe compatibile con
+   * l'accent.
+   */
+  writeCommand(0x3C);
+  writeData(0x01);
+  areaMsMode1 = areaPass("passata Mode 1 su finestra (0x22 = 0xF4)",
+                         0, AREA_M1_Y, SRC, AREA_M1_H, 0x00,
+                         AREA_NO_DIGIT, 0x00, 0xF4, 40000);
+
+  // 0xFC e 0xF4 lasciano clock e analogico accesi: si spengono come fa _PowerOff
+  writeCommand(0x22);
+  writeData(0xC3);
+  writeCommand(0x20);
+  waitBusy(5000);
+
+  reportAreaPasses();
+}
+
 // --- deep sleep: quale parametro accetta il modulo -------------------
 
 /**
@@ -1392,6 +1815,18 @@ static void runProbePhase()
   spiSettings = SPISettings(SPI_HZ, MSBFIRST, SPI_MODE0);
 #endif  // SHOW_FAST_CLOCK_FRAME
 
+#if SHOW_PARTIAL_PROBE
+  observePause(OBSERVE_MS,
+               "parte la sonda del partial d'area, che riporta la banda a bianco");
+
+  /**
+   * Sonda del partial d'area: viene per ultima fra i frame perchè riparte da
+   * una baseline bianca e riscrive la banda da capo, quindi tutto quello che i
+   * frame precedenti hanno lasciato a schermo va guardato prima.
+   */
+  probePartialProbe();
+#endif  // SHOW_PARTIAL_PROBE
+
   probeDeepSleep();
 
   Serial.println(F("\n---------------- RIEPILOGO ----------------"));
@@ -1418,6 +1853,19 @@ static void runProbePhase()
     Serial.println(F("refresh      non concluso"));
   Serial.printf("frame bande  %ld ms\n", (long)bandsRefreshMs);
   Serial.printf("finestre parz %ld ms\n", (long)partialMs);
+#if SHOW_PARTIAL_PROBE
+  if (areaMsFirst > 0 || areaMsMode1 > 0)
+  {
+    Serial.printf("partial 0xFC %ld ms su %u righe, %ld ms su %u righe\n",
+                  (long)areaMsFirst, (unsigned)AREA_P1_H,
+                  (long)areaMsThin, (unsigned)AREA_THIN_H);
+    Serial.printf("partial 0xF4 %ld ms su %u righe\n",
+                  (long)areaMsMode1, (unsigned)AREA_M1_H);
+    Serial.println(F("             valgono solo se la fascia di trappola e' rimasta bianca"));
+  }
+  else
+    Serial.println(F("partial      nessuna passata conclusa"));
+#endif
 #if SHOW_FAST_CLOCK_FRAME
   Serial.printf("pattern 20MHz %ld ms refresh, piano in %lu ms\n",
                 (long)fastMs, (unsigned long)fastPlaneMs);
@@ -1729,6 +2177,68 @@ static void printObservationSheet()
   Serial.println(F("           strisce, il problema è nel push dei piani, non nelle"));
   Serial.println(F("           finestre"));
   Serial.println(F(""));
+  Serial.println(F("SONDA DEL PARTIAL D'AREA, le passate su finestra:"));
+  Serial.println(F("  fascia di trappola, scritta nera in 0x24 e mai compresa in nessuna"));
+  Serial.println(F("  finestra di refresh (la sua Y è nel report sopra). Dopo le passate"));
+  Serial.println(F("  0xFC era: BIANCA / NERA  — te l'ha chiesto la pausa prima della"));
+  Serial.println(F("  passata Mode 1"));
+  Serial.println(F("  bianca -> la finestra RAM limita davvero il refresh: il partial"));
+  Serial.println(F("           d'area esiste. In GxEPD2_SOLUM_122c_960x768.h:"));
+  Serial.println(F("           hasFastPartialUpdate a true, partial_refresh_time alla"));
+  Serial.println(F("           durata misurata sopra invece dei 25000 ms di oggi,"));
+  Serial.println(F("           refresh(x,y,w,h) che fa _setPartialRamArea sull'area e un"));
+  Serial.println(F("           nuovo _Update_Part con 0x22 = 0xFC invece di chiamare"));
+  Serial.println(F("           _Update_Full, e writeImageAgain che scrive su 0x26 il"));
+  Serial.println(F("           frame precedente al posto dell'accent"));
+  Serial.println(F("           SU DUE CONTROLLER c'è un guadagno in più: una finestra"));
+  Serial.println(F("           tutta dentro una banda impegna un solo controller, quindi"));
+  Serial.println(F("           il dispatch deve saltare l'altro invece di aggiornarlo"));
+  Serial.println(F("           a vuoto, e _waitWhileAnyBusy deve attendere solo quello"));
+  Serial.println(F("           che ha lavorato"));
+  Serial.println(F("  nera   -> il refresh ripassa tutta la banda qualunque finestra sia"));
+  Serial.println(F("           impostata: il partial d'area non esiste, hasPartialUpdate"));
+  Serial.println(F("           resta vero solo come addressing in scrittura e i due"));
+  Serial.println(F("           refresh del driver restano su _Update_Full come oggi"));
+  Serial.println(F(""));
+  Serial.println(F("  riquadro ristretto anche in X (x = 448..575): i bordi verticali"));
+  Serial.println(F("  sono netti?   SI / NO"));
+  Serial.println(F("  no     -> la finestra lungo X non viene rispettata dal refresh: il"));
+  Serial.println(F("           partial resta utilizzabile solo a fasce larghe tutto lo"));
+  Serial.println(F("           schermo, cioè x = 0 e w = WIDTH d'ufficio nel driver"));
+  Serial.println(F("           (attenzione: è diverso dai tre box del frame precedente,"));
+  Serial.println(F("           che provano la SCRITTURA e possono funzionare comunque)"));
+  Serial.println(F(""));
+  Serial.println(F("  fascia alta, riscritta due volte: alla fine porta la cifra 3 nera su"));
+  Serial.println(F("  fondo bianco?   SI / NO"));
+  Serial.println(F("  sì     -> la catena di partial sulla stessa area regge: il driver può"));
+  Serial.println(F("           aggiornare ripetutamente la stessa zona senza refresh pieno"));
+  Serial.println(F("  no, resta la cifra 1 o è sporca -> la seconda scrittura non passa"));
+  Serial.println(F("           pulita: serve un contatore di partial nel driver che forzi"));
+  Serial.println(F("           _Update_Full ogni N aggiornamenti"));
+  Serial.println(F(""));
+  Serial.println(F("  cornice del pannello durante le passate: ha lampeggiato?"));
+  Serial.println(F("           la passata 1 usa 0x3C = 0x01 (bordo sulla LUT), la 2 e la 3"));
+  Serial.println(F("           usano 0x3C = 0x80 (bordo su VCOM)"));
+  Serial.println(F("  la 1 lampeggia e le altre no -> il driver deve mandare 0x3C = 0x80"));
+  Serial.println(F("           prima di un partial e rimettere 0x01 prima di un pieno"));
+  Serial.println(F(""));
+  Serial.println(F("  passata Mode 1 su finestra (0x22 = 0xF4), l'ultima:"));
+  Serial.println(F("  la trappola è diventata nera SOLO adesso -> Mode 1 ripassa tutta la"));
+  Serial.println(F("           banda e solo 0xFC rispetta la finestra: il partial esiste"));
+  Serial.println(F("           ma costa i colori, non c'è la via di mezzo"));
+  Serial.println(F("  la fascia esce nera, la trappola resta bianca e la durata è molto"));
+  Serial.println(F("  sotto il refresh pieno -> anche Mode 1 rispetta la finestra: si può"));
+  Serial.println(F("           fare partial d'area SENZA perdere l'accent, perchè 0xF4 non"));
+  Serial.println(F("           usa 0x26 come frame precedente. È l'esito migliore, e nel"));
+  Serial.println(F("           driver diventa un _Update_Part con 0xF4 e"));
+  Serial.println(F("           hasFastPartialUpdate lasciato a false"));
+  Serial.println(F(""));
+  Serial.println(F("  PREZZO GIÀ ACCETTATO SULLA STRADA 0xFC: con 0x26 usata come frame"));
+  Serial.println(F("           precedente l'accent non è disponibile. Un frame aggiornato"));
+  Serial.println(F("           in partial è un frame bianco e nero, e le due cose non"));
+  Serial.println(F("           possono convivere nello stesso frame: il driver dovrà"));
+  Serial.println(F("           scegliere per frame, non per pixel."));
+  Serial.println(F(""));
   Serial.println(F("PATTERN RIPETUTO A 20 MHz:"));
   Serial.println(F("  identico al primo -> il default a 20 MHz del driver è buono"));
   Serial.println(F("  righe sporche, byte spostati, pixel mancanti -> il bus non"));
@@ -1770,8 +2280,10 @@ void setup()
   Serial.printf (" fasi      : probe %s, driver %s (dual %s)\n",
                  RUN_PROBE_PHASE ? "SI" : "no", RUN_DRIVER_PHASE ? "SI" : "no",
                  DRIVER_DUAL ? "SI" : "no");
-  Serial.printf (" opzionali : colori pieni %s, frame a 20 MHz %s, pause %lu s\n",
+  Serial.printf (" opzionali : colori pieni %s, frame a 20 MHz %s, sonda partial %s,\n"
+                 "             pause %lu s\n",
                  SHOW_SOLID_COLORS ? "SI" : "no", SHOW_FAST_CLOCK_FRAME ? "SI" : "no",
+                 SHOW_PARTIAL_PROBE ? "SI" : "no",
                  (unsigned long)(OBSERVE_MS / 1000));
   Serial.printf ("ambiente: CPU %lu MHz, APB %lu MHz, SPI %lu MHz, heap %lu B\n",
                  (unsigned long)(getCpuFrequencyMhz()),
