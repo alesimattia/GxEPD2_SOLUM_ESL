@@ -67,7 +67,15 @@
  *    frame precedente l'accent non esiste più. Un pannello che passa questa
  *    sonda è un pannello bianco e nero.
  *
- * 6. Il parametro di deep sleep di 0x10, con il BUSY come testimone.
+ * 6. Il deep sleep, per intero: non quale parametro di 0x10 alza il BUSY, che
+ *    è solo un livello su un pin e lo dà alto anche un cavo scollegato, ma se
+ *    il controller si addormenta davvero e soprattutto se poi si risveglia e
+ *    torna a stampare. La prova di sordità gli manda da addormentato un
+ *    refresh intero e guarda il BUSY più a lungo di quanto un refresh duri;
+ *    il risveglio è cronometrato e chiuso da un refresh a schermo nero, che
+ *    o arriva o non arriva. Una finestra ferma lascia il tempo di misurare la
+ *    corrente col multimetro, che è l'unica prova del risparmio e in firmware
+ *    non si può fare.
  *
  * Non viene esercitato di proposito: il motore di dithering (0x25). Scrive lui
  * stesso nella BW RAM a partire dal cursore, quindi un tentativo alla cieca
@@ -106,12 +114,32 @@
  * sono 3. I pannelli catalogati a 4 colori sono UltraChip e si alimentano con
  * un frame a 4 bit per pixel, non con piani 1bpp.
  *
+ * Nella stessa direzione va un dato di FABBRICA, che pesa più di un catalogo:
+ * docs/openepaperlink/nrf52811_tag_fw/tagtype_db.cpp raccoglie i byte UICR di
+ * tag SOLUM reali, e le due righe della 9.7" dichiarano controller 0x19,
+ * 672x960 e terzo colore = 0x01. Nella stessa tabella quel byte vale 0x02 sul
+ * pannello giallo e 0x03 sui BWRY, quindi 0x01 è BWR. Vale per i tag censiti
+ * lì, non necessariamente per il donor di questo progetto, che è di un'altra
+ * generazione: resta una prova documentale, non una misura.
+ *
  * Dall'altra parte, il datasheet SOLUM del modulo donor dichiara per la 9.7"
  * PIXEL COLORS = BWRY, e il driver custom stampa correttamente bianco, nero e
  * rosso, quindi init, MUX, entry mode, finestre, pattern e refresh sono già
  * validati sul campo. La domanda aperta è solo cosa risponda il film e cosa
  * risponda il silicio oltre le tre combinazioni già in uso: la risolve questo
  * test, non la documentazione.
+ *
+ * Due vie di identificazione che non passano da questo sketch, ed è giusto
+ * provarle prima perchè costano un minuto:
+ *   - la serigrafia sul vetro, che sulle foto FCC dichiara i colori taglia per
+ *     taglia e unità per unità (docs/097c/fcc/);
+ *   - l'etichetta bianca sul retro del vetro, che sull'esemplare Core della
+ *     pratica EL097F5CRC porta il part number del PANNELLO, YMS960672-097AAH-
+ *     ES-W5: identifica il vetro meglio del codice ESL stampato sul guscio
+ *     (docs/097c/fcc/097_f5crc_etichetta_pannello_YMS960672.jpg).
+ * Sul cavo del pannello, poi, il tag di fabbrica seleziona con un pin dedicato
+ * una EEPROM montata sul pannello stesso: è la sede tipica di waveform e dati
+ * del vetro, e sarebbe la risposta definitiva. Vedi docs/fonti_esterne.md §3.2.
  * ---------------------------------------------------------------------------
  *
  * Diagnostica stampata sul monitor seriale, oltre all'esito dei colori:
@@ -130,7 +158,11 @@
  *     validità del percorso), User ID 0x2E da OTP, temperatura 0x1B. Sulla
  *     Waveshare V3 il FPC non porta fuori la linea dati in uscita, quindi
  *     è atteso che non tornino valori: il test lo dichiara invece di
- *     stampare numeri senza senso
+ *     stampare numeri senza senso. Il limite è del CONNETTORE della board, non
+ *     del pannello: il tag di fabbrica usa un pin del cavo come MISO
+ *     (docs/openepaperlink/nrf52811_tag_fw/HAL_Newton_M3.h), quindi la linea di
+ *     lettura esiste sul lato pannello e su una coda cablata a mano si può
+ *     ricavare. Con quella, 0x2E identificherebbe il modulo senza ambiguità
  *   - comportamento del BUSY dopo 0x28
  *   - refresh: latenza di salita del BUSY, durata, rilevamento di più fasi,
  *     per ogni passata, differenziale compresa
@@ -153,7 +185,16 @@ static const int PIN_DC   = 27;
 static const int PIN_RST  = 26;
 static const int PIN_BUSY = 25;
 
-// Bus HSPI della Waveshare E-Paper ESP32 Driver Board
+/**
+ * Bus HSPI della Waveshare E-Paper ESP32 Driver Board. PIN_MISO è un dummy: su
+ * questo connettore la linea dati esiste solo in ingresso.
+ *
+ * Sulla stessa board lo switch n.1 NON sceglie il tipo di pannello: sceglie la
+ * resistenza di sense del booster, A = 3R e B = 0.47R. Il wiki Waveshare mette
+ * in A i 13.3", che sono il riferimento più vicino a questo pannello per
+ * silicio e geometria. Se i colori pieni escono deboli o pieni di ghosting, la
+ * posizione dello switch va provata prima di dare la colpa alla waveform.
+ */
 static const int PIN_SCK  = 13;
 static const int PIN_MISO = 12;
 static const int PIN_MOSI = 14;
@@ -211,6 +252,17 @@ static const uint32_t PARTIAL_PAUSE_MS = 45000;
 
 // Pausa prima della sonda d'area, che azzera lo schermo e lo riscrive da capo
 static const uint32_t AREA_PAUSE_MS = 45000;
+
+// Pausa prima della sonda del deep sleep, che alla fine riscrive lo schermo a nero
+static const uint32_t SLEEP_PAUSE_MS = 45000;
+
+/**
+ * Quanto il pannello resta fermo in deep sleep per dare il tempo di leggere il
+ * multimetro. Il risparmio di corrente è l'unica cosa che il firmware non può
+ * misurare da sè: o si guarda uno strumento, o del deep sleep non si sa se
+ * serva a qualcosa.
+ */
+static const uint32_t SLEEP_MEASURE_MS = 20000;
 
 /**
  * Pausa dentro la sonda d'area, fra le passate 0xFC e la passata Mode 1.
@@ -272,6 +324,13 @@ static int32_t diffMs2 = -1;
 static int32_t areaMsFirst = -1;   // prima passata 0xFC, finestra alta BAND_H
 static int32_t areaMsThin  = -1;   // passata 0xFC su 24 righe, per la scala con l'altezza
 static int32_t areaMsMode1 = -1;   // passata 0xF4, Mode 1 su finestra
+
+// Esiti della sonda del deep sleep
+static uint8_t sleepParamOk    = 0x00;    // parametro di 0x10 che addormenta, 0 se nessuno
+static bool    sleepBusyHigh   = false;   // BUSY alto mentre dorme
+static bool    sleepIgnoresCmd = false;   // da addormentato ignora anche un refresh
+static int32_t wakeInitMs      = -1;      // reset hardware più init dopo il sonno
+static int32_t wakeRefreshMs   = -1;      // refresh di prova dopo il risveglio
 
 /**
  * Invia un byte di comando: D/C basso. Ordine delle operazioni identico a
@@ -1328,6 +1387,248 @@ static void probePartialWindowRefresh(int32_t fullMs)
   reportAreaPasses(fullMs);
 }
 
+/**
+ * Prova decisiva di sordità: si manda al controller un'operazione che da
+ * sveglio si vedrebbe di sicuro sul BUSY — riempimento della RAM col pattern
+ * più la master activation di un refresh — e si guarda se il BUSY fa quello
+ * che farebbe se il comando fosse stato eseguito.
+ *
+ * Serve perchè il livello del BUSY da solo non prova niente: il datasheet lo
+ * dà alto durante il deep sleep, ma un pin flottante sta alto lo stesso. Il
+ * criterio quindi dipende da come il BUSY sta mentre il controller dorme:
+ *
+ *   BUSY alto  -> da sveglio il refresh finirebbe e il BUSY scenderebbe. Se
+ *                 non scende entro la finestra, il comando non è stato eseguito.
+ *   BUSY basso -> da sveglio il refresh alzerebbe il BUSY entro un secondo. Se
+ *                 non si alza, il comando non è stato eseguito.
+ *
+ * Se il controller esegue, il pannello diventa nero e si vede: è comunque un
+ * esito, non un danno. Ritorna true se ha ignorato tutto, cioè se dorme.
+ */
+static bool deepSleepIgnoresCommands(uint32_t window_ms)
+{
+  const bool busyAlto = (digitalRead(PIN_BUSY) == BUSY_ACTIVE);
+  Serial.printf("   prova di sordità: BUSY %s, si manda pattern nero + refresh\n",
+                busyAlto ? "alto" : "basso");
+
+  writeCommand(0x47);   // pattern sul piano B/N: da sveglio riempirebbe la RAM
+  writeData(0x77);      // tutto nero
+  writeCommand(0x22);
+  writeData(0xF7);
+  writeCommand(0x20);   // master activation
+
+  if (busyAlto)
+  {
+    const int32_t ms = waitBusy(window_ms);
+    if (ms < 0)
+    {
+      Serial.printf("   BUSY mai sceso in %lu ms: il comando non è stato eseguito, dorme\n",
+                    (unsigned long)window_ms);
+      return true;
+    }
+    Serial.printf("   BUSY sceso dopo %ld ms: il refresh è stato eseguito, NON dorme\n",
+                  (long)ms);
+    return false;
+  }
+
+  const uint32_t t0 = millis();
+  while ((millis() - t0) < 2000)
+  {
+    if (digitalRead(PIN_BUSY) == BUSY_ACTIVE)
+    {
+      // ha preso il comando: si attende la fine per non lasciare il pannello a metà
+      const int32_t ms = waitBusy(window_ms);
+      Serial.printf("   BUSY salito e refresh durato %ld ms: NON dorme\n", (long)ms);
+      return false;
+    }
+    delay(1);
+  }
+  Serial.println(F("   BUSY mai salito in 2000 ms: la master activation è stata"
+                   " ignorata, dorme"));
+  return true;
+}
+
+/**
+ * Sonda del deep sleep: non "quale parametro alza il BUSY", che è solo un
+ * livello su un pin, ma se il pannello si può davvero addormentare e — quello
+ * che conta di più — se poi si risveglia e torna a stampare.
+ *
+ * Un deep sleep da cui non si torna non è un risparmio, è un pannello morto
+ * fino al power cycle: per il firmware la domanda utile è il ciclo completo
+ * dormi / svegliati / stampa, non il comando di andata.
+ *
+ * COSA FA, in ordine
+ *   1. prova i due parametri di 0x10, uno alla volta, ognuno partendo da un
+ *      reset hardware più init così la misura non eredita niente. Dove il BUSY
+ *      resta basso la sordità si prova subito col pattern; dove resta alto
+ *      serve la prova lunga del punto 2, perchè un BUSY alto lo dà anche un
+ *      pin scollegato
+ *   2. sul parametro scelto, la prova decisiva: da addormentato gli si manda
+ *      un refresh intero e si guarda il BUSY per più del tempo di un refresh
+ *   3. finestra ferma per la misura di corrente, che è l'unica prova del
+ *      risparmio e in firmware non si può fare: la fa il multimetro
+ *   4. risveglio cronometrato con reset hardware più init, e refresh di prova
+ *      a schermo nero: se il nero arriva, il ciclo completo funziona
+ *   5. riaddormentamento, così il test finisce con il pannello nello stato in
+ *      cui lo lascerebbe hibernate()
+ *
+ * Durante i punti 2 e 3 il pannello mostra ancora l'immagine precedente: è
+ * anche la verifica che entrare in deep sleep non la sporchi.
+ */
+static void probeDeepSleep(int32_t fullMs)
+{
+  Serial.println(F("\n=== sonda del deep sleep: si addormenta, e soprattutto si sveglia? ==="));
+
+  // finestra di attesa più lunga di un refresh pieno, che è il metro della prova di sordità
+  const uint32_t finestra = (uint32_t)(fullMs > 0 ? fullMs : 22000) + 8000;
+
+  static const uint8_t PARAM[2] = { 0x03, 0x11 };
+  static const char* PARAM_DESC[2] =
+  {
+    "A[1:0]=11, l'unico valore che il datasheet definisce",
+    "A[1:0]=01, fuori tabella, ed è quello che il driver manda oggi"
+  };
+  bool candidato[2] = { false, false };
+
+  for (uint8_t k = 0; k < 2; ++k)
+  {
+    Serial.printf("\n-- 0x10 = 0x%02X  (%s)\n", PARAM[k], PARAM_DESC[k]);
+    // reset hardware più init: si parte sveglio e da uno stato noto
+    initPanel();
+    writeCommand(0x10);
+    writeData(PARAM[k]);
+    delay(50);
+
+    const bool busyAlto = (digitalRead(PIN_BUSY) == BUSY_ACTIVE);
+    Serial.printf("   BUSY dopo il comando: %s\n",
+                  busyAlto ? "ALTO, come il datasheet descrive il deep sleep"
+                           : "basso, che il datasheet non prevede per il deep sleep");
+
+    if (busyAlto)
+    {
+      candidato[k] = true;
+      Serial.println(F("   livello compatibile col deep sleep, ma un pin flottante fa"
+                       " lo stesso:\n   la conferma arriva dalla prova lunga più sotto"));
+      continue;
+    }
+
+    /**
+     * Col BUSY basso la prova costa poco: da sveglio il pattern hardware lo
+     * alza entro qualche decina di ms, e se non lo alza i comandi non arrivano.
+     *
+     * Vale però solo dove il pattern è supportato, e la validazione fatta a
+     * inizio test lo dice: senza quel comando un BUSY fermo non distingue
+     * "dorme" da "il comando non esiste", e prenderlo per sonno sarebbe un
+     * falso positivo. In quel caso si rimanda alla prova decisiva, che usa la
+     * master activation e quella un controller vivo la esegue sempre.
+     */
+    if (patternMs24 < 0)
+    {
+      candidato[k] = true;
+      Serial.println(F("   il pattern hardware non è supportato su questo pannello: la"
+                       "\n   prova rapida non decide, risponde la prova lunga più sotto"));
+      continue;
+    }
+    writeCommand(0x47);
+    writeData(0x77);
+    const uint32_t t0 = millis();
+    bool reagisce = false;
+    while ((millis() - t0) < 300)
+    {
+      if (digitalRead(PIN_BUSY) == BUSY_ACTIVE) { reagisce = true; break; }
+      delay(1);
+    }
+    if (reagisce)
+    {
+      const int32_t ms = waitBusy(5000);
+      Serial.printf("   il pattern ha alzato il BUSY per %ld ms: il controller esegue"
+                    " ancora, NON dorme\n", (long)ms);
+    }
+    else
+    {
+      candidato[k] = true;
+      Serial.println(F("   il pattern non ha alzato il BUSY: i comandi non arrivano più,"
+                       " dorme"));
+    }
+  }
+
+  // si preferisce 0x03, che è il valore del datasheet, se entrambi sono plausibili
+  int scelto = -1;
+  for (uint8_t k = 0; k < 2; ++k)
+  {
+    if (candidato[k]) { scelto = k; break; }
+  }
+  if (scelto < 0)
+  {
+    Serial.println(F("\nnessuno dei due parametri addormenta il controller: su questo"
+                     " modulo\nil deep sleep non è osservabile, e hibernate() potrebbe"
+                     " non fare niente.\nPrima di contarci come risparmio, misura la"
+                     " corrente col multimetro."));
+    sleepParamOk = 0x00;
+    return;
+  }
+  sleepParamOk = PARAM[scelto];
+  Serial.printf("\nparametro scelto per il resto della sonda: 0x10 = 0x%02X\n", sleepParamOk);
+
+  // prova decisiva sul parametro scelto, ripartendo da sveglio
+  Serial.println(F("\n-- prova decisiva: da addormentato, un refresh intero viene eseguito?"));
+  initPanel();
+  writeCommand(0x10);
+  writeData(sleepParamOk);
+  delay(50);
+  sleepBusyHigh   = (digitalRead(PIN_BUSY) == BUSY_ACTIVE);
+  sleepIgnoresCmd = deepSleepIgnoresCommands(finestra);
+
+  if (!sleepIgnoresCmd)
+  {
+    Serial.println(F("\nil controller esegue anche dopo 0x10: quello che si vede sul BUSY"
+                     "\nnon è deep sleep. Il pannello adesso è nero perchè il refresh di"
+                     "\nprova è passato davvero."));
+    return;
+  }
+
+  /**
+   * Finestra ferma per il multimetro. È l'unico modo di sapere se il deep
+   * sleep serve a qualcosa: il firmware può dire che il controller ignora i
+   * comandi, non quanto assorbe. Si misura sul 3V3 che alimenta il pannello,
+   * confrontando questo valore con quello a pannello sveglio e a riposo.
+   */
+  Serial.printf("\n-- finestra di misura: il pannello resta addormentato per %lu s\n",
+                (unsigned long)(SLEEP_MEASURE_MS / 1000));
+  Serial.println(F("   MISURA ORA LA CORRENTE sul 3V3 del pannello, e confrontala con"
+                   "\n   quella a controller sveglio e fermo. Guarda anche lo schermo:"
+                   "\n   l'immagine deve restare quella di prima, intatta."));
+  for (uint32_t left = SLEEP_MEASURE_MS / 1000; left >= 5; left -= 5)
+  {
+    Serial.printf("   %lu s\n", (unsigned long)left);
+    delay(5000);
+  }
+
+  // risveglio cronometrato: è il costo che il firmware paga a ogni sonno
+  Serial.println(F("\n-- risveglio: reset hardware più init"));
+  const uint32_t tWake = millis();
+  initPanel();
+  wakeInitMs = (int32_t)(millis() - tWake);
+  Serial.printf("   reset più init in %ld ms\n", (long)wakeInitMs);
+
+  /**
+   * Refresh di prova a schermo nero. Il nero è distinguibile da qualunque cosa
+   * ci fosse prima, quindi se arriva il ciclo dormi / svegliati / stampa
+   * funziona per intero, che è la sola cosa che il firmware deve sapere.
+   */
+  fillByPattern(0x47, 0x00);   // 0x24 tutto nero
+  fillByPattern(0x46, 0x00);   // accent spento
+  wakeRefreshMs = runRefresh(0xF7, "di prova dopo il risveglio");
+
+  // stato finale come lo lascerebbe hibernate()
+  writeCommand(0x10);
+  writeData(sleepParamOk);
+  delay(50);
+  Serial.printf("\npannello riaddormentato con 0x10 = 0x%02X, BUSY %s\n",
+                sleepParamOk,
+                digitalRead(PIN_BUSY) == BUSY_ACTIVE ? "alto" : "basso");
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -1542,28 +1843,13 @@ void setup()
   probePartialWindowRefresh(busy_ms);
 
   /**
-   * Deep sleep. Il datasheet definisce per 0x10 solo A[1:0]=00 (normale) e
-   * A[1:0]=11 (deep sleep), e dice che in deep sleep il BUSY resta alto.
-   * Il driver custom manda 0x11, che ha A[1:0]=01, un valore non definito:
-   * qui si prova prima quello e, se il BUSY non sale, si manda 0x03 che
-   * A[1:0]=11 lo ha davvero. Il BUSY dice quale dei due funziona.
+   * Sonda del deep sleep. Sta per ultima perchè si chiude riscrivendo lo
+   * schermo a nero: è il refresh di prova che dimostra il risveglio, e
+   * cancella quello che la sonda d'area ha lasciato.
    */
-  Serial.println(F("\ndeep sleep: verifica del parametro di 0x10"));
-  writeCommand(0x10);
-  writeData(0x11);
-  delay(10);
-  const bool sleep11 = digitalRead(PIN_BUSY) == BUSY_ACTIVE;
-  Serial.printf("  0x10=0x11 (A[1:0]=01, non definito): BUSY=%d -> %s\n",
-                (int)sleep11, sleep11 ? "dorme" : "NON dorme");
-  if (!sleep11)
-  {
-    writeCommand(0x10);
-    writeData(0x03);
-    delay(10);
-    const bool sleep03 = digitalRead(PIN_BUSY) == BUSY_ACTIVE;
-    Serial.printf("  0x10=0x03 (A[1:0]=11, da datasheet):  BUSY=%d -> %s\n",
-                  (int)sleep03, sleep03 ? "dorme: il driver deve usare 0x03" : "NON dorme");
-  }
+  observePause(SLEEP_PAUSE_MS,
+               "parte la sonda del deep sleep, che si chiude con lo schermo nero");
+  probeDeepSleep(busy_ms);
 
   /**
    * Riepilogo: i totali dicono quanto di un aggiornamento è bus, quanto è
@@ -1641,6 +1927,27 @@ void setup()
    * combinazioni misurate sono tutte quelle che due piani a 1 bit possono
    * esprimere, quindi le risposte a questi punti chiudono la questione.
    */
+  Serial.println(F("\n--- deep sleep ---"));
+  if (sleepParamOk == 0x00)
+    Serial.println(F("nessun parametro di 0x10 addormenta il controller"));
+  else
+  {
+    Serial.printf("parametro         0x10 = 0x%02X, BUSY %s mentre dorme\n",
+                  sleepParamOk, sleepBusyHigh ? "alto" : "basso");
+    Serial.printf("sordità           %s\n",
+                  sleepIgnoresCmd ? "ignora anche un refresh intero: dorme davvero"
+                                  : "esegue ancora i comandi: non è deep sleep");
+    if (wakeInitMs >= 0)
+      Serial.printf("risveglio         %ld ms di reset più init\n", (long)wakeInitMs);
+    if (wakeRefreshMs > 0)
+      Serial.printf("primo frame dopo  %ld ms di refresh -> ciclo completo %.1f s\n",
+                    (long)wakeRefreshMs,
+                    ((double)(wakeInitMs > 0 ? wakeInitMs : 0) + (double)wakeRefreshMs) / 1000.0);
+    else if (sleepIgnoresCmd)
+      Serial.println(F("primo frame dopo  NON arrivato: dal deep sleep non si torna"));
+  }
+  Serial.println(F("il risparmio in corrente non è misurabile da qui: vedi la scheda"));
+
   Serial.println(F("\n============ SCHEDA DI OSSERVAZIONE ============"));
   Serial.println(F("Guarda il pannello e annota. Ogni banda porta il proprio numero"));
   Serial.println(F("disegnato in basso a sinistra."));
@@ -1665,6 +1972,9 @@ void setup()
   Serial.println(F("             nessun'altra riga di questa scheda ha valore"));
   Serial.println(F(""));
   Serial.println(F("BANDA 4, la combinazione che il firmware non genera mai:"));
+  Serial.println(F("  (la documentazione prevede che non aggiunga stati: enum OEPL e"));
+  Serial.println(F("   UICR di fabbrica danno questo pannello per BWR. Serve a sapere"));
+  Serial.println(F("   quale esito sorprende, non a decidere al posto dell'occhio.)"));
   Serial.println(F("  colore diverso da banda 2 E da banda 3 -> la coppia (BW=0, RED=1)"));
   Serial.println(F("             è un TERZO stato renderizzabile: esiste un 4o colore, e"));
   Serial.println(F("             va codificato nel driver come coppia di bit sui due piani"));
@@ -1761,8 +2071,37 @@ void setup()
   Serial.println(F("             possono convivere nello stesso frame: il driver dovrà"));
   Serial.println(F("             scegliere per frame, non per pixel."));
   Serial.println(F(""));
-  Serial.println(F("DEEP SLEEP: vedi sopra quale dei due parametri di 0x10 alza il BUSY;"));
-  Serial.println(F("il driver deve mandare quello."));
+  Serial.println(F("DEEP SLEEP, il ciclo dormi / svegliati / stampa:"));
+  Serial.println(F("  il report sopra dice quale parametro di 0x10 addormenta il"));
+  Serial.println(F("  controller, se da addormentato ignora un refresh intero, quanto"));
+  Serial.println(F("  costa il risveglio e se dopo il risveglio il pannello stampa."));
+  Serial.println(F(""));
+  Serial.println(F("  lo schermo è diventato NERO alla fine del test?   SI / NO"));
+  Serial.println(F("  sì  -> il ciclo completo funziona: hibernate() è utilizzabile e"));
+  Serial.println(F("           dopo il risveglio il driver deve rifare init e riscrivere"));
+  Serial.println(F("           i piani, perchè il deep sleep non conserva la RAM"));
+  Serial.println(F("  no  -> il pannello non è tornato: hibernate() lo lascerebbe morto"));
+  Serial.println(F("           fino al power cycle. Nel driver, o si rinuncia al deep"));
+  Serial.println(F("           sleep, o si verifica che RST sia davvero cablato, perchè"));
+  Serial.println(F("           senza reset hardware da lì non si esce"));
+  Serial.println(F(""));
+  Serial.println(F("  l'immagine è rimasta intatta durante la finestra di misura?  SI / NO"));
+  Serial.println(F("  no  -> entrare in deep sleep sporca lo schermo: va fatto solo dopo"));
+  Serial.println(F("           un refresh completo, mai a metà di una sequenza"));
+  Serial.println(F(""));
+  Serial.println(F("  CORRENTE, l'unica cosa che il firmware non può misurare: durante la"));
+  Serial.println(F("  finestra di misura hai letto il multimetro sul 3V3 del pannello?"));
+  Serial.println(F("           addormentato ....... mA"));
+  Serial.println(F("           sveglio e fermo .... mA"));
+  Serial.println(F("  se i due valori sono uguali, il deep sleep non risparmia niente su"));
+  Serial.println(F("           questo modulo e in hibernate() è solo un rischio in più:"));
+  Serial.println(F("           il guadagno vero sarebbe togliere alimentazione al pannello"));
+  Serial.println(F(""));
+  Serial.println(F("  CONVIENE? confronta il costo del risveglio, che il report stampa"));
+  Serial.println(F("           come reset più init più refresh, con l'intervallo fra due"));
+  Serial.println(F("           frame del firmware. Su un pannello che si aggiorna ogni"));
+  Serial.println(F("           molti minuti il risveglio è trascurabile e dormire conviene"));
+  Serial.println(F("           sempre; su uno che si aggiorna di continuo, no."));
   Serial.println(F("================================================"));
 }
 

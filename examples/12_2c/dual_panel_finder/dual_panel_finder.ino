@@ -33,7 +33,15 @@
  *   controller pilota 960 source x 384 gate.
  * - L'altra coda non risponde. Le ipotesi (ordine dei pin ribaltato, rail di
  *   boost non portati, BUSY o RST fuori posizione) sono in
- *   docs/122c/identificazione_pannello.md §6.
+ *   docs/122c/identificazione_pannello.md §6. Se ne è aggiunta una quarta, ed
+ *   è quella da provare per prima perchè non costa cablaggio: il secondo
+ *   controller potrebbe non volere un CS proprio, ma rispondere agli stessi
+ *   opcode con il bit 7 alto sullo stesso bus. Vedi il punto 15 e
+ *   docs/fonti_esterne.md §3.1.
+ * - Un altro sospetto arriva dal pinout del tag di fabbrica: sul cavo del
+ *   pannello c'è un pin BS (bus select 3 fili / 4 fili) che il firmware SOLUM
+ *   tiene basso. Se sulla coda cablata a mano quel pin resta flottante, il
+ *   controller può stare in 3 fili e ignorare tutto quello che gli si manda.
  * - Lo split cade sull'asse corto del pannello: due bande da 960x384, non due
  *   metà per colonne.
  * - L'UC8179 è escluso dall'aritmetica: 800x600 non copre nessuna delle
@@ -135,10 +143,22 @@
  *    power_on_time e power_off_time del driver, e il refresh, che tara
  *    full_refresh_time.
  *
- * 11. Quale parametro di deep sleep accetta il modulo: 0x10 = 0x03 (A[1:0]=11,
- *    l'unico che il datasheet definisce) contro 0x11 (A[1:0]=01, quello del
- *    driver stock 1160c), con il BUSY come testimone e un reset hardware in
- *    mezzo. Decide il byte che hibernate() deve mandare.
+ * 11. Il deep sleep, per intero. Quale parametro accetta il modulo, 0x10 = 0x03
+ *    (A[1:0]=11, l'unico che il datasheet definisce) contro 0x11 (A[1:0]=01,
+ *    quello del driver stock 1160c), decide il byte che hibernate() manda; ma
+ *    il livello del BUSY da solo non basta a dire che dorme, perchè su questa
+ *    board un pin non cablato sta alto lo stesso, ed è proprio il caso da
+ *    distinguere sulla coda che non risponde. La prova vera gli manda da
+ *    addormentato un refresh intero e guarda il BUSY più a lungo di quanto un
+ *    refresh duri, poi lo risveglia con reset hardware più init cronometrati e
+ *    chiude con un refresh a banda nera, che o arriva o non arriva: un deep
+ *    sleep da cui non si torna non è un risparmio, è una banda morta fino al
+ *    power cycle. Una finestra ferma lascia il tempo di misurare la corrente
+ *    col multimetro, che è l'unica prova del risparmio.
+ *
+ *    Quello che la sonda non può vedere: il CS dell'altra coda resta alto per
+ *    tutto il test, quindi l'altro controller non riceve mai 0x10. Nel driver
+ *    hibernate() deve mandarlo a entrambi.
  *
  * 12. Se il bus tiene i 20 MHz che il driver usa per default: l'ultimo frame
  *    riscrive il pattern di identificazione a SPI_HZ_FAST. Se esce identico al
@@ -172,6 +192,28 @@
  *    lì vale per un pannello bianco e nero. La scelta è per frame, non per
  *    pixel: o accent o partial.
  *
+ * 15. Se il secondo controller si indirizzi con gli opcode sommati a 0x80,
+ *    invece che con un chip select proprio. Il firmware OpenEPaperLink per i
+ *    tag nRF52811 — la stessa famiglia di questo pannello — pilota un pannello
+ *    a due controller SSD con UN SOLO CS, mandando al secondo gli stessi
+ *    comandi con il bit 7 alto: 0x11 -> 0x91, 0x44 -> 0xC4, 0x45 -> 0xC5,
+ *    0x4E -> 0xCE, 0x4F -> 0xCF, 0x24 -> 0xA4, 0x26 -> 0xA6, mentre i comandi
+ *    comuni restano senza offset. Il sorgente è in
+ *    docs/openepaperlink/nrf52811_tag_fw/dualssd.cpp.
+ *
+ *    Se questo pannello segue la stessa convenzione, la coda che non risponde
+ *    non è rotta: è che al suo controller non si è mai parlato nel modo giusto.
+ *    La sonda scrive il pattern di identificazione con gli opcode offset e
+ *    lancia il refresh; quale metà del pannello si accende è la risposta.
+ *
+ *    Ha senso in due configurazioni diverse, e la seconda è quella forte:
+ *      - una coda sola cablata: dice se il controller di QUESTA coda è quello
+ *        che risponde agli opcode offset, cioè se è lui lo slave;
+ *      - entrambe le code cablate con SLAVE_OPCODE_BOTH_CS a 1, che tiene bassi
+ *        tutti e due i chip select insieme e riproduce il cablaggio di
+ *        fabbrica: allora i due controller sentono lo stesso bus e l'offset è
+ *        l'unica cosa che li distingue.
+ *
  * NON misurato di proposito: la LUT via 0x32, cioè la waveform caricata da
  * host invece che da OTP, che si tocca solo se i colori pieni mostrano
  * ghosting che nessun banco OTP corregge.
@@ -183,8 +225,9 @@
  *                le combinazioni dei due piani -> frame delle finestre
  *                parziali -> frame 3..5: colori pieni, se SHOW_SOLID_COLORS ->
  *                pattern a 20 MHz, se SHOW_FAST_CLOCK_FRAME -> sonda del
- *                partial d'area, se SHOW_PARTIAL_PROBE -> deep sleep ->
- *                riepilogo
+ *                partial d'area, se SHOW_PARTIAL_PROBE -> sonda del secondo
+ *                controller a opcode|0x80, se SHOW_SLAVE_OPCODE_PROBE ->
+ *                deep sleep -> riepilogo
  *   fase driver: init del driver (che riparte da un reset hardware, quindi
  *                sveglia il pannello) -> clearScreen bianco / nero / accent ->
  *                frame di 5 tile, uno a cavallo della giunzione -> hibernate
@@ -212,6 +255,14 @@
  *   - Coda lunga: breakout esterno cablato come da docs/122c/connessioni.html,
  *     con CS=GPIO33 e BUSY=GPIO35.
  *   - SPI a 4 MHz: margine per il bring-up, il driver poi userà 20 MHz.
+ *   - Lo switch n.1 della board NON sceglie il tipo di pannello: sceglie la
+ *     resistenza di sense del booster, A = 3R e B = 0.47R. Il wiki Waveshare
+ *     mette in A i 13.3", che sono il riferimento più vicino per silicio e
+ *     geometria a questi SOLUM. Se il refresh è debole o pieno di ghosting, la
+ *     posizione dello switch va provata prima di incolpare il driver.
+ *   - GPIO33 non compare fra le net dello schematico della board: il CS della
+ *     coda lunga documentato come GPIO33 va con ogni probabilità portato a
+ *     GPIO32. Vedi l'avvertenza nella sezione dei pin.
  * ---------------------------------------------------------------------------
  */
 
@@ -229,19 +280,23 @@
 // ##   suo costo in tempo. Un refresh su questo pannello è dell'ordine ##
 // ##   dei 20 s, una pausa di osservazione dura OBSERVE_MS.           ##
 // ##                                                                 ##
-// ##   DURATA CON I DEFAULT: circa 13 minuti, così composti           ##
+// ##   DURATA CON I DEFAULT: circa 15 minuti, così composti           ##
 // ##     fase probe     7 refresh + 6 pause .............. ~6:50      ##
 // ##     sonda partial  7 refresh + 2 pause .............. ~1:55      ##
+// ##     sonda sleep    1 refresh + finestra di misura ... ~1:10      ##
+// ##     sonda |0x80    1 refresh + 1 pausa .............. ~1:05      ##
 // ##     passaggio fra le due fasi, 1 pausa .............. ~0:45      ##
 // ##     fase driver    4 refresh + 3 pause .............. ~3:35      ##
-// ##   La sonda partial arriva a ~3:50, e il totale a ~15:00, se il   ##
+// ##   La sonda partial arriva a ~3:50, e il totale a ~17:05, se il   ##
 // ##   partial ricade sulla waveform piena: sono 5 refresh che        ##
 // ##   durano 20 s invece di 1 s.                                     ##
 // ##                                                                 ##
 // ##   COME ACCORCIARLA                                               ##
 // ##     SHOW_SOLID_COLORS 0 ....... -3 refresh, -3 pause  -3:15      ##
 // ##     SHOW_PARTIAL_PROBE 0 ...... -7 refresh, -2 pause  -1:55      ##
+// ##     SLEEP_MEASURE_MS 0 ........ via la finestra       -0:20      ##
 // ##     SHOW_FAST_CLOCK_FRAME 0 ... -1 refresh, -1 pause  -1:05      ##
+// ##     SHOW_SLAVE_OPCODE_PROBE 0 . -1 refresh, -1 pause  -1:05      ##
 // ##     OBSERVE_MS 0 .............. via tutte le pause    -9:00      ##
 // ##     RUN_DRIVER_PHASE 0 ........                       -4:20      ##
 // ##     RUN_PROBE_PHASE 0 .........                       -8:45      ##
@@ -355,6 +410,69 @@ static const uint16_t MUX_LINES = 384;
  * sonda misura quindi un pannello bianco e nero, ed è il compromesso accettato.
  */
 #define SHOW_PARTIAL_PROBE  1
+
+/**
+ * Sonda del secondo controller a opcode|0x80. [OPZIONALE, +1:05]
+ *
+ * Prova l'ipotesi che il secondo controller non voglia un chip select proprio
+ * ma risponda agli stessi opcode con il bit 7 alto, come fa il firmware
+ * OpenEPaperLink dei tag nRF52811 su un pannello a due controller SSD
+ * (docs/openepaperlink/nrf52811_tag_fw/dualssd.cpp). Scrive il pattern di
+ * identificazione con gli opcode offset e lancia il refresh: quale metà del
+ * pannello si accende è la risposta.
+ *
+ * È la prova più economica fra quelle in campo per la coda che non risponde,
+ * perchè non richiede di rimettere mano al cablaggio. Vedi il punto 15 in
+ * testa al file.
+ */
+#define SHOW_SLAVE_OPCODE_PROBE   1
+
+/**
+ * Offset degli opcode verso il secondo controller. [OPZIONALE]
+ * 0x80 è il valore che usa il firmware di fabbrica; si cambia solo per provare
+ * una convenzione diversa.
+ */
+#define SLAVE_CMD_OFFSET   0x80
+
+/**
+ * Comandi comuni durante la sonda. [OPZIONALE]
+ *   1 = border 0x3C, sensore 0x18, 0x22 e 0x20 mandati SENZA offset, cioè in
+ *       broadcast a entrambi i controller: è quello che fa dualssd.cpp.
+ *   0 = tutto con l'offset, anche i comandi comuni: serve se il broadcast non
+ *       esiste e ogni controller vuole la sua copia di ogni comando.
+ */
+#define SLAVE_OPCODE_BROADCAST_COMMON  1
+
+/**
+ * Tiene bassi ENTRAMBI i chip select durante la sonda. [OPZIONALE]
+ *
+ * È la configurazione che riproduce il cablaggio di fabbrica, dove i due
+ * controller stanno sullo stesso CS e l'unica cosa che li distingue è l'offset
+ * dell'opcode: con 1 la sonda diventa il test vero dell'ipotesi. Ha senso solo
+ * se la seconda coda è cablata e il suo CS è su un pin che esiste davvero —
+ * GPIO33 non è portato fuori su questa board, quindi va prima portato a
+ * GPIO32. Con una coda sola cablata lasciare 0.
+ */
+#define SLAVE_OPCODE_BOTH_CS   0
+
+/**
+ * Attesa a tempo quando il BUSY non si muove, durante la sola sonda. Il BUSY
+ * della coda sotto test appartiene al controller che risponde ai comandi
+ * normali, non a quello indirizzato con l'offset: se il refresh parte davvero
+ * sull'altro controller, qui non si vede niente e l'unico modo di aspettarlo è
+ * a tempo.
+ */
+static const uint32_t SLAVE_OPCODE_WAIT_MS = 25000;
+
+/**
+ * Finestra ferma in deep sleep per la misura di corrente. [OPZIONALE, +0:20]
+ *
+ * Il risparmio è l'unica cosa che il firmware non può misurare da sè: la
+ * sonda può dire che il controller ignora i comandi, non quanto assorbe. Qui
+ * il test si ferma col pannello addormentato per dare il tempo di leggere il
+ * multimetro sul 3V3. Con 0 non si ferma, e del risparmio non si saprà niente.
+ */
+static const uint32_t SLEEP_MEASURE_MS = 20000;
 
 /**
  * Pausa di osservazione fra due frame. [OPZIONALE, ma vedi sotto]
@@ -507,15 +625,16 @@ static int32_t  driverTilesMs = -1;                  // refresh del frame dei ti
 static int32_t  powerOnMs = -1;       // BUSY del power on 0xC0
 static int32_t  powerOffMs = -1;      // BUSY del power off 0xC3
 static int32_t  partialMs = -1;       // refresh del frame a finestre parziali
-// Sonda del partial d'area, -1 se la passata non si e' conclusa o non e' stata fatta
-static int32_t  areaMsFirst = -1;     // prima passata 0xFC, finestra alta
-static int32_t  areaMsThin  = -1;     // passata 0xFC su 24 righe
-static int32_t  areaMsMode1 = -1;     // passata 0xF4, Mode 1 su finestra
 static int32_t  fastMs = -1;          // refresh del frame riscritto a 20 MHz
 static uint32_t fastPlaneMs = 0;      // push di un piano a 20 MHz
 static bool     busyStuckAtRest = false;  // BUSY già alto prima di ogni comando
+static int32_t  slaveOpcodeMs = -1;   // refresh della sonda a opcode|0x80
 static bool     sleepBusy03 = false;  // BUSY dopo 0x10 = 0x03
 static bool     sleepBusy11 = false;  // BUSY dopo 0x10 = 0x11
+static uint8_t  sleepParamOk = 0x00;  // parametro di 0x10 che addormenta, 0 se nessuno
+static bool     sleepIgnoresCmd = false;  // da addormentato ignora anche un refresh
+static int32_t  wakeInitMs = -1;      // reset hardware più init dopo il sonno
+static int32_t  wakeRefreshMs = -1;   // refresh di prova dopo il risveglio
 
 /**
  * Font 5x7 per le etichette dei righelli e per la lettera della coda. Una riga
@@ -548,6 +667,36 @@ static const uint8_t GLYPH_L = 11;
 // --- primitive di bus ------------------------------------------------
 
 /**
+ * Offset sommato a ogni opcode. Vale 0 per tutto il test tranne che dentro la
+ * sonda del secondo controller, dove diventa SLAVE_CMD_OFFSET: è il modo in cui
+ * il firmware di fabbrica distingue i due controller sullo stesso bus. Va
+ * sempre riportato a 0 prima di uscire da quella sonda, altrimenti anche le
+ * letture di registro partirebbero offset.
+ */
+static uint8_t cmdOffset = 0x00;
+
+/**
+ * Con csBoth attivo il chip select dell'altra coda segue quello della coda
+ * sotto test, così i due controller vedono lo stesso bus come nel cablaggio di
+ * fabbrica. Fuori dalla sonda resta false e l'altra coda sta alta, cioè muta.
+ */
+static bool csBoth = false;
+
+static inline void csAssert()
+{
+  digitalWrite(PIN_CS, LOW);
+  if (csBoth)
+    digitalWrite(PIN_CS_OTHER, LOW);
+}
+
+static inline void csRelease()
+{
+  digitalWrite(PIN_CS, HIGH);
+  if (csBoth)
+    digitalWrite(PIN_CS_OTHER, HIGH);
+}
+
+/**
  * Invia un byte di comando: D/C basso. Ordine delle operazioni identico a
  * GxEPD2_EPD::_writeCommand, D/C riportato alto in coda incluso.
  */
@@ -555,9 +704,9 @@ static void writeCommand(uint8_t c)
 {
   hspi.beginTransaction(spiSettings);
   digitalWrite(PIN_DC, LOW);
-  digitalWrite(PIN_CS, LOW);
-  hspi.transfer(c);
-  digitalWrite(PIN_CS, HIGH);
+  csAssert();
+  hspi.transfer(c | cmdOffset);
+  csRelease();
   digitalWrite(PIN_DC, HIGH);
   hspi.endTransaction();
 }
@@ -566,9 +715,9 @@ static void writeCommand(uint8_t c)
 static void writeData(uint8_t d)
 {
   hspi.beginTransaction(spiSettings);
-  digitalWrite(PIN_CS, LOW);
+  csAssert();
   hspi.transfer(d);
-  digitalWrite(PIN_CS, HIGH);
+  csRelease();
   hspi.endTransaction();
 }
 
@@ -880,13 +1029,13 @@ static uint32_t writePlane(uint8_t planeCommand, uint16_t gate,
   const uint32_t t0 = millis();
   digitalWrite(PIN_DC, HIGH);
   hspi.beginTransaction(spiSettings);
-  digitalWrite(PIN_CS, LOW);
+  csAssert();
   for (int16_t y = 0; y < (int16_t)gate; ++y)
   {
     compose(y, row, gate);
     hspi.writeBytes(row, ROW_BYTES);
   }
-  digitalWrite(PIN_CS, HIGH);
+  csRelease();
   hspi.endTransaction();
   return millis() - t0;
 }
@@ -1283,6 +1432,17 @@ static int32_t showPartialWindowFrame()
 }
 
 // --- refresh parziale d'area -----------------------------------------
+/**
+ * Tutta la sezione sta dentro SHOW_PARTIAL_PROBE: con la sonda spenta niente
+ * qui viene chiamato, e lasciarla compilare produrrebbe solo funzioni definite
+ * e mai usate.
+ */
+#if SHOW_PARTIAL_PROBE
+
+// Durate della sonda, -1 se la passata non si è conclusa o non è stata fatta
+static int32_t areaMsFirst = -1;   // prima passata 0xFC, finestra alta
+static int32_t areaMsThin  = -1;   // passata 0xFC su 24 righe
+static int32_t areaMsMode1 = -1;   // passata 0xF4, Mode 1 su finestra
 
 /**
  * Mappa verticale della sonda del partial d'area, espressa in frazioni della
@@ -1644,40 +1804,340 @@ static void probePartialProbe()
   reportAreaPasses();
 }
 
+#endif  // SHOW_PARTIAL_PROBE
+
 // --- deep sleep: quale parametro accetta il modulo -------------------
 
 /**
- * Prova entrambi i parametri di 0x10 con il BUSY come testimone. Il datasheet
- * SSD1677 definisce solo A[1:0] = 00 (normale) e 11 (deep sleep), cioè 0x03, e
- * dice che in deep sleep il BUSY resta alto; 0x11 ha A[1:0] = 01, che nella
- * tabella non c'è, ed è il valore che usa il driver stock 1160c. Quale dei due
- * il modulo accetti davvero decide il byte che hibernate() deve mandare.
+ * Prova decisiva di sordità: si manda al controller un'operazione che da
+ * sveglio si vedrebbe di sicuro sul BUSY — riempimento della RAM col pattern
+ * più la master activation di un refresh — e si guarda se il BUSY fa quello
+ * che farebbe se il comando fosse stato eseguito.
  *
- * Fra le due prove serve un reset hardware: dal deep sleep non si esce
- * altrimenti, e senza il reset la seconda misura leggerebbe la coda della prima.
+ * Serve perchè il livello del BUSY da solo non prova niente: il datasheet lo
+ * dà alto durante il deep sleep, ma su questa board un pin non cablato sta alto
+ * lo stesso, ed è proprio il caso che il test deve saper distinguere sulla coda
+ * che non risponde. Il criterio dipende quindi da come il BUSY sta mentre il
+ * controller dorme:
+ *
+ *   BUSY alto  -> da sveglio il refresh finirebbe e il BUSY scenderebbe. Se
+ *                 non scende entro la finestra, il comando non è stato eseguito.
+ *   BUSY basso -> da sveglio il refresh alzerebbe il BUSY entro un secondo. Se
+ *                 non si alza, il comando non è stato eseguito.
+ *
+ * Se il controller esegue, la banda diventa nera e si vede: è comunque un
+ * esito, non un danno. Ritorna true se ha ignorato tutto, cioè se dorme.
+ */
+static bool deepSleepIgnoresCommands(uint32_t window_ms)
+{
+  const bool busyAlto = (digitalRead(PIN_BUSY) == BUSY_ACTIVE);
+  Serial.printf("   prova di sordità: BUSY %s, si manda pattern nero + refresh\n",
+                busyAlto ? "alto" : "basso");
+
+  writeCommand(0x47);   // pattern sul piano B/N: da sveglio riempirebbe la RAM
+  writeData(0x77);      // tutto nero
+  writeCommand(0x22);
+  writeData(0xF7);
+  writeCommand(0x20);   // master activation
+
+  if (busyAlto)
+  {
+    const int32_t ms = waitBusy(window_ms);
+    if (ms < 0)
+    {
+      Serial.printf("   BUSY mai sceso in %lu ms: il comando non è stato eseguito, dorme\n",
+                    (unsigned long)window_ms);
+      return true;
+    }
+    Serial.printf("   BUSY sceso dopo %ld ms: il refresh è stato eseguito, NON dorme\n",
+                  (long)ms);
+    return false;
+  }
+
+  const uint32_t t0 = millis();
+  while ((millis() - t0) < 2000)
+  {
+    if (digitalRead(PIN_BUSY) == BUSY_ACTIVE)
+    {
+      // ha preso il comando: si attende la fine per non lasciare il pannello a metà
+      const int32_t ms = waitBusy(window_ms);
+      Serial.printf("   BUSY salito e refresh durato %ld ms: NON dorme\n", (long)ms);
+      return false;
+    }
+    delay(1);
+  }
+  Serial.println(F("   BUSY mai salito in 2000 ms: la master activation è stata"
+                   " ignorata, dorme"));
+  return true;
+}
+
+/**
+ * Sonda del deep sleep: non "quale parametro alza il BUSY", che è solo un
+ * livello su un pin, ma se il controller si addormenta davvero e — quello che
+ * conta di più — se poi si risveglia e torna a stampare. Un deep sleep da cui
+ * non si torna non è un risparmio, è una banda morta fino al power cycle.
+ *
+ * Il datasheet SSD1677 definisce per 0x10 solo A[1:0] = 00 (normale) e 11, cioè
+ * 0x03, e dice che in deep sleep il BUSY resta alto; 0x11 ha A[1:0] = 01, che
+ * nella tabella non c'è, ed è il valore del driver stock 1160c. Quale dei due
+ * il modulo accetti decide il byte che hibernate() deve mandare.
+ *
+ * COSA FA, in ordine
+ *   1. prova i due parametri, uno alla volta, ognuno partendo da reset hardware
+ *      più init: dal deep sleep non si esce altrimenti, e senza ripartire da
+ *      sveglio la seconda misura leggerebbe la coda della prima. Dove il BUSY
+ *      resta basso la sordità si prova subito col pattern; dove resta alto
+ *      serve la prova lunga del punto 2
+ *   2. sul parametro scelto, la prova decisiva: da addormentato gli si manda un
+ *      refresh intero e si guarda il BUSY per più del tempo di un refresh
+ *   3. finestra ferma per la misura di corrente, che è l'unica prova del
+ *      risparmio e in firmware non si può fare: la fa il multimetro
+ *   4. risveglio cronometrato e refresh di prova a banda nera: se il nero
+ *      arriva, il ciclo completo funziona
+ *   5. riaddormentamento, così il test finisce nello stato in cui hibernate()
+ *      lascerebbe il pannello
+ *
+ * QUESTA SONDA VEDE UN SOLO CONTROLLER: il CS dell'altra coda resta alto per
+ * tutto il test, quindi l'altro controller non riceve mai 0x10 e resta sveglio.
+ * Nel driver hibernate() deve mandarlo a entrambi; il reset invece è in
+ * parallelo sulle due code, quindi ne basta uno per svegliarle tutte e due.
  */
 static void probeDeepSleep()
 {
-  Serial.println(F("\ndeep sleep, quale parametro di 0x10 fa dormire il controller:"));
+  Serial.println(F("\ndeep sleep: si addormenta, e soprattutto si sveglia?"));
 
+  // finestra di attesa più lunga di un refresh pieno, che è il metro della prova
+  const uint32_t finestra = (uint32_t)(refreshMs > 0 ? refreshMs : 20000) + 8000;
+
+  static const uint8_t PARAM[2] = { 0x03, 0x11 };
+  static const char* PARAM_DESC[2] =
+  {
+    "A[1:0]=11, l'unico valore che il datasheet definisce",
+    "A[1:0]=01, fuori tabella, ed è quello del driver stock 1160c"
+  };
+  bool candidato[2] = { false, false };
+
+  for (uint8_t k = 0; k < 2; ++k)
+  {
+    Serial.printf("\n-- 0x10 = 0x%02X  (%s)\n", PARAM[k], PARAM_DESC[k]);
+    // reset hardware più init: si riparte svegli e da uno stato noto
+    initPanel();
+    writeCommand(0x10);
+    writeData(PARAM[k]);
+    delay(50);
+
+    const bool busyAlto = (digitalRead(PIN_BUSY) == BUSY_ACTIVE);
+    if (PARAM[k] == 0x03)
+      sleepBusy03 = busyAlto;
+    else
+      sleepBusy11 = busyAlto;
+    Serial.printf("   BUSY dopo il comando: %s\n",
+                  busyAlto ? "ALTO, come il datasheet descrive il deep sleep"
+                           : "basso, che il datasheet non prevede per il deep sleep");
+
+    if (busyAlto)
+    {
+      candidato[k] = true;
+      Serial.println(F("   livello compatibile col deep sleep, ma un pin non cablato fa"
+                       " lo stesso:\n   la conferma arriva dalla prova lunga più sotto"));
+      continue;
+    }
+
+    /**
+     * Col BUSY basso la prova costa poco: da sveglio il pattern hardware lo
+     * alza entro qualche decina di ms, e se non lo alza i comandi non arrivano.
+     *
+     * Vale però solo dove il pattern è supportato, e la prova di vita fatta a
+     * inizio test lo dice: senza quel comando un BUSY fermo non distingue
+     * "dorme" da "il comando non esiste", e prenderlo per sonno sarebbe un
+     * falso positivo. In quel caso si rimanda alla prova decisiva, che usa la
+     * master activation e quella un controller vivo la esegue sempre.
+     */
+    if (patternMs47 < 0)
+    {
+      candidato[k] = true;
+      Serial.println(F("   il pattern hardware non è supportato su questo pannello: la"
+                       "\n   prova rapida non decide, risponde la prova lunga più sotto"));
+      continue;
+    }
+    writeCommand(0x47);
+    writeData(0x77);
+    const uint32_t t0 = millis();
+    bool reagisce = false;
+    while ((millis() - t0) < 300)
+    {
+      if (digitalRead(PIN_BUSY) == BUSY_ACTIVE) { reagisce = true; break; }
+      delay(1);
+    }
+    if (reagisce)
+    {
+      const int32_t ms = waitBusy(5000);
+      Serial.printf("   il pattern ha alzato il BUSY per %ld ms: il controller esegue"
+                    " ancora, NON dorme\n", (long)ms);
+    }
+    else
+    {
+      candidato[k] = true;
+      Serial.println(F("   il pattern non ha alzato il BUSY: i comandi non arrivano più,"
+                       " dorme"));
+    }
+  }
+
+  // si preferisce 0x03, che è il valore del datasheet, se entrambi sono plausibili
+  int scelto = -1;
+  for (uint8_t k = 0; k < 2; ++k)
+  {
+    if (candidato[k]) { scelto = k; break; }
+  }
+  if (scelto < 0)
+  {
+    Serial.println(F("\nnessuno dei due parametri addormenta il controller: su questo"
+                     " modulo\nil deep sleep non è osservabile, e hibernate() potrebbe"
+                     " non fare niente.\nPrima di contarci come risparmio, misura la"
+                     " corrente col multimetro."));
+    sleepParamOk = 0x00;
+    return;
+  }
+  sleepParamOk = PARAM[scelto];
+  Serial.printf("\nparametro scelto per il resto della sonda: 0x10 = 0x%02X\n", sleepParamOk);
+
+  // prova decisiva sul parametro scelto, ripartendo da sveglio
+  Serial.println(F("\n-- prova decisiva: da addormentato, un refresh intero viene eseguito?"));
+  initPanel();
   writeCommand(0x10);
-  writeData(0x03);
+  writeData(sleepParamOk);
   delay(50);
-  sleepBusy03 = (digitalRead(PIN_BUSY) == BUSY_ACTIVE);
-  Serial.printf("  0x10 = 0x03 (A[1:0]=11, da datasheet)  BUSY %s\n",
-                sleepBusy03 ? "ALTO -> dorme" : "basso -> non dorme");
+  sleepIgnoresCmd = deepSleepIgnoresCommands(finestra);
 
+  if (!sleepIgnoresCmd)
+  {
+    Serial.println(F("\nil controller esegue anche dopo 0x10: quello che si vede sul BUSY"
+                     "\nnon è deep sleep. La banda adesso è nera perchè il refresh di"
+                     "\nprova è passato davvero."));
+    return;
+  }
+
+  /**
+   * Finestra ferma per il multimetro. È l'unico modo di sapere se il deep sleep
+   * serve a qualcosa: il firmware può dire che il controller ignora i comandi,
+   * non quanto assorbe. Si misura sul 3V3 che alimenta il pannello, e va tenuto
+   * presente che l'altro controller qui è sveglio, quindi il valore letto è il
+   * consumo di uno che dorme più uno che sta fermo.
+   */
+  Serial.printf("\n-- finestra di misura: il controller resta addormentato per %lu s\n",
+                (unsigned long)(SLEEP_MEASURE_MS / 1000));
+  Serial.println(F("   MISURA ORA LA CORRENTE sul 3V3 del pannello, e confrontala con"
+                   "\n   quella a controller sveglio e fermo. Guarda anche lo schermo:"
+                   "\n   l'immagine deve restare quella di prima, intatta."));
+  for (uint32_t left = SLEEP_MEASURE_MS / 1000; left >= 5; left -= 5)
+  {
+    Serial.printf("   %lu s\n", (unsigned long)left);
+    delay(5000);
+  }
+
+  // risveglio cronometrato: è il costo che il firmware paga a ogni sonno
+  Serial.println(F("\n-- risveglio: reset hardware più init"));
+  const uint32_t tWake = millis();
+  initPanel();
+  wakeInitMs = (int32_t)(millis() - tWake);
+  Serial.printf("   reset più init in %ld ms\n", (long)wakeInitMs);
+
+  /**
+   * Refresh di prova a banda nera. Il nero è distinguibile da qualunque cosa ci
+   * fosse prima, quindi se arriva il ciclo dormi / svegliati / stampa funziona
+   * per intero, che è la sola cosa che il firmware deve sapere.
+   */
+  patternFill(0x47, 0x77, "B/N   ");   // piano B/N tutto nero
+  patternFill(0x46, 0x77, "accent");   // accent spento
+  wakeRefreshMs = runRefresh(0xF7, "refresh di prova dopo il risveglio, una ventina di secondi");
+
+  // stato finale come lo lascerebbe hibernate()
+  writeCommand(0x10);
+  writeData(sleepParamOk);
+  delay(50);
+  Serial.printf("\ncontroller riaddormentato con 0x10 = 0x%02X, BUSY %s\n",
+                sleepParamOk,
+                digitalRead(PIN_BUSY) == BUSY_ACTIVE ? "alto" : "basso");
+}
+
+#if RUN_PROBE_PHASE && SHOW_SLAVE_OPCODE_PROBE
+/**
+ * Prova a pilotare il secondo controller senza un secondo chip select,
+ * sommando SLAVE_CMD_OFFSET a ogni opcode indirizzato. È la trascrizione
+ * dell'idioma di docs/openepaperlink/nrf52811_tag_fw/dualssd.cpp, dove un
+ * pannello a due controller SSD sta su un solo CS e il secondo si distingue
+ * solo per il bit 7 dell'opcode.
+ *
+ * Cosa aspettarsi, e come leggerlo:
+ *   - si accende la banda che questa coda NON serve  -> ipotesi confermata: il
+ *     driver va rifatto su un solo CS con gli opcode offset, e la coda muta non
+ *     era rotta;
+ *   - si accende la stessa banda di sempre           -> il controller di questa
+ *     coda risponde a entrambe le forme, quindi l'offset non seleziona niente;
+ *   - non si accende niente                          -> nessuna conferma, e
+ *     restano in piedi le tre ipotesi di cablaggio.
+ *
+ * Il BUSY non è un testimone affidabile qui: appartiene al controller che
+ * risponde ai comandi normali, e quello non viene attivato. Per questo il
+ * timeout di runRefresh non è un errore ma un esito previsto, e l'attesa
+ * prosegue a tempo.
+ */
+static int32_t probeSlaveByOpcodeOffset()
+{
+  Serial.println(F("\n--- sonda: secondo controller via opcode|0x80 ---"));
+  Serial.printf("offset 0x%02X, comandi comuni %s, chip select %s\n",
+                (unsigned)SLAVE_CMD_OFFSET,
+                SLAVE_OPCODE_BROADCAST_COMMON ? "in broadcast" : "anch'essi offset",
+                SLAVE_OPCODE_BOTH_CS ? "ENTRAMBI bassi" : "solo quello della coda sotto test");
+
+  // comandi comuni: senza offset se si crede al broadcast, con offset altrimenti
+  const uint8_t comune = SLAVE_OPCODE_BROADCAST_COMMON ? 0x00 : (uint8_t)SLAVE_CMD_OFFSET;
+
+#if SLAVE_OPCODE_BOTH_CS
+  csBoth = true;
+#endif
+
+  // reset e SWRESET restano senza offset: li devono ricevere entrambi
+  cmdOffset = 0x00;
   resetPanel();
-  writeCommand(0x12);   // SWRESET, per ripartire da uno stato noto
+  writeCommand(0x12);
   delay(200);
 
-  writeCommand(0x10);
-  writeData(0x11);
-  delay(50);
-  sleepBusy11 = (digitalRead(PIN_BUSY) == BUSY_ACTIVE);
-  Serial.printf("  0x10 = 0x11 (A[1:0]=01, fuori tabella)  BUSY %s\n",
-                sleepBusy11 ? "ALTO -> dorme" : "basso -> non dorme");
+  // configurazione indirizzata al secondo controller
+  cmdOffset = SLAVE_CMD_OFFSET;
+  writeSoftStartAndMux();                 // 0x0C -> 0x8C, 0x01 -> 0x81
+  writeCommand(0x11);                     // entry mode -> 0x91
+  writeData(0x03);
+  cmdOffset = comune;
+  writeCommand(0x3C);                     // border waveform
+  writeData(0x01);
+  writeCommand(0x18);                     // sensore di temperatura interno
+  writeData(0x80);
+
+  cmdOffset = SLAVE_CMD_OFFSET;
+  const uint32_t msBW  = writePlane(0x24, MUX_LINES, composeRowBW);
+  const uint32_t msRED = writePlane(0x26, MUX_LINES, composeRowRED);
+  Serial.printf("piani scritti con 0x%02X / 0x%02X: %lu + %lu ms\n",
+                (unsigned)(0x24 | SLAVE_CMD_OFFSET), (unsigned)(0x26 | SLAVE_CMD_OFFSET),
+                (unsigned long)msBW, (unsigned long)msRED);
+
+  cmdOffset = comune;
+  const int32_t ms = runRefresh(0xF7,
+                                "una ventina di secondi, se il secondo controller ha preso i comandi");
+  cmdOffset = 0x00;
+  csBoth = false;
+  digitalWrite(PIN_CS_OTHER, HIGH);
+
+  if (ms < 0)
+  {
+    Serial.println(F("BUSY fermo: è l'esito previsto se il refresh è partito sull'altro"));
+    Serial.println(F("controller, il cui BUSY non è su questa coda. Attesa a tempo."));
+    delay(SLAVE_OPCODE_WAIT_MS);
+  }
+  slaveOpcodeMs = ms;
+  return ms;
 }
+#endif  // RUN_PROBE_PHASE && SHOW_SLAVE_OPCODE_PROBE
 
 // =====================================================================
 // FASE PROBE: diagnostica a SPI diretta, una coda alla volta
@@ -1827,6 +2287,18 @@ static void runProbePhase()
   probePartialProbe();
 #endif  // SHOW_PARTIAL_PROBE
 
+#if SHOW_SLAVE_OPCODE_PROBE
+  observePause(OBSERVE_MS,
+               "parte la sonda del secondo controller a opcode|0x80");
+
+  /**
+   * Va per ultima fra i frame perchè riscrive la banda da capo e, se l'ipotesi
+   * regge, la scrive sull'ALTRA metà del pannello: quello che i frame
+   * precedenti hanno lasciato a schermo va guardato prima.
+   */
+  probeSlaveByOpcodeOffset();
+#endif  // SHOW_SLAVE_OPCODE_PROBE
+
   probeDeepSleep();
 
   Serial.println(F("\n---------------- RIEPILOGO ----------------"));
@@ -1853,6 +2325,12 @@ static void runProbePhase()
     Serial.println(F("refresh      non concluso"));
   Serial.printf("frame bande  %ld ms\n", (long)bandsRefreshMs);
   Serial.printf("finestre parz %ld ms\n", (long)partialMs);
+#if SHOW_SLAVE_OPCODE_PROBE
+  if (slaveOpcodeMs >= 0)
+    Serial.printf("opcode|0x80  refresh concluso in %ld ms, BUSY mosso\n", (long)slaveOpcodeMs);
+  else
+    Serial.println(F("opcode|0x80  BUSY fermo: guarda il pannello, non il tempo"));
+#endif
 #if SHOW_PARTIAL_PROBE
   if (areaMsFirst > 0 || areaMsMode1 > 0)
   {
@@ -1861,7 +2339,7 @@ static void runProbePhase()
                   (long)areaMsThin, (unsigned)AREA_THIN_H);
     Serial.printf("partial 0xF4 %ld ms su %u righe\n",
                   (long)areaMsMode1, (unsigned)AREA_M1_H);
-    Serial.println(F("             valgono solo se la fascia di trappola e' rimasta bianca"));
+    Serial.println(F("             valgono solo se la fascia di trappola è rimasta bianca"));
   }
   else
     Serial.println(F("partial      nessuna passata conclusa"));
@@ -1870,8 +2348,24 @@ static void runProbePhase()
   Serial.printf("pattern 20MHz %ld ms refresh, piano in %lu ms\n",
                 (long)fastMs, (unsigned long)fastPlaneMs);
 #endif
-  Serial.printf("deep sleep   0x03 %s, 0x11 %s\n",
-                sleepBusy03 ? "dorme" : "no", sleepBusy11 ? "dorme" : "no");
+  Serial.printf("deep sleep   BUSY alto: 0x03 %s, 0x11 %s\n",
+                sleepBusy03 ? "sì" : "no", sleepBusy11 ? "sì" : "no");
+  if (sleepParamOk == 0x00)
+    Serial.println(F("             nessun parametro addormenta il controller"));
+  else
+  {
+    Serial.printf("             parametro scelto 0x%02X, %s\n", sleepParamOk,
+                  sleepIgnoresCmd ? "ignora anche un refresh intero: dorme davvero"
+                                  : "esegue ancora i comandi: non è deep sleep");
+    if (wakeInitMs >= 0)
+      Serial.printf("risveglio    %ld ms di reset più init\n", (long)wakeInitMs);
+    if (wakeRefreshMs > 0)
+      Serial.printf("primo frame  %ld ms di refresh -> ciclo completo %.1f s\n",
+                    (long)wakeRefreshMs,
+                    ((double)(wakeInitMs > 0 ? wakeInitMs : 0) + (double)wakeRefreshMs) / 1000.0);
+    else if (sleepIgnoresCmd)
+      Serial.println(F("primo frame  NON arrivato: dal deep sleep non si torna"));
+  }
 #if SHOW_SOLID_COLORS
   Serial.printf("colori pieni bianco %ld ms, nero %ld ms, accent %ld ms\n",
                 (long)solidRefreshMs[0], (long)solidRefreshMs[1], (long)solidRefreshMs[2]);
@@ -2073,6 +2567,19 @@ static void printObservationSheet()
   Serial.println(F("  l'elettroforesi, cioè le alte tensioni. Punta ai rail di boost"));
   Serial.println(F("  non portati su questo attacco."));
   Serial.println(F(""));
+  Serial.println(F("SONDA opcode|0x80, quale metà si è accesa:"));
+  Serial.println(F("  la metà che questa coda NON serve -> il secondo controller"));
+  Serial.println(F("           si indirizza con il bit 7 dell'opcode e non con un CS"));
+  Serial.println(F("           proprio: il driver va rifatto su un solo chip select,"));
+  Serial.println(F("           e la coda che non rispondeva non era rotta"));
+  Serial.println(F("  la solita metà -> questo controller esegue anche gli opcode"));
+  Serial.println(F("           offset, quindi l'offset non seleziona niente e"));
+  Serial.println(F("           l'ipotesi cade"));
+  Serial.println(F("  niente -> nessuna conferma: restano in piedi le ipotesi di"));
+  Serial.println(F("           cablaggio, e conviene ripetere con"));
+  Serial.println(F("           SLAVE_OPCODE_BROADCAST_COMMON a 0 e, se la seconda"));
+  Serial.println(F("           coda è cablata, SLAVE_OPCODE_BOTH_CS a 1"));
+  Serial.println(F(""));
   Serial.println(F("ULTIMA ETICHETTA Y LEGGIBILE:"));
   Serial.println(F("  320 con la barra accent che chiude il bordo -> il controller"));
   Serial.println(F("           pilota 384 gate line: MUX_LINES = 384 nel driver è"));
@@ -2200,6 +2707,12 @@ static void printObservationSheet()
   Serial.println(F("           resta vero solo come addressing in scrittura e i due"));
   Serial.println(F("           refresh del driver restano su _Update_Full come oggi"));
   Serial.println(F(""));
+  Serial.println(F("  le fasce escono del colore dell'ACCENT invece che nere -> 0xFC non"));
+  Serial.println(F("           seleziona il Mode 2 su questo modulo: la 0x26, che la sonda"));
+  Serial.println(F("           ha riempito di bianco come frame precedente, è stata riletta"));
+  Serial.println(F("           come accent. Il partial differenziale non esiste, e l'unica"));
+  Serial.println(F("           strada che resta è la passata Mode 1 più sotto"));
+  Serial.println(F(""));
   Serial.println(F("  riquadro ristretto anche in X (x = 448..575): i bordi verticali"));
   Serial.println(F("  sono netti?   SI / NO"));
   Serial.println(F("  no     -> la finestra lungo X non viene rispettata dal refresh: il"));
@@ -2245,15 +2758,57 @@ static void printObservationSheet()
   Serial.println(F("           tiene: nel driver abbassa il clock in selectSPI (il"));
   Serial.println(F("           driver 9.7\" del progetto sta a 10 MHz)"));
   Serial.println(F(""));
-  Serial.println(F("DEEP SLEEP, quale parametro:"));
-  Serial.println(F("  BUSY alto solo con 0x03 -> hibernate() deve mandare 0x03, come"));
-  Serial.println(F("           fa ora il driver"));
+  Serial.println(F("DEEP SLEEP, il ciclo dormi / svegliati / stampa:"));
+  Serial.println(F("  il report sopra dice quale parametro di 0x10 addormenta il"));
+  Serial.println(F("  controller, se da addormentato ignora un refresh intero, quanto"));
+  Serial.println(F("  costa il risveglio e se dopo il risveglio la banda stampa."));
+  Serial.println(F(""));
+  Serial.println(F("  BUSY alto solo con 0x03 -> hibernate() deve mandare 0x03, come fa"));
+  Serial.println(F("           ora il driver"));
   Serial.println(F("  BUSY alto solo con 0x11 -> cambia il byte in hibernate()"));
   Serial.println(F("  alto con entrambi -> il modulo accetta anche il valore fuori"));
   Serial.println(F("           tabella, tieni quello del datasheet"));
-  Serial.println(F("  basso con entrambi -> il deep sleep non si osserva sul BUSY su"));
-  Serial.println(F("           questo modulo: misura la corrente prima di fidarti di"));
-  Serial.println(F("           hibernate() come risparmio"));
+  Serial.println(F("  basso con entrambi e il pattern che risponde ancora -> 0x10 non"));
+  Serial.println(F("           addormenta niente su questo modulo: hibernate() è un"));
+  Serial.println(F("           rischio senza guadagno"));
+  Serial.println(F(""));
+  Serial.println(F("  la banda è diventata NERA alla fine del test?   SI / NO"));
+  Serial.println(F("  sì  -> il ciclo completo funziona: hibernate() è utilizzabile, e"));
+  Serial.println(F("           dopo il risveglio il driver deve rifare init e riscrivere"));
+  Serial.println(F("           i piani, perchè il deep sleep non conserva la RAM"));
+  Serial.println(F("  no  -> il controller non è tornato: hibernate() lo lascerebbe"));
+  Serial.println(F("           morto fino al power cycle. Nel driver, o si rinuncia al"));
+  Serial.println(F("           deep sleep, o si verifica che RST sia davvero cablato:"));
+  Serial.println(F("           senza reset hardware da lì non si esce"));
+  Serial.println(F(""));
+  Serial.println(F("  DUE CONTROLLER, quello che questa sonda non può vedere: il CS"));
+  Serial.println(F("           dell'altra coda resta alto per tutto il test, quindi"));
+  Serial.println(F("           l'altro controller non ha mai ricevuto 0x10 ed è rimasto"));
+  Serial.println(F("           sveglio. In GxEPD2_SOLUM_122c_960x768.h hibernate() deve"));
+  Serial.println(F("           mandare 0x10 a ENTRAMBI, uno per CS; il reset invece è in"));
+  Serial.println(F("           parallelo sulle due code, quindi ne basta uno per svegliare"));
+  Serial.println(F("           tutte e due, e _hibernating va azzerato per entrambe"));
+  Serial.println(F("           insieme o il dispatch parlerà a un controller che dorme"));
+  Serial.println(F(""));
+  Serial.println(F("  l'immagine è rimasta intatta durante la finestra di misura? SI / NO"));
+  Serial.println(F("  no  -> entrare in deep sleep sporca lo schermo: va fatto solo dopo"));
+  Serial.println(F("           un refresh completo, mai a metà di una sequenza"));
+  Serial.println(F(""));
+  Serial.println(F("  CORRENTE, l'unica cosa che il firmware non può misurare: durante la"));
+  Serial.println(F("  finestra hai letto il multimetro sul 3V3 del pannello?"));
+  Serial.println(F("           un controller addormentato ....... mA"));
+  Serial.println(F("           entrambi svegli e fermi .......... mA"));
+  Serial.println(F("  valori uguali -> il deep sleep non risparmia niente su questo"));
+  Serial.println(F("           modulo, e il guadagno vero sarebbe togliere alimentazione"));
+  Serial.println(F("  NB: il valore letto qui è uno che dorme più uno sveglio, quindi"));
+  Serial.println(F("           il risparmio a regime, con entrambi addormentati, è"));
+  Serial.println(F("           circa il doppio della differenza che misuri"));
+  Serial.println(F(""));
+  Serial.println(F("  CONVIENE? confronta il costo del risveglio, che il report stampa"));
+  Serial.println(F("           come reset più init più refresh, con l'intervallo fra"));
+  Serial.println(F("           due frame del firmware. Su un pannello che si aggiorna"));
+  Serial.println(F("           ogni molti minuti dormire conviene sempre; su uno che si"));
+  Serial.println(F("           aggiorna di continuo, no."));
   Serial.println(F(""));
   Serial.println(F("ALTRA CODA, dal report sopra:"));
   Serial.println(F("  BUSY si è mosso durante il refresh di questa -> i due"));
