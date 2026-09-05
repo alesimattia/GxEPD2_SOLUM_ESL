@@ -220,7 +220,11 @@ firmware o dentro `showImage(GXEPD_BWRY_IMAGE(...))`):
 |---|---|
 | `GXEPD_BW_IMAGE(ptr, w, h)` | descrittore B/N a 1 buffer |
 | `GXEPD_BWR_IMAGE(pb, pr, w, h)` | descrittore 3-colori (black + red) |
-| `GXEPD_BWRY_IMAGE(pb, pr, py, w, h)` | descrittore 4-colori (black + red + yellow) |
+| `GXEPD_BWRY_IMAGE(pb, pr, py, w, h)` | descrittore a 3 piani (black + red + yellow) |
+
+Di un descrittore a 3 piani `showImage()` rende `data0` e `data1`: nessun driver
+della libreria scrive `data2`, che resta a disposizione di un chiamante con un
+pannello a quattro colori e una primitiva propria per pilotarlo.
 
 Lo script `epd_image_converter.pyw` genera automaticamente una variabile
 `img_<nome>_desc` di tipo `GxEPDImage::Descriptor` ad ogni conversione,

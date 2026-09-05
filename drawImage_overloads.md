@@ -221,7 +221,11 @@ array` or inside `showImage(GXEPD_BWRY_IMAGE(...))`):
 |---|---|
 | `GXEPD_BW_IMAGE(ptr, w, h)` | B/W single-buffer descriptor |
 | `GXEPD_BWR_IMAGE(pb, pr, w, h)` | 3-color descriptor (black + red) |
-| `GXEPD_BWRY_IMAGE(pb, pr, py, w, h)` | 4-color descriptor (black + red + yellow) |
+| `GXEPD_BWRY_IMAGE(pb, pr, py, w, h)` | 3-plane descriptor (black + red + yellow) |
+
+For a 3-plane descriptor `showImage()` renders `data0` and `data1` only: no
+driver in this library writes `data2`, which is left to a caller with a
+four-color panel and its own primitive to drive it.
 
 The `epd_image_converter.pyw` script automatically generates a variable
 `img_<name>_desc` of type `GxEPDImage::Descriptor` at each conversion,

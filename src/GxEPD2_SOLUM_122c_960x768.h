@@ -23,29 +23,44 @@
 //     a differenza del driver SOLUM 9.7" del progetto.
 //   - Connettività: 2 code FFC, una per controller, al centro dei due bordi
 //     lunghi del pannello.
-//   - Refresh: solo full refresh (~25 s), niente fast partial update.
+//   - Refresh: solo full refresh, misurato in 18.3 s di BUSY e 19.1 s dalla
+//     master activation alla fine del ciclo. Niente fast partial update, e
+//     nemmeno partial d'area: vedi hasFastPartialUpdate.
 //
 // Controller e geometria (misurati, vedi docs/122c/identificazione_pannello.md):
 //   Ogni controller pilota 960x384 e lo split cade sull'asse corto del
 //   pannello: in coordinate driver sono due bande orizzontali, righe 0..383
 //   al master e 384..767 allo slave. Il silicio è SSD16xx: i 960 source
 //   dell'SSD1677 coincidono con l'asse lungo, i suoi 680 gate non bastano per
-//   768 linee e da qui i due controller da 384 gate ciascuno. Con due soli
-//   controller l'UC8179 (800x600) non copre il pannello in nessuna
-//   spartizione, quindi il suo command set non è utilizzabile.
+//   768 linee e da qui i due controller da 384 gate ciascuno. Che 680 sia un
+//   tetto vero, e non un valore prudenziale, lo conferma il mercato: il Good
+//   Display GDEM133T91 è 960x680 con UN SOLO SSD1677 e una sola coda, e
+//   programma MUX = 679. Con due soli controller l'UC8179 (800x600) non copre
+//   il pannello in nessuna spartizione, quindi il suo command set non è
+//   utilizzabile.
 //
 // !!! ORIENTAMENTO DELLE DUE BANDE (da verificare al bring-up):
 //   Le due code escono da bordi opposti, quindi il secondo controller è
-//   presumibilmente ruotato di 180° rispetto al primo. L'SSD1677 non offre
-//   una reverse scan hardware (cmd 0x01 bit TB = 1 è dichiarato Reserved dal
-//   datasheet), quindi il ribaltamento vive nel data path: ordine delle righe
-//   e dei byte invertito, bit invertiti dentro il byte, finestra RAM
-//   riposizionata di conseguenza. Default: master normale, slave ruotato di
-//   180°. Se l'immagine esce specchiata su una delle due bande, le quattro
-//   combinazioni si provano dallo sketch con setMasterMirror() /
-//   setSlaveMirror() senza toccare questo file. Se poi le misure dicessero
-//   che la seconda banda ha lo stesso verso della prima, il default corretto
-//   diventa setSlaveMirror(false, false).
+//   presumibilmente ruotato di 180° rispetto al primo. Qui il ribaltamento vive
+//   nel data path: ordine delle righe e dei byte invertito, bit invertiti dentro
+//   il byte, finestra RAM riposizionata di conseguenza. Default: master normale,
+//   slave ruotato di 180°. Se l'immagine esce specchiata su una delle due bande,
+//   le quattro combinazioni si provano dallo sketch con setMasterMirror() /
+//   setSlaveMirror() senza toccare questo file. Se poi le misure dicessero che la
+//   seconda banda ha lo stesso verso della prima, il default corretto diventa
+//   setSlaveMirror(false, false).
+//
+//   Precisazione su cosa il controller può fare da sè, perchè le due cose
+//   venivano confuse: è vero che non esiste una reverse scan delle GATE (cmd
+//   0x01, bit TB = 1 è dichiarato Reserved), ma il CONTATORE DI INDIRIZZO sì,
+//   si può far decrementare su entrambi gli assi — cmd 0x11, A[1:0]: 00 = Y e X
+//   decrement, 01 = Y decrement X increment, 10 = Y increment X decrement, 11 =
+//   entrambi increment (POR). È così che GxEPD2 upstream specchia una delle due
+//   metà del Good Display GDEY0579Z93, che è un pannello a due controller della
+//   stessa famiglia: entry mode diverso per chip e coordinate rimappate, senza
+//   toccare i dati. Se il bring-up conferma quella strada si risparmiano il
+//   reverse dei byte e dei bit per ogni riga; resta da verificare sul pannello
+//   che l'ordine dei bit dentro il byte torni da sè, come là.
 //
 // Requisiti build:
 //   - HW SPI (HSPI su ESP32 tramite la Waveshare E-Paper ESP32 Driver Board
@@ -71,21 +86,53 @@
 // CONVIVENZA CON GLI ALTRI DRIVER DELLA LIBRERIA:
 //   Il namespace GxEPDImage sta in src/GxEPDImage.h, incluso da tutti i
 //   driver: includere due header driver nella stessa translation unit non
-//   ridefinisce niente. Il namespace condiviso dichiara anche il formato
-//   FORMAT_BWRY_1BPP, che su questo pannello non è raggiungibile: le tre
-//   primitive del giallo (preserveYellow, isYellowPreserved,
-//   writeImageYellow) sono qui delle no-op, così il template showImage() e
-//   i moduli applicativi scritti per il 9.7" compilano contro questo driver
-//   senza rami condizionali.
+//   ridefinisce niente. Il contratto che quel namespace chiede sono due soli
+//   metodi, setPaged() e showImagePageHint(): showImage() compone i piani
+//   black e red e non tocca un eventuale terzo piano, quindi nessun driver
+//   deve dichiarare primitive che non gli servono. Il namespace condiviso
+//   dichiara anche il formato FORMAT_BWRY_1BPP, di cui showImage() rende i
+//   primi due piani: un descrittore a tre piani è quindi stampabile qui
+//   senza rami condizionali, con il terzo ignorato.
 //
 // !!! STATO DEL BRING-UP:
-//   Una sola banda è stata validata sul pannello: con un solo FFC cablato e
-//   un driver stock SSD16xx si stampa correttamente un rettangolo 960x384.
-//   Da qui vengono il command set e la geometria di questo file. Non è ancora
-//   validato niente di ciò che riguarda le due bande insieme: la seconda coda
-//   non risponde (ipotesi in docs/122c/identificazione_pannello.md §6), quindi
-//   il dispatch a due controller, l'orientamento relativo delle bande e la
+//   Una sola banda è stata validata sul pannello: con un solo FFC cablato si
+//   stampa correttamente un rettangolo 960x384, ed è la metà che il firmware di
+//   produzione già disegna. Delle due code del pannello risponde la LUNGA, e la
+//   metà che stampa è quella dal suo lato; la corta, infilata nello stesso
+//   connettore e con lo stesso codice, non stampa niente. "Master" in questo
+//   file è quindi il controller della coda lunga. Da qui vengono il command
+//   set e la geometria di questo file. Non è ancora validato niente di ciò che
+//   riguarda le due bande insieme: la coda corta non risponde, quindi il
+//   dispatch a due controller, l'orientamento relativo delle bande e la
 //   giunzione fra loro restano da provare sul pannello.
+//
+//   !!! IL MODELLO A DUE CHIP SELECT NON È PIÙ CABLATO NEL FILE.
+//   Le evidenze raccolte (docs/fonti_esterne.md §4 e
+//   docs/122c/identificazione_pannello.md §5-§6) dicono che i due controller
+//   sono con ogni probabilità una coppia in CASCADE: un solo chip select, lo
+//   slave indirizzato sommando 0x80 all'opcode, il master messo in cascade da
+//   0x21 con B[4] = 1, e soprattutto lo slave senza oscillatore nè booster, che
+//   riceve clock e tensioni dal master. Se examples/12_2c/dual_panel_finder lo
+//   conferma, di questo file cambiano il dispatch (niente _cs_s, niente
+//   _writeCommandAll con due CS bassi) e il modo di indirizzare lo slave, e la
+//   base di riscrittura diventa GxEPD2_579c_GDEY0579Z93 di GxEPD2 invece dello
+//   scheletro 1248c. Per non dover scegliere prima della misura, il modello di
+//   indirizzamento è ora RUNTIME: setAddressingMode(ADDRESSING_CASCADE) fa
+//   passare il driver a un solo chip select con lo slave a opcode|0x80 e il
+//   master messo in cascade da 0x21, senza toccare nè la geometria nè il data
+//   path. Il default resta ADDRESSING_DUAL_CS, cioè il comportamento storico:
+//   la misura decide quale dei due tenere, non questo file.
+//
+//   Quanto il modello sia in bilico lo dice il confronto con un pannello a due
+//   code di catalogo, il 12.48" GDEY1248Z51 su cui è modellato lo scheletro di
+//   questo file: lì i controller sono quattro e hanno QUATTRO chip select
+//   (CSB_M1/M2/S1/S2), quattro BUSY, due DC, due RST, due BS e due sezioni di
+//   boost indipendenti, una per coda. Il tag di fabbrica della 12.2" ha un solo
+//   chip select e una sola sezione analogica, con il secondo connettore nudo
+//   alimentato da un fascio di piste che arriva dal primo. Un pannello a
+//   controller indipendenti quel conto dei pin non lo fa: è l'argomento più
+//   forte a favore della cascade, e quindi contro il modello a due CS di questo
+//   file.
 //
 // BUS SPI:
 //   le primitive di bus passano da _pSPIx / _spi_settings della base
@@ -131,11 +178,64 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
     static const GxEPD2::Panel panel = GxEPD2::GDEM133Z91;
     static const bool hasColor = true;
     static const bool hasPartialUpdate = true; // partial window addressing, full window refresh
+    /** Falso per misura, non per prudenza. examples/12_2c/dual_panel_finder ha
+     *  cronometrato le passate su finestra: 0x22 = 0xFC su 64 righe 18167 ms e
+     *  su 24 righe 18170 ms, 0x22 = 0xF4 su 32 righe 18158 ms, contro i 18308 ms
+     *  di un frame intero. La durata della waveform non dipende dalle gate line
+     *  coinvolte, quindi un refresh d'area non comprerebbe tempo e i due
+     *  overload di refresh() restano giustamente su _Update_Full. */
     static const bool hasFastPartialUpdate = false;
-    static const uint16_t power_on_time = 200;       // ms
-    static const uint16_t power_off_time = 50;       // ms
-    static const uint16_t full_refresh_time = 25000; // ms, conservativo per 12.2"
-    static const uint16_t partial_refresh_time = 25000;
+    /** Tempi misurati sul pannello, sul controller che risponde: BUSY alto per
+     *  82 ms sul power on (0x22 = 0xC0) e 221 ms sul power off (0x22 = 0xC3).
+     *  Sono gli stessi valori annotati nel driver SOLUM 9.7" della libreria,
+     *  che gira sullo stesso silicio. Contano quando il pin BUSY non c'è,
+     *  perchè allora sono l'unica attesa: vanno arrotondati per eccesso. */
+    static const uint16_t power_on_time = 100;       // ms, misurato 82
+    static const uint16_t power_off_time = 250;      // ms, misurato 221
+    /** Refresh pieno misurato: 18.3 s di BUSY, 19.1 s di ciclo. Il margine fino
+     *  a 30 s copre l'allungamento della waveform a bassa temperatura, ed è lo
+     *  stesso che porta il driver 9.7". Sopra ci sta il busy_timeout passato ai
+     *  costruttori, 40 s, che è il tetto oltre il quale _waitWhileAnyBusy
+     *  rinuncia: con 30 s il margine sul misurato era solo 1.6x.
+     *
+     *  partial_refresh_time è pari al pieno perchè su questo pannello una
+     *  passata su finestra costa come un frame intero, vedi
+     *  hasFastPartialUpdate. */
+    static const uint16_t full_refresh_time = 30000; // ms
+    static const uint16_t partial_refresh_time = 30000;
+
+    /**
+     * Modello di indirizzamento dei due controller. Non è una preferenza di
+     * stile: sono due cablaggi fisici diversi, e quale sia quello vero non è
+     * ancora misurato (vedi l'intestazione del file e
+     * examples/12_2c/dual_panel_finder).
+     *
+     *   ADDRESSING_DUAL_CS  due chip select indipendenti, un opcode solo. È la
+     *                       topologia dei pannelli commerciali a più
+     *                       controller (12.48" GDEY1248Z51: quattro CS, quattro
+     *                       BUSY, due boost) ed è il default storico di questo
+     *                       driver.
+     *   ADDRESSING_CASCADE  un solo chip select condiviso; lo slave si
+     *                       indirizza sommando 0x80 agli opcode che lo
+     *                       riguardano, e il master va messo in cascade con
+     *                       0x21 B[4] = 1 perchè emetta il clock CL. È il
+     *                       modello del firmware di fabbrica SOLUM
+     *                       (docs/openepaperlink/nrf52811_tag_fw/dualssd.cpp) e
+     *                       quello che il conteggio dei pin del tag rende più
+     *                       probabile.
+     */
+    enum AddressingMode : uint8_t
+    {
+      ADDRESSING_DUAL_CS,
+      ADDRESSING_CASCADE
+    };
+
+    /** Offset sommato agli opcode diretti allo slave in ADDRESSING_CASCADE.
+     *  Il nome non è SLAVE_CMD_OFFSET perchè quel simbolo è già una macro
+     *  nello sketch examples/12_2c/dual_panel_finder, che lo usa per la stessa
+     *  cosa nella fase probe: una macro con lo stesso nome romperebbe la
+     *  qualificazione di classe. */
+    static const uint8_t CASCADE_CMD_OFFSET = 0x80;
 
     // Split master/slave: larghezza piena per ogni controller, metà altezza.
     // I 960 px sono l'asse source, i 768 l'asse gate, spartito 384 + 384 fra i
@@ -226,12 +326,16 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
     int16_t showImagePageHint() const { return _show_image_page_hint; }
 
     /**
-     * No-op del canale giallo. Il piano esiste solo sul 9.7": qui servono
-     * perchè il template showImage() di src/GxEPDImage.h è condiviso e
-     * perchè i moduli applicativi scritti per il 9.7" chiamano
-     * preserveYellow() senza sapere quale pannello è montato. Il ramo
-     * FORMAT_BWRY_1BPP non arriva mai a chiamarle su questo driver: lo
-     * esclude il formato del descrittore.
+     * Primitive del terzo piano, per ora senza corpo. Non sono parte del
+     * contratto di src/GxEPDImage.h, che chiede i soli setPaged() e
+     * showImagePageHint(): showImage() compone black e red e un terzo piano
+     * non lo tocca mai. Restano dichiarate perchè su questo pannello il
+     * quarto colore è una questione ancora aperta — il codice modello
+     * EL122H6W4A ha campo colore 4, cioè BWRY nominale, mentre il vetro
+     * porta serigrafato "Newton PRO 12.2" BWR normal" — e il bring-up è
+     * fermo alla seconda coda muta, quindi non c'è modo di misurarlo.
+     * Quando lo si saprà: o prendono un corpo vero, o vanno rimosse.
+     * Il 9.7" ha chiuso la stessa domanda e non le dichiara affatto.
      */
     void preserveYellow(bool /*preserve*/) {}
     bool isYellowPreserved() const { return true; }
@@ -249,6 +353,19 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
      */
     void setMasterMirror(bool mirror_x, bool mirror_y) { M.setMirror(mirror_x, mirror_y); }
     void setSlaveMirror(bool mirror_x, bool mirror_y)  { S.setMirror(mirror_x, mirror_y); }
+
+    /**
+     * Sceglie il modello di indirizzamento dei due controller, vedi il commento
+     * di AddressingMode. Va chiamata PRIMA di init(), perchè init() decide in
+     * base al modo quali pin configurare: in cascade il secondo chip select non
+     * esiste e non va pilotato.
+     *
+     * In ADDRESSING_CASCADE la ScreenPart slave passa a scrivere sul chip
+     * select del master con gli opcode offset, quindi diventa attiva anche se
+     * il costruttore ha ricevuto cs2 = -1: in cascade un secondo CS non serve.
+     */
+    void setAddressingMode(AddressingMode mode);
+    AddressingMode addressingMode() const { return _addressing; }
 
   private:
     // ------------------------------------------------------------------
@@ -269,6 +386,10 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
         void writeCommand(uint8_t c);
         void writeData(uint8_t d);
         bool isActive() const { return _cs >= 0; }
+        /** Riassegna chip select e offset degli opcode di questa ScreenPart.
+         *  In cascade lo slave scrive sul CS del master e somma 0x80 ai propri
+         *  comandi; in dual-CS torna al proprio CS con offset nullo. */
+        void setAddressing(int16_t cs, uint8_t cmd_offset) { _cs = cs; _cmd_offset = cmd_offset; }
         // Ribaltamento della banda gestita da questa ScreenPart, vedi
         // setSlaveMirror() nella classe outer.
         void setMirror(bool mirror_x, bool mirror_y) { _mirror_x = mirror_x; _mirror_y = mirror_y; }
@@ -277,6 +398,10 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
         bool    _mirror_y;
         int16_t _cs;
         int16_t _dc;
+        // Sommato all'opcode di ogni comando di questa ScreenPart: 0x00 in
+        // dual-CS, 0x80 sullo slave in cascade. Non tocca i dati, che non
+        // hanno opcode.
+        uint8_t _cmd_offset;
         // Riferimenti allo stato SPI del driver, non copie: così un
         // selectSPI() dello sketch vale anche per le ScreenPart.
         SPIClass*&   _pSPIx;
@@ -320,6 +445,9 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
     ScreenPart M;
     ScreenPart S;
 
+    // Modello di indirizzamento attivo, vedi setAddressingMode().
+    AddressingMode _addressing = ADDRESSING_DUAL_CS;
+
     // Dirty flag canale rosso (cmd 0x26). Permette di saltare la pulizia
     // pre-draw quando non serve (catena di immagini B/N consecutive).
     bool _color_dirty = false;
@@ -341,17 +469,20 @@ inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(
     int16_t cs_m, int16_t cs_s,
     int16_t dc, int16_t rst,
     int16_t busy_m, int16_t busy_s) :
-  GxEPD2_EPD(cs_m, dc, rst, busy_m, HIGH, 30000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
+  GxEPD2_EPD(cs_m, dc, rst, busy_m, HIGH, 40000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
   _sck(sck), _miso(miso), _mosi(mosi),
   _cs_m(cs_m), _cs_s(cs_s), _dc_pin(dc), _rst_pin(rst),
   _busy_m(busy_m), _busy_s(busy_s),
   M(PART_WIDTH, PART_HEIGHT, false, false, cs_m, dc, _pSPIx, _spi_settings),
   S(PART_WIDTH, PART_HEIGHT, true,  true,  cs_s, dc, _pSPIx, _spi_settings)
 {
-  // Default storico di questo driver: SPI globale a 20 MHz. Passa dai membri
-  // della base invece di essere cablato nelle primitive, così un selectSPI()
-  // dello sketch lo sostituisce.
-  selectSPI(SPI, SPISettings(20000000, MSBFIRST, SPI_MODE0));
+  // Default: SPI globale a 10 MHz. Passa dai membri della base invece di essere
+  // cablato nelle primitive, così un selectSPI() dello sketch lo sostituisce.
+  // Era 20 MHz: alcuni SSD1677 non tollerano clock superiori a 10 MHz, e con
+  // una sola banda validata e la seconda coda muta un clock fuori specifica
+  // sarebbe una variabile in più nel bring-up. Il costo è ~130 ms in più per
+  // refresh full-screen, su un refresh che ne dura 25.000.
+  selectSPI(SPI, SPISettings(10000000, MSBFIRST, SPI_MODE0));
 }
 #endif
 
@@ -359,17 +490,20 @@ inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(
     int16_t cs_m, int16_t cs_s,
     int16_t dc, int16_t rst,
     int16_t busy_m, int16_t busy_s) :
-  GxEPD2_EPD(cs_m, dc, rst, busy_m, HIGH, 30000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
+  GxEPD2_EPD(cs_m, dc, rst, busy_m, HIGH, 40000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
   _sck(SCK), _miso(MISO), _mosi(MOSI),
   _cs_m(cs_m), _cs_s(cs_s), _dc_pin(dc), _rst_pin(rst),
   _busy_m(busy_m), _busy_s(busy_s),
   M(PART_WIDTH, PART_HEIGHT, false, false, cs_m, dc, _pSPIx, _spi_settings),
   S(PART_WIDTH, PART_HEIGHT, true,  true,  cs_s, dc, _pSPIx, _spi_settings)
 {
-  // Default storico di questo driver: SPI globale a 20 MHz. Passa dai membri
-  // della base invece di essere cablato nelle primitive, così un selectSPI()
-  // dello sketch lo sostituisce.
-  selectSPI(SPI, SPISettings(20000000, MSBFIRST, SPI_MODE0));
+  // Default: SPI globale a 10 MHz. Passa dai membri della base invece di essere
+  // cablato nelle primitive, così un selectSPI() dello sketch lo sostituisce.
+  // Era 20 MHz: alcuni SSD1677 non tollerano clock superiori a 10 MHz, e con
+  // una sola banda validata e la seconda coda muta un clock fuori specifica
+  // sarebbe una variabile in più nel bring-up. Il costo è ~130 ms in più per
+  // refresh full-screen, su un refresh che ne dura 25.000.
+  selectSPI(SPI, SPISettings(10000000, MSBFIRST, SPI_MODE0));
 }
 
 // Variante single-CS: utile per bring-up con un solo controller cablato
@@ -377,17 +511,20 @@ inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(
 // La banda bassa del pannello (righe 384..767) non si aggiorna, ma il bring-up
 // del master si può validare in isolamento.
 inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(int16_t cs, int16_t dc, int16_t rst, int16_t busy) :
-  GxEPD2_EPD(cs, dc, rst, busy, HIGH, 30000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
+  GxEPD2_EPD(cs, dc, rst, busy, HIGH, 40000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
   _sck(SCK), _miso(MISO), _mosi(MOSI),
   _cs_m(cs), _cs_s(-1), _dc_pin(dc), _rst_pin(rst),
   _busy_m(busy), _busy_s(-1),
   M(PART_WIDTH, PART_HEIGHT, false, false, cs, dc, _pSPIx, _spi_settings),
   S(PART_WIDTH, PART_HEIGHT, true,  true,  -1, dc, _pSPIx, _spi_settings)
 {
-  // Default storico di questo driver: SPI globale a 20 MHz. Passa dai membri
-  // della base invece di essere cablato nelle primitive, così un selectSPI()
-  // dello sketch lo sostituisce.
-  selectSPI(SPI, SPISettings(20000000, MSBFIRST, SPI_MODE0));
+  // Default: SPI globale a 10 MHz. Passa dai membri della base invece di essere
+  // cablato nelle primitive, così un selectSPI() dello sketch lo sostituisce.
+  // Era 20 MHz: alcuni SSD1677 non tollerano clock superiori a 10 MHz, e con
+  // una sola banda validata e la seconda coda muta un clock fuori specifica
+  // sarebbe una variabile in più nel bring-up. Il costo è ~130 ms in più per
+  // refresh full-screen, su un refresh che ne dura 25.000.
+  selectSPI(SPI, SPISettings(10000000, MSBFIRST, SPI_MODE0));
 }
 
 /**
@@ -411,6 +548,13 @@ inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(const GxEPD2_SOLUM_P
 }
 
 // ----- API pubbliche outer-class -----
+
+inline void GxEPD2_SOLUM_122c_960x768::setAddressingMode(AddressingMode mode)
+{
+  _addressing = mode;
+  if (mode == ADDRESSING_CASCADE) S.setAddressing(_cs_m, CASCADE_CMD_OFFSET);
+  else                            S.setAddressing(_cs_s, 0x00);
+}
 
 inline void GxEPD2_SOLUM_122c_960x768::clearScreen(uint8_t value)
 {
@@ -664,7 +808,10 @@ inline void GxEPD2_SOLUM_122c_960x768::init(uint32_t serial_diag_bitrate, bool i
     pinMode(_cs_m, OUTPUT);
     digitalWrite(_cs_m, HIGH);
   }
-  if (_cs_s >= 0)
+  // In cascade il secondo chip select non esiste: il pin resta libero e non va
+  // pilotato, altrimenti si tiene alto un CS che sul pannello non arriva a
+  // nessuno.
+  if ((_addressing == ADDRESSING_DUAL_CS) && (_cs_s >= 0))
   {
     pinMode(_cs_s, OUTPUT);
     digitalWrite(_cs_s, HIGH);
@@ -680,7 +827,19 @@ inline void GxEPD2_SOLUM_122c_960x768::init(uint32_t serial_diag_bitrate, bool i
     digitalWrite(_rst_pin, HIGH);
   }
   if (_busy_m >= 0) pinMode(_busy_m, INPUT);
+  /** Pull-down sul BUSY dello slave, non su quello del master, che è pilotato e
+   *  non va toccato. Il BUSY è attivo alto: un pin non contattato che segue il
+   *  pull viene letto "non occupato" e lascia passare le attese, mentre un
+   *  ingresso flottante che si assesta alto le manda tutte al busy_timeout
+   *  senza che niente lo segnali. Su una linea davvero pilotata il pull interno
+   *  da ~45 kohm è irrilevante. Sui GPIO 34..39 dell'ESP32 la direttiva è
+   *  inerte, perchè quei pin non hanno pull: lì l'unico rimedio è portare il
+   *  BUSY su un pin che ne abbia. */
+#if defined(ESP32)
+  if (_busy_s >= 0) pinMode(_busy_s, INPUT_PULLDOWN);
+#else
   if (_busy_s >= 0) pinMode(_busy_s, INPUT);
+#endif
   _initSPI();
   _resetDual();
 }
@@ -738,8 +897,11 @@ inline void GxEPD2_SOLUM_122c_960x768::_PowerOff()
  *  _Update_Full (0x22 = 0xF7) a fare power on, refresh e power off.
  *
  *  MUX derivato da PART_HEIGHT: sono le gate line che ogni controller pilota
- *  davvero, oggi 384. Il POR del registro è 680, che farebbe scandire a ogni
- *  refresh 296 linee inesistenti.
+ *  davvero, oggi 384, contro un POR del registro di 680. Si scrive per avere la
+ *  mappatura gate corretta, non per guadagnare tempo: dual_panel_finder ha
+ *  cronometrato lo stesso refresh con il MUX scritto a 383 e con il registro
+ *  lasciato al default, e la durata coincide entro 13 ms su 18.3 s. Le linee in
+ *  più, se vengono scandite, non costano niente di misurabile.
  *
  *  Il valore NON va cablato: era scritto qui come `0x7F 0x01` e la stessa
  *  informazione stava anche in PART_HEIGHT, quindi un conteggio gate diverso
@@ -775,10 +937,23 @@ inline void GxEPD2_SOLUM_122c_960x768::_InitDisplay()
   // verso di avanzamento del contatore è uguale per tutti i write.
   _writeCommandAll(0x11);
   _writeDataAll(0x03);
+  if (_addressing == ADDRESSING_CASCADE)
+  {
+    /** Display update control 1. Il secondo byte esiste dal SSD1683 in poi e
+     *  porta B[4] "ckouten": a 1 mette il master in cascade e gli fa emettere
+     *  il clock CL verso lo slave, che di suo non ha oscillatore. Senza questo
+     *  bit lo slave resta muto anche se cablato bene. 0x08 sul primo byte è il
+     *  valore dell'init di fabbrica SOLUM, che scrive 0x21 = 08 10 in cascade e
+     *  08 00 sui pannelli a chip singolo. */
+    _writeCommandAll(0x21);
+    _writeDataAll(0x08);
+    _writeDataAll(0x10);
+  }
   _init_display_done = true;
 }
 
-/** Esegue il refresh elettroforetico full-window (~25 s). Su SSD16xx la
+/** Esegue il refresh elettroforetico full-window: 18.3 s di BUSY misurati,
+ *  19.1 s dalla master activation alla fine del ciclo. Su SSD16xx la
  *  display update sequence 0xF7 comprende power on, load LUT dalla OTP, scan e
  *  power off: da qui _power_is_on = false all'uscita. */
 inline void GxEPD2_SOLUM_122c_960x768::_Update_Full()
@@ -823,28 +998,35 @@ inline void GxEPD2_SOLUM_122c_960x768::_writeDataMaster(uint8_t d)
  *  Vale solo in scrittura: se un giorno si cablasse la linea di lettura del
  *  pannello (SDO) su entrambe le code, con due CS bassi i due controller
  *  piloterebbero insieme lo stesso filo. Una lettura va fatta selezionando un
- *  solo controller. */
+ *  solo controller.
+ *
+ *  È il broadcast che usa GxEPD2_1248c upstream su un pannello a chip select
+ *  separati, ed è corretto solo su quella topologia: se i due controller sono
+ *  una coppia in cascade il broadcast non serve, perchè il chip select è uno e
+ *  a distinguere i due chip è l'offset 0x80 sull'opcode. */
 inline void GxEPD2_SOLUM_122c_960x768::_writeCommandAll(uint8_t c)
 {
   _pSPIx->beginTransaction(_spi_settings);
+  const bool dual = (_addressing == ADDRESSING_DUAL_CS);
   if (_dc_pin >= 0) digitalWrite(_dc_pin, LOW);
   if (_cs_m >= 0) digitalWrite(_cs_m, LOW);
-  if (_cs_s >= 0) digitalWrite(_cs_s, LOW);
+  if (dual && (_cs_s >= 0)) digitalWrite(_cs_s, LOW);
   _pSPIx->transfer(c);
   if (_cs_m >= 0) digitalWrite(_cs_m, HIGH);
-  if (_cs_s >= 0) digitalWrite(_cs_s, HIGH);
+  if (dual && (_cs_s >= 0)) digitalWrite(_cs_s, HIGH);
   if (_dc_pin >= 0) digitalWrite(_dc_pin, HIGH);
   _pSPIx->endTransaction();
 }
 
 inline void GxEPD2_SOLUM_122c_960x768::_writeDataAll(uint8_t d)
 {
+  const bool dual = (_addressing == ADDRESSING_DUAL_CS);
   _pSPIx->beginTransaction(_spi_settings);
   if (_cs_m >= 0) digitalWrite(_cs_m, LOW);
-  if (_cs_s >= 0) digitalWrite(_cs_s, LOW);
+  if (dual && (_cs_s >= 0)) digitalWrite(_cs_s, LOW);
   _pSPIx->transfer(d);
   if (_cs_m >= 0) digitalWrite(_cs_m, HIGH);
-  if (_cs_s >= 0) digitalWrite(_cs_s, HIGH);
+  if (dual && (_cs_s >= 0)) digitalWrite(_cs_s, HIGH);
   _pSPIx->endTransaction();
 }
 
@@ -857,7 +1039,10 @@ inline void GxEPD2_SOLUM_122c_960x768::_writeDataAll(uint8_t d)
  *  non può essere occupato, e nel bring-up con una sola coda cablata il suo pin
  *  BUSY è flottante. Senza la guardia su `_cs_s` un pinout con `cs2 = -1` e
  *  `busy2` valorizzato manderebbe ogni attesa al timeout, perchè un input-only
- *  senza pull (GPIO35 sulla board Waveshare) può restare letto come occupato. */
+ *  senza pull (GPIO35 sulla board Waveshare) può restare letto come occupato.
+ *
+ *  In ADDRESSING_CASCADE lo slave viene ignorato sempre: il tag di fabbrica ha
+ *  un solo BUSY, e in cascade è il master a scandire per entrambi. */
 inline void GxEPD2_SOLUM_122c_960x768::_waitWhileAnyBusy(const char* comment, uint16_t busy_time)
 {
   if (_busy_m >= 0)
@@ -868,7 +1053,8 @@ inline void GxEPD2_SOLUM_122c_960x768::_waitWhileAnyBusy(const char* comment, ui
     {
       delay(1);
       bool nb_m = (_busy_level != digitalRead(_busy_m));
-      bool nb_s = ((_cs_s >= 0) && (_busy_s >= 0)) ? (_busy_level != digitalRead(_busy_s)) : true;
+      bool nb_s = ((_addressing == ADDRESSING_DUAL_CS) && (_cs_s >= 0) && (_busy_s >= 0))
+                  ? (_busy_level != digitalRead(_busy_s)) : true;
       if (nb_m && nb_s) break;
       if (micros() - start > _busy_timeout)
       {
@@ -891,7 +1077,7 @@ inline void GxEPD2_SOLUM_122c_960x768::_waitWhileAnyBusy(const char* comment, ui
 inline GxEPD2_SOLUM_122c_960x768::ScreenPart::ScreenPart(uint16_t width, uint16_t height, bool mirror_x, bool mirror_y, int16_t cs, int16_t dc,
                                                          SPIClass*& pSPIx, SPISettings& spi_settings) :
   WIDTH(width), HEIGHT(height), _mirror_x(mirror_x), _mirror_y(mirror_y), _cs(cs), _dc(dc),
-  _pSPIx(pSPIx), _spi_settings(spi_settings)
+  _cmd_offset(0x00), _pSPIx(pSPIx), _spi_settings(spi_settings)
 {
 }
 
@@ -1002,7 +1188,9 @@ inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeCommand(uint8_t c)
   _pSPIx->beginTransaction(_spi_settings);
   if (_dc >= 0) digitalWrite(_dc, LOW);
   digitalWrite(_cs, LOW);
-  _pSPIx->transfer(c);
+  // In cascade l'opcode porta l'offset dello slave; i comandi comuni li manda
+  // la classe outer con _writeCommandAll, senza offset.
+  _pSPIx->transfer(uint8_t(c | _cmd_offset));
   digitalWrite(_cs, HIGH);
   if (_dc >= 0) digitalWrite(_dc, HIGH);
   _pSPIx->endTransaction();

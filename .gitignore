@@ -1,12 +1,10 @@
 ### macOS
 # Finder metadata
 .DS_Store
-
-# Thumbnails
 ._*
+**/build/
+Icon
 
-# Custom folder icons
-Icon
 
 # Volume root files
 .DocumentRevisions-V100

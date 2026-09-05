@@ -10,9 +10,9 @@
 // pubblica del driver e con quella del template GxEPD2_3C che lo avvolge.
 //
 // API RICHIESTA A UN DRIVER DI QUESTA LIBRERIA
-//   Chi aggiunge un driver deve implementarla tutta, anche quando una parte
-//   non ha senso sul suo pannello: showImage() è un template unico e non ha
-//   rami condizionali per driver. Sono cinque metodi pubblici:
+//   showImage() è un template unico e non ha rami condizionali per driver,
+//   quindi chi aggiunge un driver deve implementare questi due metodi, e sono
+//   i soli obbligatori:
 //
 //     void    setPaged() override      reset del page-hint. Il virtual della
 //                                      base viene chiamato da firstPage().
@@ -23,18 +23,19 @@
 //                                      parallelo: azzerato in setPaged() e in
 //                                      _Update_Full(), avanzato in
 //                                      writeImage(black, color, ...).
-//     void    writeImageYellow(...)    terzo piano. No-op su un pannello che
-//                                      non ce l'ha.
-//     void    preserveYellow(bool)     protezione del terzo piano durante il
-//                                      loop paged. No-op come sopra.
-//     bool    isYellowPreserved()      stato del flag. true costante come sopra.
-//
-//   Un driver a due piani dichiara le tre primitive del giallo come no-op: il
-//   ramo FORMAT_BWRY_1BPP non scatta mai su di lui, perchè è guardato dal
-//   formato del descrittore, non dal tipo del driver.
 //
 //   Il pinout invece non passa da qui: è la struct uniforme di
 //   GxEPD2_SOLUM_Pins.h, che ogni driver accetta nel costruttore.
+//
+// TERZO PIANO: API OPZIONALE DEL DRIVER, NON PARTE DEL CONTRATTO
+//   showImage() compone i due piani che il template GxEPD2_3C sa gestire,
+//   black e red, e non tocca un eventuale terzo piano. Un driver il cui
+//   pannello ne abbia davvero uno può esporre le primitive per scriverlo
+//   (writeImageYellow, preserveYellow, isYellowPreserved), e il chiamante le
+//   usa out-of-band: il piano si scrive PRIMA di firstPage() e si protegge
+//   per la durata del loop paged. Sono API del singolo driver, quindi un
+//   driver a due piani non le dichiara affatto e non ha nessun no-op da
+//   scrivere.
 // =============================================================================
 
 #ifndef _GxEPDImage_H_
@@ -57,7 +58,10 @@ namespace GxEPDImage
   {
     FORMAT_BW_1BPP    = 0,  // 1 bpp singolo buffer (compat image2cpp)
     FORMAT_BWR_1BPP   = 1,  // due buffer separati black + red
-    FORMAT_BWRY_1BPP  = 2,  // tre buffer black + red + yellow
+    // Tre buffer black + red + yellow. showImage() rende data0 e data1: il
+    // terzo piano resta a disposizione del chiamante, che lo scrive con le
+    // primitive del driver se il pannello montato ne ha uno.
+    FORMAT_BWRY_1BPP  = 2,
   };
 
   /**
@@ -75,36 +79,24 @@ namespace GxEPDImage
   };
 
   /**
-   * Unico entry-point pubblico per stampare un'immagine sul pannello SOLUM
-   * 4-colori. Va chiamata DENTRO un loop paged firstPage()/nextPage() del
-   * template GxEPD2_3C, dopo fillScreen() e prima di nextPage().
+   * Unico entry-point pubblico per stampare un'immagine sui pannelli SOLUM
+   * di questa libreria. Va chiamata DENTRO un loop paged
+   * firstPage()/nextPage() del template GxEPD2_3C, dopo fillScreen() e prima
+   * di nextPage().
    *
    * Responsabilità del chiamante (vedi esempio sotto):
    *   1. Aprire il loop paged (firstPage + do { ... } while (nextPage()))
    *   2. Chiamare display.hibernate() se vuole spegnere il pannello
    *
-   * Il reset di preserveYellow avviene automaticamente dentro refresh()
-   * al termine del loop paged: il chiamante NON deve farlo a mano.
+   * Strategia: i piani black e red vengono decodificati pixel-per-pixel con
+   * drawPixel, perchè la convenzione bit=1=NOT color delle bitmap (output
+   * dello script python e di image2cpp invertito) è opposta a quella di
+   * Adafruit_GFX::drawBitmap (bit=1=IS color), e il compositing di due piani
+   * drawBitmap non lo fa nativamente.
    *
-   * Strategia (specifica del display SOLUM, non riusabile su altri):
-   *   - canale yellow (0x28): scritto direttamente sul controller la prima
-   *     volta che la funzione gira, e protetto durante il loop paged via
-   *     preserveYellow(true). Il template GxEPD2_3C upstream vede solo 2
-   *     canali (black + red) e non può pilotare il giallo: questa è
-   *     l'unica via per pilotare il 4o colore del pannello.
-   *   - canali black + red: decodificati pixel-per-pixel con drawPixel,
-   *     perchè la convenzione bit=1=NOT color delle bitmap (output dello
-   *     script python e di image2cpp invertito) è opposta a quella di
-   *     Adafruit_GFX::drawBitmap (bit=1=IS color), e BWR richiede
-   *     compositing di 2 piani che drawBitmap non fa nativamente.
-   *
-   * Idempotency canale yellow: il yellow viene scritto al MASSIMO una
-   * volta per loop paged. La guardia è il page-hint a 0, cioè la prima
-   * iterazione: le iterazioni 2..8 di nextPage() saltano writeImageYellow,
-   * 7 riscritture da 80.640 byte evitate, ~450 ms a refresh BWRY con SPI a
-   * 10 MHz. Un pre-write out-of-band del chiamante su 0x28 non sopprime
-   * questa scrittura: writeImageYellow tocca solo la propria finestra RAM,
-   * quindi aree disgiunte convivono.
+   * Un eventuale terzo piano del descrittore (data2) non viene toccato: è il
+   * chiamante a scriverlo prima di firstPage() con le primitive del driver,
+   * sui pannelli che ne hanno uno. Vedi la nota in cima al file.
    *
    * Costo loop drawPixel: ~24 ms su ESP32 a 240 MHz, irrilevante rispetto
    * ai ~22 s di refresh elettroforetico.
@@ -134,18 +126,6 @@ namespace GxEPDImage
     const int16_t  w      = static_cast<int16_t>(d.width);
     const int16_t  h      = static_cast<int16_t>(d.height);
     const uint16_t stride = static_cast<uint16_t>((w + 7) / 8);
-
-    /** Il piano yellow va scritto una volta per loop paged e il page-hint a 0
-     *  identifica la prima iterazione. Guardare isYellowPreserved() era un
-     *  bug: quel flag lo alza anche un pre-write del chiamante su un'altra
-     *  area di 0x28 (la barra temp-range dello sketch), e il giallo
-     *  dell'immagine non veniva mai inviato. */
-    if (d.format == FORMAT_BWRY_1BPP && d.data2
-        && display.epd2.showImagePageHint() == 0)
-    {
-      display.epd2.writeImageYellow(d.data2, x, y, w, h, true);
-      display.epd2.preserveYellow(true);
-    }
 
     // Bounds della page corrente nel frame OUTPUT. Per rotation 0 e 2 (nessuno
     // scambio assi) le righe sorgente con y output fuori dalla page possono
