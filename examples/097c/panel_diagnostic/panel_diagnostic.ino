@@ -2095,10 +2095,13 @@ static void stagePartialFrame(const char* const* frasi, uint8_t upTo,
 
   /**
    * Finestra piena prima di uscire: fillBand la lascia sulla propria fascia, e
-   * su questo pannello è misurato che la finestra limita l'area ridipinta.
-   * Lasciandola ristretta, il refresh dipingerebbe solo l'ultima fascia e la
-   * durata misurata dipenderebbe anche dall'indirizzamento, che qui non è la
-   * variabile in esame.
+   * la si rimette a schermo intero perchè le fasce accumulate vanno ridipinte
+   * tutte e la durata misurata non deve dipendere anche dall'indirizzamento,
+   * che qui non è la variabile in esame.
+   * Che la finestra confini l'area ridipinta NON è vero su questo pannello: la
+   * sonda d'area lo ha misurato con la fascia di trappola, comparsa nera pur
+   * non essendo compresa in nessuna finestra. È comunque la configurazione con
+   * cui i 641 ms del partial sono stati cronometrati, e va tenuta.
    */
   setRamWindow(0, 0, SRC, GATE);
 }

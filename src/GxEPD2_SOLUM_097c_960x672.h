@@ -14,8 +14,9 @@
 //   - Colori: bianco, nero e rosso, tutti e tre misurati sul pannello e
 //     pilotati dai comandi 0x24 (BW plane) e 0x26 (accent) del controller
 //     SSD1677. Un quarto colore non esiste: vedi la sezione sotto.
-//   - Refresh: solo full refresh, 24007 ms di BUSY misurati a temperatura
-//     ambiente e di più al freddo, niente fast partial.
+//   - Refresh: pieno 24015 ms di BUSY a temperatura ambiente e di più al
+//     freddo, più un partial in BIANCO E NERO da 641 ms che gira su una
+//     waveform scritta dall'MCU: vedi la sezione PARTIAL più sotto.
 //   - Controller: SSD1677, indirizzamento full-window a finestra parziale.
 //   - Alimentazione: 3.3V su VCC e su tutte le data line (non 5V-tolerant).
 //
@@ -24,28 +25,62 @@
 //   e i conti sono già stati fatti: rifarli senza una nuova misura è tempo
 //   perso.
 //     - full_refresh_time 60000 ms: è solo il delay() di fallback per un
-//       display costruito senza pin BUSY, e deve coprire il banco freddo.
+//       display costruito senza pin BUSY, e deve coprire il banco freddo, che
+//       misura 59067 ms.
 //     - _busy_timeout 120 s, passato al costruttore. Non è sovradimensionato:
-//       la passata con temperatura forzata a 0 °C non si è chiusa entro 40 s,
-//       cioè entro il valore che stava qui prima, e allo scadere del timeout il
-//       frame usciva troncato. È una guardia, non un'attesa.
+//       il refresh con temperatura forzata a 0 °C dura 59067 ms, cioè più del
+//       doppio dei 24 s a temperatura ambiente e ben oltre i 40 s che stavano
+//       qui prima, e allo scadere del timeout il frame esce troncato. È una
+//       guardia, non un'attesa.
 //     - Banchi di waveform per temperatura: l'OTP ne ha più di uno, ma nel
-//       range utile il guadagno è ~1 s su 24 (40 °C danno 23739 ms contro i
-//       24795 di 20 °C) mentre verso il freddo la waveform si allunga. Forzare
-//       la temperatura con 0x18/0x1A non è una leva: 0x18 = 0x80, sensore
-//       interno, resta la scelta giusta.
-//     - Blocchi SPI da 120 byte per riga in _writeImage: 0,879 us/byte, il 91%
-//       del limite teorico a 10 MHz. A blocchi da 1024 si arriva al 92%, cioè
-//       0,6 ms su 71: irrilevante, e costerebbe un buffer otto volte più grande.
+//       range utile il guadagno è ~1 s su 24 (40 °C danno 22963 ms contro i
+//       24007 di 20 °C) mentre verso il freddo la waveform si allunga fino ai
+//       59067 ms di 0 °C. Forzare la temperatura con 0x18/0x1A non è una leva:
+//       0x18 = 0x80, sensore interno, resta la scelta giusta.
+//       Nota per chi rilegge il log della sonda: la passata di controllo a
+//       70 °C, fuori dal range dichiarato, NON è stata rifiutata — ha dipinto
+//       in 22961 ms, e sul vetro ha cancellato la fascia dei 40 °C scrivendole
+//       sopra bianco. Il datasheet promette un rifiuto quando nessun TR
+//       corrisponde; qui un TR corrisponde comunque.
+//     - Blocchi SPI da 120 byte per riga in _writeImage: 0,838 us/byte, il 95%
+//       del limite teorico a 10 MHz. A blocchi da 1024 si arriva al 96%, cioè
+//       0,1 ms su 68: irrilevante, e costerebbe un buffer otto volte più grande.
 //     - Pattern hardware 0x47/0x46 per riempire un piano: 8-9 ms contro i
-//       70-72 del push SPI, 7,8x.
-//     - Il refresh non si accorcia in nessun modo: vedi _Update_Full().
-//     - hasFastPartialUpdate = false non è prudenza: il differenziale dell'OTP
-//       non esiste, misurato. La strada della LUT breve scritta dall'MCU via
-//       0x32 è invece ACCETTATA dal silicio — 640 ms di BUSY con il bit 4 di
-//       0x22 spento, e 4055 ms nel probe dei livelli, quindi l'OTP non viene
-//       ricaricato sopra la LUT custom — ma se quella waveform dipinga davvero
-//       si legge solo sul vetro, e finchè quella lettura non c'è resta false.
+//       67 del push SPI, 7,5x.
+//     - Nessuna leva sull'OTP accorcia il refresh pieno, e sono state provate
+//       tutte: differenziale 0x22 = 0xFC, finestra RAM, MUX ridotto, banchi per
+//       temperatura. Vedi _Update_Full(). La waveform scritta dall'MCU via 0x32
+//       invece lo accorcia, ed è il partial qui sotto.
+//
+// PARTIAL IN BIANCO E NERO, 641 ms MISURATI SUL VETRO.
+//   La sonda ha caricato via 0x32 la waveform del GDEH116T91 — stesso SSD1677,
+//   stessi 960 source — e con 0x22 = 0xCC, cioè DISPLAY Mode 2 e bit 4 spento
+//   perchè l'OTP non sovrascriva la LUT custom, ha dipinto una fascia NERA
+//   PIENA in 641 ms contro i 24015 del refresh pieno: 37x. La variante gemella
+//   con la LUT riassegnata alla Table 6-4 e 0x22 = 0xC4 (Mode 1) chiude nello
+//   stesso tempo ma esce grigia e striata, quindi la LUT che il driver usa è
+//   quella del 1160 e il Display Mode è il 2.
+//   Sotto quella LUT il silicio legge le due RAM come (FRAME PRECEDENTE, FRAME
+//   NUOVO) e non come (accent, BW): 0x26 cambia significato, ed è tutto il
+//   contratto dell'API. Vedi writeImagePrevious() e drawImagePartial().
+//   Quattro conseguenze che si pagano se ignorate:
+//     - un frame aggiornato in partial è per forza SENZA ROSSO, perchè 0x26 sta
+//       facendo il frame precedente e non l'accent. La scelta è per frame e non
+//       per pixel.
+//     - la confinatura la dà la LUT e non la finestra: LUT0 e LUT3 sono a zero,
+//       quindi i pixel il cui bit non cambia fra 0x26 e 0x24 non vengono
+//       pilotati. La sonda ha misurato i 641 ms con la finestra PIENA, ed è la
+//       configurazione che _Update_Part() riproduce.
+//     - i pixel non pilotati sbiadiscono comunque: dopo due passate di partial
+//       la scritta rimasta fuori dalle fasce è visibilmente più chiara. Una
+//       catena di partial chiede un full refresh periodico, e la cadenza la
+//       decide il chiamante.
+//     - hasFastPartialUpdate resta false, e non è più prudenza ma una scelta:
+//       in modalità partial il template GxEPD2_3C scriverebbe il piano accent
+//       dentro 0x26 (GxEPD2_3C.h:340), cioè proprio la RAM che qui è il frame
+//       precedente, e con il flag alzato ripeterebbe anche l'intero loop paged
+//       una seconda volta (GxEPD2_3C.h:354-358). Il partial vive quindi fuori
+//       dal template, come le API single-channel.
 //   Una cosa che il log dice e che vale fuori da qui: l'init di fabbrica SOLUM
 //   riempie i pattern in 1 ms invece di 8-9, ma usa entry mode 0x02 e finestra
 //   X da 959 a 0. Sono 16 ms per frame contro il rischio di specchiare
@@ -55,7 +90,7 @@
 //   Il driver pilota due piani, 0x24 (BW) e 0x26 (accent), e non ne esiste un
 //   terzo. La questione è stata chiusa da examples/097c/panel_diagnostic, che
 //   ha esercitato tutte e quattro le combinazioni dei due piani sotto la
-//   waveform di produzione, e sei evidenze indipendenti concordano:
+//   waveform di produzione, e sette evidenze indipendenti concordano:
 //
 //     1. Codice modello dell'unità, letto sul case: EL097R2CRN (pratica FCC
 //        2AFWN-EL097R2CRN, certificazione KC R-R-SLU-EL097R2CRN). Il campo
@@ -81,6 +116,13 @@
 //        stream 0x10 a 2 bit per pixel, come il path epdvarbwry di OEPL. Su
 //        SSD1677 quel codice è invece Deep Sleep, quindi quella strada qui è
 //        fisicamente esclusa.
+//     7. Il probe dei livelli di sorgente, che è l'evidenza DIRETTA e l'ultima
+//        arrivata: una waveform custom via 0x32 pilota LUT2 a VSH1 e LUT3 a
+//        VSH2, tempi identici, e sul vetro le due bande escono di colore
+//        DIVERSO — VSH1 dà il nero, VSH2 dà il rosso. Il film separa quindi i
+//        due pigmenti per soglia di tensione, che è esattamente come lavora un
+//        BWR, e nessuna delle due tensioni tira fuori un giallo. La domanda che
+//        restava aperta ha una risposta misurata, non dedotta.
 //
 //   Conseguenza pratica per chi compone immagini: poichè LUT2 = LUT3, sotto un
 //   pixel di accent il valore del piano BW è INDIFFERENTE. Scrivere l'accent
@@ -88,10 +130,10 @@
 //
 //   Un residuo da non riaprire per errore: il datasheet SOLUM della linea PRO
 //   dichiara PIXEL COLORS = BWRY per la taglia 9.7", ma riguarda la linea PRO
-//   (campo colore 4) e non questa unità. Restano fuori portata la LUT4 del
-//   silicio, che due bit di RAM non sanno indirizzare, e una waveform custom
-//   via 0x32 che separi i due rossi per livello di sorgente: quest'ultima è
-//   l'unico test residuo, e la sonda la esegue.
+//   (campo colore 4) e non questa unità. Resta fuori portata la LUT4 del
+//   silicio, che due bit di RAM non sanno indirizzare; la waveform custom che
+//   separa le due tensioni di sorgente è invece stata provata, ed è l'evidenza
+//   7 qui sopra.
 //
 // Requisiti build:
 //   - HW SPI (HSPI su ESP32 tramite la Waveshare E-Paper ESP32 Driver Board).
@@ -168,22 +210,27 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
     static const GxEPD2::Panel panel = GxEPD2::GDEM133Z91;
     static const bool hasColor = true;
     static const bool hasPartialUpdate = true; // has partial window addressing, but uses full window refresh
+    /** Il partial esiste ed è nel driver, ma non passa dal template: in
+     *  modalità partial GxEPD2_3C scrive il piano accent dentro 0x26, che sotto
+     *  la LUT custom è il frame precedente. Vedi la sezione PARTIAL in testa e
+     *  drawImagePartial(). */
     static const bool hasFastPartialUpdate = false;
     static const uint16_t power_on_time = 100; // ms, e.g. 82001us
     static const uint16_t power_off_time = 250; // ms, e.g. 222001us
-    /** Refresh pieno misurato sul pannello: 24007 ms di BUSY a temperatura
+    /** Refresh pieno misurato sul pannello: 24015 ms di BUSY a temperatura
      *  ambiente, vedi examples/097c/panel_diagnostic.
      *  Attenzione: _waitWhileBusy usa questo valore soltanto come delay() di
      *  fallback quando il pin BUSY non è cablato (busy < 0). Con il BUSY
      *  presente il timeout che conta è _busy_timeout, passato al costruttore.
      *  60000 perchè il fallback deve coprire lo stesso banco di waveform freddo
-     *  del _busy_timeout: a 0 °C il refresh non si chiude entro 40 s. Il tipo è
+     *  del _busy_timeout: a 0 °C forzati il refresh misura 59067 ms. Il tipo è
      *  uint16_t, quindi 65535 è il massimo esprimibile. */
     static const uint16_t full_refresh_time = 60000;
-    // Nessun fast partial update: il refresh su finestra ripassa la stessa
-    // waveform completa, misurata identica su una fascia di 168 righe, sulla
-    // stessa fascia ristretta anche in X e su 48 righe con Mode 1.
-    static const uint16_t partial_refresh_time = 60000;
+    /** Durata del partial di _Update_Part(): 641 ms misurati, qui con margine.
+     *  Non si allunga col freddo come la waveform dell'OTP, perchè la LUT
+     *  custom porta con sè conteggi di frame fissi. Come full_refresh_time vale
+     *  solo da delay() di fallback per un display senza pin BUSY. */
+    static const uint16_t partial_refresh_time = 2000;
     // constructor
     GxEPD2_SOLUM_097c_960x672(int16_t cs, int16_t dc, int16_t rst, int16_t busy);
     /**
@@ -245,6 +292,74 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
     void writeImageRed   (const uint8_t* bitmap, int16_t x, int16_t y,
                           int16_t w, int16_t h, bool pgm = true);
 
+    // ------------------------------------------------------------------
+    // API del partial in bianco e nero, 641 ms contro i 24015 del refresh
+    // pieno. Stanno fuori dal template GxEPD2_3C e vanno chiamate fuori da un
+    // loop paged: il perchè è nella sezione PARTIAL in testa al file.
+    //
+    // CONTRATTO, ed è dove si sbaglia: sotto la LUT custom la RAM 0x26 non è
+    // l'accent ma il FRAME PRECEDENTE in polarità BW, cioè deve contenere
+    // quello che sta sul vetro adesso. Dopo un _Update_Full() ci sta invece
+    // l'accent, quindi il PRIMO partial di una catena va preceduto
+    // dall'allineamento di 0x26. In pratica la regola operativa è più semplice
+    // di come suona: basta portare **0x26 uguale a 0x24**, perchè così i pixel
+    // fuori dall'area che cambia finiscono su LUT0 o LUT3, che sono a zero, e
+    // non vengono pilotati qualunque cosa mostri il vetro. Su un fondo uniforme
+    // è una sola chiamata a writeScreenBufferPrevious() (9 ms, nessun buffer);
+    // su un fondo qualsiasi la si completa con writeImagePrevious() sulle sole
+    // aree che differiscono dal fondo. Dal secondo partial in poi ci pensa
+    // drawImagePartial(), che riallinea 0x26 da sè.
+    //
+    // Un frame aggiornato in partial è senza rosso, e i pixel fuori dall'area
+    // che cambia sbiadiscono: una catena lunga va chiusa con un refresh pieno,
+    // che però non è una refresh(false) e basta — vedi il paragrafo qui sotto.
+    //
+    // USCIRE dalla catena richiede un passo esplicito, ed è la trappola più
+    // rumorosa di questa API: alla fine di una catena 0x26 contiene il frame
+    // precedente in polarità BW, cioè bit a 1 dove il vetro è bianco, e un
+    // refresh pieno quella RAM la rilegge come ACCENT — 0xFF vuol dire rosso.
+    // Una refresh(false) nuda dopo un partial dipinge quindi lo schermo di
+    // rosso. Prima di tornare al full refresh va riscritto un piano accent
+    // valido, tipicamente con writeScreenBuffer(black, color) o rifacendo il
+    // frame dal loop paged del template, che scrive comunque entrambi i piani.
+    // Il driver non lo fa da sè di proposito: _color_dirty è alto anche dopo
+    // ogni normale frame a colori, e pulirlo dentro _Update_Full() cancellerebbe
+    // l'accent legittimo.
+    //
+    // Dentro una catena di partial NON vanno usate writeImage(bitmap, ...),
+    // writeImagePart(bitmap, ...) nè le drawImage() che ci passano sopra: sono
+    // le API a canale singolo che chiamano _cleanColorIfDirty(), e siccome
+    // writeImagePrevious() alza il dirty flag azzererebbero 0x26, cioè proprio
+    // il frame precedente. Per il piano BW dentro la catena c'è
+    // writeImageBlack(), che il dirty flag non lo guarda.
+    // ------------------------------------------------------------------
+
+    /** Riempie tutta la RAM 0x26 con un valore costante in polarità BW
+     *  (0xFF = frame precedente tutto bianco) usando il pattern hardware del
+     *  controller: 9 ms e nessun buffer, contro gli 80.640 byte che servirebbero
+     *  a writeImagePrevious() a schermo pieno. È il modo normale di aprire una
+     *  catena di partial. */
+    void writeScreenBufferPrevious(uint8_t value = 0xFF);
+
+    /** Scrive la RAM 0x26 come frame precedente, in polarità BW (bit=1 =
+     *  bianco) e quindi SENZA l'invert che writeImageRed() applica all'accent.
+     *  Alza il dirty flag: il prossimo disegno a colori ripulisce 0x26. */
+    void writeImagePrevious(const uint8_t* bitmap, int16_t x, int16_t y,
+                            int16_t w, int16_t h, bool pgm = true);
+
+    /** Passata di partial sulla RAM già scritta. Senza coordinate, e non è una
+     *  semplificazione: la finestra di 0x44/0x45 non confina il refresh, il
+     *  pannello viene scandito tutto e a limitare l'area ridipinta è la LUT,
+     *  che non pilota i pixel il cui bit è uguale nelle due RAM. */
+    void refreshPartial();
+
+    /** Il ciclo completo su una bitmap B/N: la scrive in 0x24, fa la passata di
+     *  partial e la ricopia in 0x26, così il frame precedente resta allineato
+     *  al vetro e il partial successivo non ha bisogno di preparazione.
+     *  È drawImage() più writeImageAgain() del GxEPD2_1160_T91. */
+    void drawImagePartial(const uint8_t* bitmap, int16_t x, int16_t y,
+                          int16_t w, int16_t h, bool pgm = true);
+
     // L'entry-point pubblico di stampa immagine è la free function template
     // GxEPDImage::showImage(display, desc) definita nel namespace sopra.
     // Va chiamata dentro un loop firstPage()/nextPage() del template GFX.
@@ -272,7 +387,7 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
     /** Riempimento di un piano immagine tramite i comandi Auto Write RAM for
      *  Regular Pattern del SSD1677 (0x47 per 0x24, 0x46 per 0x26): il pattern
      *  lo genera il controller, quindi sul bus va un solo byte invece di
-     *  80.640 e il piano si riempie in 7-8 ms invece di 70-72, misurati sul
+     *  80.640 e il piano si riempie in 8-9 ms invece di 67, misurati sul
      *  pannello. È la stessa coppia di comandi che il firmware SOLUM di
      *  fabbrica usa in init.
      *  Ritorna false quando il piano o il valore non sono esprimibili come
@@ -286,6 +401,16 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
     void _PowerOff();
     void _InitDisplay();
     void _Update_Full();
+
+    /** Carica la waveform custom via 0x32 e mette il border in HiZ. */
+    void _Init_Part();
+    /** Passata di partial: la sequenza cronometrata dalla sonda, 641 ms. */
+    void _Update_Part();
+
+    /** Alto quando nel controller c'è la LUT custom del partial al posto di
+     *  quella dell'OTP. Lo abbassano _InitDisplay(), perchè il SWRESET rimette
+     *  l'OTP, e _Update_Full(), perchè 0xF7 ha il bit 4 di ricarica acceso. */
+    bool _using_partial_mode = false;
 
     // Dirty flag del piano accent: traccia quando la RAM 0x26 contiene dati
     // non puliti dall'ultima writeScreenBuffer(). Permette di saltare il
@@ -320,15 +445,15 @@ inline GxEPD2_SOLUM_097c_960x672::GxEPD2_SOLUM_097c_960x672(int16_t cs, int16_t 
    *  con il pannello ancora in pilotaggio, e il powerOff() o l'hibernate() che
    *  seguono mandano 0x22 o 0x10 a metà waveform: frame troncato.
    *
-   *  Il refresh pieno a temperatura ambiente misura 24007 ms di BUSY, ma la
+   *  Il refresh pieno a temperatura ambiente misura 24015 ms di BUSY, ma la
    *  waveform non è una sola: l'OTP tiene un banco per range di temperatura, e
-   *  verso il freddo si ALLUNGA. La sonda con la temperatura forzata a 0 °C non
-   *  si è chiusa entro 40 s, quindi i 40 s che stavano qui non coprivano il
-   *  pannello che lavora al freddo, che è il caso d'uso di una dashboard meteo.
+   *  verso il freddo si ALLUNGA. Con la temperatura forzata a 0 °C la sonda ha
+   *  cronometrato 59067 ms, cioè due volte e mezzo il caso caldo e ben oltre i
+   *  40 s che stavano qui prima: quel valore non copriva il pannello che lavora
+   *  al freddo, che è il caso d'uso di una dashboard meteo.
    *  120 s sono una guardia e non un'attesa: se il BUSY scende prima
-   *  _waitWhileBusy esce sul pin e il valore non costa niente. La durata vera
-   *  del banco freddo la darà il prossimo run della sonda, che ora la misura
-   *  invece di scadere. */
+   *  _waitWhileBusy esce sul pin e il valore non costa niente. Restano poco
+   *  più del doppio del banco più lento misurato. */
   GxEPD2_EPD(cs, dc, rst, busy, HIGH, 120000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate)
 {
 }
@@ -357,7 +482,7 @@ inline void GxEPD2_SOLUM_097c_960x672::writeScreenBuffer(uint8_t value)
 // Init dei due buffer del controller: B/N (0x24) e accent (0x26). Sono i soli
 // piani immagine che il pannello ha, quindi qui finisce tutta la RAM che il
 // driver conosce. Entrambi si riempiono col pattern hardware, 8-9 ms per piano
-// invece dei 70-72 del bus.
+// invece dei 67 del bus.
 inline void GxEPD2_SOLUM_097c_960x672::writeScreenBuffer(uint8_t black_value, uint8_t color_value)
 {
   if (!_init_display_done) _InitDisplay();
@@ -379,8 +504,8 @@ inline void GxEPD2_SOLUM_097c_960x672::_writeScreenBuffer(uint8_t command, uint8
   _startTransfer();
   // Bulk SPI: invece di chiamare _transfer(value) 80640 volte (full-window
   // a WIDTH*HEIGHT/8 byte), pre-riempiamo un buffer di stack con il valore
-  // costante e lo scarichiamo a chunk via writeBytes(). Misurato: 0,89 us/byte
-  // a blocchi di 256, cioè 70-72 ms per piano, il 91% del limite teorico del
+  // costante e lo scarichiamo a chunk via writeBytes(). Misurato: 0,838 us/byte
+  // a blocchi di 256, cioè 67 ms per piano, il 96% del limite teorico del
   // clock a 10 MHz. Entrambi i piani del driver hanno il pattern hardware,
   // quindi questo percorso serve solo a un valore che non sia 0x00 o 0xFF: nel
   // firmware non capita mai, ed è qui perchè writeScreenBuffer è pubblica.
@@ -636,11 +761,14 @@ inline void GxEPD2_SOLUM_097c_960x672::drawNative(const uint8_t* data1, const ui
   refresh(x, y, w, h);
 }
 
-// Entrambi gli overload passano da _Update_Full, che dichiara la finestra
-// piena: la finestra RAM limita l'area ridipinta ma non accorcia la waveform —
-// misurata identica su una fascia di 168 righe, sulla stessa ristretta anche in
-// X e su 48 righe con Mode 1 — quindi un refresh d'area non ha niente da
-// guadagnare, e l'overload con le coordinate ridipinge tutto lo schermo.
+// Entrambi gli overload passano da _Update_Full, e quello con le coordinate le
+// ignora: la finestra RAM non confina l'area ridipinta (vedi _Update_Full) e non
+// accorcia la waveform — misurata identica su una fascia di 168 righe, sulla
+// stessa ristretta anche in X e su 48 righe con Mode 1 — quindi un refresh
+// d'area non avrebbe niente da guadagnare.
+// Il partial vero è un'altra cosa e ha un'altra porta: drawImagePartial(). Qui
+// non entra di proposito, perchè GxEPD2_3C::nextPage() in setPartialWindow
+// arriva su questo overload e lo farebbe girare con 0x26 pieno di accent.
 inline void GxEPD2_SOLUM_097c_960x672::refresh(bool /*partial_update_mode*/)
 {
   _Update_Full(); // always uses full window refresh
@@ -775,9 +903,12 @@ inline void GxEPD2_SOLUM_097c_960x672::_InitDisplay()
   _writeData(0x03);
   _setPartialRamArea(0, 0, WIDTH, HEIGHT);
   _init_display_done = true;
+  // Il SWRESET ha rimesso in RAM le LUT dell'OTP e il border è tornato a 0x01
+  // qui sopra: la waveform custom del partial, se c'era, non c'è più.
+  _using_partial_mode = false;
 }
 
-// Esegue il ciclo di refresh elettroforetico full-window, 24007 ms di BUSY
+// Esegue il ciclo di refresh elettroforetico full-window, 24015 ms di BUSY
 // misurati a temperatura ambiente. Il byte 0xF7 al cmd 0x22 attiva clock +
 // analog + load temp + load LUT + DISPLAY Mode 1 + disable analog + disable
 // clock: include power-on/off implicito, perciò non serve chiamare _PowerOn()
@@ -788,17 +919,24 @@ inline void GxEPD2_SOLUM_097c_960x672::_InitDisplay()
 // (0xCF, 0xC7) e il differenziale 0xFC, quest'ultimo con scarto di 2 ms fra
 // piani identici e piani opposti. Il controller non confronta i due piani.
 //
-// La finestra piena viene dichiarata qui, e non ereditata: la sonda ha misurato
-// che i registri 0x44/0x45 confinano l'area ridipinta con 0x22=0xFC, e
-// all'ingresso la finestra è quella lasciata dall'ultima scrittura — in un loop
-// paged del template GxEPD2_3C è l'ultima page. Che anche Mode 1, cioè la
-// sequenza usata qui, confini o no non è ancora stato letto sul vetro: il
-// driver di riferimento upstream GxEPD2_1330c_GDEM133Z91 non dichiara la
-// finestra e stampa correttamente, e così faceva questo prima. È quindi
-// prudenza e non la correzione di un guasto osservato, ma toglie di mezzo la
-// dipendenza da un comportamento non documentato. Costa 250 us su 24 s.
+// LA FINESTRA NON CONFINA IL REFRESH, ed è misurato: la sonda d'area ha
+// lasciato in 0x24 una fascia di trappola a y=176..215 che nessuna finestra
+// comprendeva, e sul vetro è comparsa NERA già alla prima passata. Ogni refresh
+// ridipinge tutto il pannello leggendo la RAM, e le passate d'area sembravano
+// confinate solo perchè la RAM è cumulativa e nessuna la ripuliva.
+// La finestra piena resta dichiarata qui perchè normalizza area e cursore per
+// le scritture che seguono — all'ingresso è quella lasciata dall'ultima page
+// del loop paged — e costa 250 us su 24 s.
 inline void GxEPD2_SOLUM_097c_960x672::_Update_Full()
 {
+  if (_using_partial_mode)
+  {
+    // Rimette il border sulla waveform di produzione. La LUT dell'OTP la
+    // ricarica il bit 4 di 0xF7, quindi non serve toccarla qui.
+    _writeCommand(0x3C);
+    _writeData(0x01); // LUT1, for white
+    _using_partial_mode = false;
+  }
   _setPartialRamArea(0, 0, WIDTH, HEIGHT);
   _writeCommand(0x22); // Display Update Sequence Options
   _writeData(0xF7);    //
@@ -856,6 +994,133 @@ inline void GxEPD2_SOLUM_097c_960x672::_cleanColorIfDirty()
     _writeScreenBuffer(0x26, 0x00);
     _color_dirty = false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// PARTIAL IN BIANCO E NERO.
+//
+// Waveform del GDEH116T91, driver GxEPD2_1160_T91 di GxEPD2: stesso SSD1677 e
+// stessi 960 source, e su questo pannello la sonda l'ha vista dipingere una
+// fascia nera piena in 641 ms. I 105 byte sono quelli di
+// GxEPD2_1160_T91::lut_partial, non ritoccati, e il layout è quello di 0x32:
+// cinque blocchi da 10 byte per LUT0..LUT4, cinquanta byte di TP/RP per i dieci
+// gruppi, cinque byte di frame rate.
+//
+// Come si legge, e perchè funziona qui: in DISPLAY Mode 2 l'indice di LUT è la
+// coppia (bit di 0x26, bit di 0x24) = (frame precedente, frame nuovo).
+//   LUT0 (0,0) e LUT3 (1,1)  a ZERO: il pixel non cambia e non viene pilotato,
+//                                    ed è questa la confinatura del partial
+//   LUT1 (0,1)               nero -> bianco
+//   LUT2 (1,0)               bianco -> nero
+// Le due transizioni sono simmetriche, 28 frame in tutto (10 nel gruppo 0 e 18
+// nel gruppo 1, nessuno ripetuto), che al frame rate di coda fanno i 641 ms
+// misurati.
+//
+// Perchè questa waveform è SICURA su un film a tre pigmenti, ed è la ragione
+// per cui un partial non sporca di rosso: decodificando i 50 byte di VS a due
+// bit per fase (00 VSS, 01 VSH1, 10 VSL, 11 VSH2) si vede che LUT1 e LUT2 usano
+// solo VSH1 e VSL — VSH1 una fase per LUT1, quattro per LUT2 — e che il code
+// point 11 non compare mai. Su questo pannello VSH1 muove il pigmento NERO e
+// VSH2 quello ROSSO, misurato dal probe dei livelli, quindi il partial resta
+// sotto la soglia del rosso per costruzione: è un secondo motivo, indipendente
+// da quello sulla RAM 0x26, per cui un frame aggiornato in partial è in bianco
+// e nero. Al contrario, una waveform che volesse un partial a colori dovrebbe
+// portare a VSH2 la LUT dell'accent, ed è terreno mai provato.
+// ---------------------------------------------------------------------------
+static const uint8_t GxEPD2_SOLUM_097c_lut_partial[105] PROGMEM =
+{
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // LUT0, pixel fermo
+  0x01, 0x2A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // LUT1, nero -> bianco
+  0x0A, 0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // LUT2, bianco -> nero
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // LUT3, pixel fermo
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // LUT4
+  0x00, 0x00, 0x05, 0x05, 0x00, 0x05, 0x03, 0x05, 0x05, 0x00, // TP/RP gruppi 0-1
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // gruppi 2-3
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // gruppi 4-5
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // gruppi 6-7
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // gruppi 8-9
+  0x22, 0x22, 0x22, 0x22, 0x22                                // frame rate
+};
+
+/** Prepara il controller al partial: border in HiZ, così la cornice non viene
+ *  agganciata a LUT1 e non lampeggia a ogni passata, e waveform custom via
+ *  0x32. Il comando scrive i byte 0..104 della LUT e non tocca le tensioni di
+ *  sorgente, che stanno ai byte 105..109 e restano quelle dell'OTP.
+ *  La sonda carica la LUT prima di scrivere le due RAM, questo driver dopo:
+ *  0x32 non tocca la RAM immagine, quindi l'ordine è indifferente. */
+inline void GxEPD2_SOLUM_097c_960x672::_Init_Part()
+{
+  _writeCommand(0x3C); // Border Waveform Control
+  _writeData(0xC0);    // HiZ, floating
+  _writeCommand(0x32); // Write LUT register
+  _writeDataPGM(GxEPD2_SOLUM_097c_lut_partial, sizeof(GxEPD2_SOLUM_097c_lut_partial));
+  _using_partial_mode = true;
+}
+
+/** Passata di partial, 641 ms di BUSY misurati. Riproduce la sequenza che la
+ *  sonda ha cronometrato, nell'ordine:
+ *    0x22 = 0xC0 + 0x20   power on esplicito. Le sequenze senza i bit 1 e 0 non
+ *                         spengono niente alla fine, ma non è detto che
+ *                         accendano, e il GDEH116T91 fa lo stesso.
+ *    finestra piena       il refresh scandisce tutto il pannello comunque
+ *    0x22 = 0xCC + 0x20   clock + analog + DISPLAY Mode 2, bit 5 e 4 SPENTI:
+ *                         nè temperatura nè LUT vengono ricaricate dall'OTP,
+ *                         che è la ragione per cui la waveform custom
+ *                         sopravvive fino al refresh.
+ *  0xCC non ha i bit 1 e 0, quindi clock e analog restano accesi all'uscita e
+ *  _power_is_on resta alto: al contrario di _Update_Full(), qui il pannello va
+ *  spento da chi chiama, con powerOff() o hibernate(). */
+inline void GxEPD2_SOLUM_097c_960x672::_Update_Part()
+{
+  if (!_using_partial_mode) _Init_Part();
+  _PowerOn();
+  _setPartialRamArea(0, 0, WIDTH, HEIGHT);
+  _writeCommand(0x22); // Display Update Sequence Options
+  _writeData(0xCC);    // Mode 2, senza ricarica di LUT e temperatura
+  _writeCommand(0x20); // Master Activation
+  _waitWhileBusy("_Update_Part", partial_refresh_time);
+  _show_image_page_hint = 0;   // simmetrico al ciclo di rendering
+}
+
+// Scrive il frame precedente in 0x26. Nessun invert, al contrario di
+// writeImageRed(): sotto la LUT del partial quella RAM non è l'accent ma il
+// piano BW del frame che sta sul vetro, quindi vale la stessa convenzione di
+// writeImageBlack() (bit=1 = bianco).
+inline void GxEPD2_SOLUM_097c_960x672::writeScreenBufferPrevious(uint8_t value)
+{
+  if (!_init_display_done) _InitDisplay();
+  _writeScreenBuffer(0x26, value);
+  // Vale come per writeImagePrevious(): in 0x26 non c'è più un accent pulito.
+  _color_dirty = true;
+}
+
+inline void GxEPD2_SOLUM_097c_960x672::writeImagePrevious(const uint8_t* bitmap,
+    int16_t x, int16_t y, int16_t w, int16_t h, bool pgm)
+{
+  if (!bitmap) return;
+  _writeImage(0x26, bitmap, x, y, w, h, false, false, pgm);
+  // In 0x26 non c'è più un accent pulito: il prossimo disegno a colori deve
+  // ripulirla prima di usarla come piano rosso.
+  _color_dirty = true;
+}
+
+inline void GxEPD2_SOLUM_097c_960x672::refreshPartial()
+{
+  _Update_Part();
+}
+
+// Il ciclo completo su una fascia B/N. La ricopia finale in 0x26 costa il push
+// SPI dell'area (17 ms su una fascia di 168 righe, 67 a schermo pieno) e serve
+// a lasciare il frame precedente allineato al vetro: senza, il partial
+// successivo confronterebbe il nuovo frame con quello di due passate fa e
+// ripilotarebbe pixel che non sono cambiati.
+inline void GxEPD2_SOLUM_097c_960x672::drawImagePartial(const uint8_t* bitmap,
+    int16_t x, int16_t y, int16_t w, int16_t h, bool pgm)
+{
+  if (!bitmap) return;
+  writeImageBlack(bitmap, x, y, w, h, pgm);
+  refreshPartial();
+  writeImagePrevious(bitmap, x, y, w, h, pgm);
 }
 
 #endif

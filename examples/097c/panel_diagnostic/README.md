@@ -196,57 +196,62 @@ Miglioramenti che questa sonda abilita, ma che **non vanno aperti finchè la
 misura non li giustifica**. Le entry si cancellano dopo essere state
 implementate.
 
-## Partial refresh nei driver, se la sonda lo conferma
+## Partial refresh, esito arrivato: nel driver 9.7" c'è
 
-**Condizionata all'esito** della sonda «partial con LUT caricata via `0x32`»,
-presente in entrambi gli example: [`panel_diagnostic.ino`](panel_diagnostic.ino)
-per il 9.7" e [`../../12_2c/dual_panel_finder`](../../12_2c/dual_panel_finder)
-per il 12.2". Va aperta solo se almeno una delle quattro varianti chiude il BUSY
-sotto i 3 s **e** lascia sul vetro la fascia con la propria cifra.
+La sonda «partial con LUT caricata via `0x32`» ha risposto, e la voce si chiude
+per il **9.7"**. Resta aperta per il 12.2", che ha un altro film e un altro OTP:
+l'esito di questo non si eredita, e va misurato con
+[`../../12_2c/dual_panel_finder`](../../12_2c/dual_panel_finder).
 
-Le due sonde condividono le stesse tre LUT e la stessa lettura dell'esito, ma
-non lo stesso esito atteso: sono due film e due OTP diversi, quindi vanno
-misurati separatamente e il driver di uno non eredita la conclusione dell'altro.
+Delle tre strade che la sonda prova, in ordine di preferenza per il driver, le
+prime due sono state provate e **non pagano**:
 
-Le sonde provano **tre** strade, e l'ordine di preferenza per il driver non è
-quello in cui sono eseguite:
+1. **banchi di waveform per temperatura** (`0x18` / `0x1A`) — i banchi esistono,
+   ma nel range utile il guadagno è ~1 s su 24: 22963 ms a 40 °C contro 24007 a
+   20, e verso il freddo la waveform si **allunga** fino ai 59067 ms di 0 °C. Da
+   notare per chi rilegge il log: la passata di controllo a 70 °C, fuori dal
+   range dichiarato, **non è stata rifiutata** — ha dipinto in 22961 ms
+   cancellando la fascia dei 40 °C, quindi non fa più da controllo;
+2. **MUX ridotto** (`0x01`) — non scala affatto: 24010, 24031 e 24033 ms per
+   672, 336 e 168 gate line. Il frame rate della waveform è fisso e il
+   controller aspetta il tempo di frame anche con meno linee. In più a MUX 168
+   la fascia esce slavata;
+3. **LUT scritta via `0x32`** — è quella che funziona: **641 ms** contro 24015,
+   cioè 37x, con la LUT del GDEH116T91 e `0x22 = 0xCC`, DISPLAY Mode 2. La
+   variante gemella con la LUT riassegnata alla Table 6-4 e `0x22 = 0xC4`
+   (Mode 1) chiude nello stesso tempo ma dipinge grigio e striato. Vince quindi
+   la diagonale che dice che sotto LUT custom il silicio legge le due RAM come
+   **(frame precedente, frame nuovo)**.
 
-1. **banchi di waveform per temperatura** (`0x18` / `0x1A`) — la migliore se
-   funziona: la waveform è di fabbrica, tarata su questo film, e si ottiene con
-   due registri prima del refresh. Il §6.9 del datasheet dà l'OTP per capace di
-   34 set, uno per range di temperatura, e finora ne è stato esercitato uno solo;
-2. **MUX ridotto** (`0x01`) — geometria, non tocca la waveform. Dà un partial
-   per bande che partono dalla prima gate line;
-3. **LUT scritta via `0x32`** — funziona ma usa una waveform che il produttore
-   non ha qualificato su questo pannello, quindi è l'ultima scelta.
+Nel driver [`../../../src/GxEPD2_SOLUM_097c_960x672.h`](../../../src/GxEPD2_SOLUM_097c_960x672.h)
+ci sono `_Init_Part()`, `_Update_Part()` e quattro API pubbliche —
+`writeScreenBufferPrevious()`, `writeImagePrevious()`, `refreshPartial()`,
+`drawImagePartial()` — e a esercitarle sul vetro c'è
+[`../partial_refresh`](../partial_refresh), che parla al driver e non al
+controller. Due scelte si
+discostano da quello che questa pagina prevedeva, e per ragioni misurate:
 
-Se passa la 1, nel driver bastano `setForcedTemperature()` prima del refresh e il
-ripristino del sensore interno dopo. Se passa la 2, si scrive `0x01` con il MUX
-della fascia e si rimette a 671. Se passa solo la 3, serve il lavoro completo, in
-[`../../../src/GxEPD2_SOLUM_097c_960x672.h`](../../../src/GxEPD2_SOLUM_097c_960x672.h)
-e sul modello di `GxEPD2/src/epd/GxEPD2_1160_T91.cpp`:
-
-- `hasFastPartialUpdate` a `true` e `partial_refresh_time` alla durata misurata;
-- `_Init_Part()` che manda `0x3C = 0xC0` e i 105 byte di LUT via `0x32`, con la
-  LUT della variante che ha vinto;
-- `_Update_Part()` con la sequenza `0x22` della stessa variante, precedute da
-  `_PowerOn()`;
-- `writeImageAgain()` che scrive su `0x26` il frame precedente in polarità BW,
-  al posto dell'accent;
-- `refresh(x, y, w, h)` che imposta la finestra e chiama `_Update_Part()` invece
-  di `_Update_Full()`;
-- un contatore di partial consecutivi che forzi `_Update_Full()` ogni N, se la
-  sonda ha mostrato ghosting cumulativo sulla stessa area.
+- **`hasFastPartialUpdate` resta `false`**. In modalità partial il template
+  `GxEPD2_3C` scrive il piano accent dentro `0x26`, cioè proprio la RAM che sotto
+  la LUT custom è il frame precedente, e col flag alzato ripete anche l'intero
+  loop paged. Il partial vive quindi fuori dal template, come le API
+  single-channel, e `refresh(x, y, w, h)` continua a fare un full refresh.
+- **Niente contatore di partial consecutivi nel driver**. Il ghosting c'è — dopo
+  due passate la scritta rimasta fuori dalle fasce è visibilmente più chiara —
+  ma la cadenza del full refresh la decide il chiamante, e il firmware non usa
+  ancora l'API.
 
 **Prezzo, già accettato**: in Mode 2 la RAM `0x26` fa da frame precedente,
 quindi un frame aggiornato in partial è in bianco e nero. Accent e partial non
 convivono nello stesso frame, e la scelta è per frame e non per pixel — il
 firmware dovrà decidere quali riquadri valga la pena aggiornare senza rosso.
 
-Il refresh **d'area** invece esiste già ed è misurato (la finestra confina la
-zona ridipinta in Y e in X), ma da solo non serve: la durata non dipende
-dall'altezza della finestra, quindi restringerla fa guadagnare solo sul push
-SPI, che è lo 0,6% del ciclo.
+Il refresh **d'area**, invece, non esiste: la fascia di trappola a y=176..215,
+che nessuna finestra comprendeva, è comparsa **nera** sul vetro già alla prima
+passata. Ogni refresh ridipinge tutto il pannello leggendo la RAM, e le passate
+d'area sembravano confinate solo perchè la RAM è cumulativa e nessuna la
+ripuliva. A confinare il partial è la LUT, che lascia a zero le due voci dei
+pixel il cui bit non cambia, e non l'indirizzamento.
 
 ## Taglio a due piani della catena cinema sul 12.2"
 

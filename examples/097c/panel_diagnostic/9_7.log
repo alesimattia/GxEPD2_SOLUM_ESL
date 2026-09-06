@@ -1,0 +1,868 @@
+
+--- configurazione del run ---
+   1) sonde ....... 11 di 11 selezionate
+   2) esaustivo ... no
+   3) pause ....... 10 s
+   4) parametri di misura  0/20/40/70 gradi, MUX 672/336/168, 10 MHz
+   5) riporta tutto ai valori di fabbrica
+   0) parti  (27 refresh previsti, ~12 minuti)
+  [numero, 10 s, invio = parti]
+  nessuna risposta: parto col profilo salvato
+
+=== panel_diagnostic: colori e combinazioni, SOLUM ESL 9.7 pollici ===
+chip  ESP32-D0WD-V3 rev 301, 2 core, CPU 240 MHz, APB 80000000 Hz
+heap  322272 byte liberi, blocco max 110580 byte
+pin   CS=15 DC=27 RST=26 BUSY=25 (attivo alto)
+HSPI  SCK=13 MISO=12 MOSI=14
+bus   10000000 Hz richiesti, MSBFIRST, SPI_MODE0 -> stimati 10000000 Hz (APB/8)
+RAM   960 source (X) x 672 gate (Y), 120 byte per riga, 80640 byte per piano (78.8 KiB)
+piani 0x24 (BW) e 0x26 (accent), gli unici due -> 161280 byte per frame
+parametri  temperature 0/20/40/70 gradi, MUX 672/336/168 gate,
+           clock 10000000 Hz, timeout 40000 ms, multimetro 10 s
+bande alte 168 px; le sonde con LUT custom scrivono 105 byte via 0x32
+durata  ~27 refresh da 24 s, cioè circa 12 minuti più le pause,
+        e la passata a 0 gradi può durare di più
+        Ogni refresh risponde a una domanda che nient'altro poteva
+        rispondere: le passate deducibili da un'altra misura sono
+        condizionali e si saltano da sè, dicendo perchè.
+        Non interrompere: i riepiloghi finali confrontano fra loro
+        passate che stanno in sonde diverse
+
+come leggere il log insieme al pannello:
+  ogni schermata da guardare porta un numero in un riquadro in alto a
+  destra, e le righe che la riguardano iniziano con lo stesso numero
+  fra parentesi quadre. Dove il test chiede di guardare il vetro, il
+  blocco sta fra una barra di v e una barra di ^
+
+BUSY prima del reset: 1 (indifferente: il controller non è ancora inizializzato)
+
+init del controller, spacchettata:
+  reset hardware       39259 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      234 us  (5 comandi, 9 parametri)
+  finestra RAM piena     237 us  (4 comandi, 12 parametri)
+  totale                 250 ms, BUSY=0
+
+registri in lettura:
+status 0x2F        0x00  chip ID 0, busy flag 0 (pin BUSY 0), HV pronta, VCI normale
+                   HV e VCI non inizializzati (0x14 / 0x15 non inviati): indeterminati
+                   chip ID non atteso: linea di lettura non cablata, letture da ignorare
+user ID 0x2E       00 00 00 00 00 00 00 00 00 00  ascii ".........."
+temperatura prima del refresh  raw 0x0000  -> linea di lettura non cablata o sensore non campionato
+  (le tre letture sopra non sono attendibili: MISO del pannello non cablato)
+
+benchmark del bus: 8192 byte per riga, blocco crescente
+  limite teorico a 10000000 Hz: 1.25 MB/s (0.800 us/byte)
+  blocco  chiamate      us   us/byte     MB/s  %teorico  note
+       1      8192   14717     1.797     0.56       45%  
+       8      1024    7641     0.933     1.07       86%  
+      32       256    6985     0.853     1.17       94%  
+     120        68    6839     0.838     1.19       95%  riga immagine _writeImage
+     256        32    6862     0.838     1.19       96%  chunk _writeScreenBuffer
+    1024         8    6857     0.837     1.19       96%  
+    4096         2    6853     0.837     1.20       96%  
+  writeData()    14.09 us/byte, 17 volte il blocco grande
+  writeCommand() 15.12 us/comando
+  un piano da 80640 byte: 68 ms a blocchi da 120, 67 ms al limite del bus,
+                       1136 ms se passasse da writeData()
+
+valido il pattern hardware sui due piani immagine
+  0x47  param 0xF7  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+  0x46  param 0x77  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+
+scrivo le 4 bande, ognuna con la propria frase in basso a sinistra:
+ BANDA 1 BW=1 RED=0 LUT1 ATTESO BIANCO  [0x24=0xFF 0x26=0x00, testo nero]
+   0x24 y=  0..167 val=FF  20160 B  win  250 us  dati  16922 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+   0x26 y=  0..167 val=00  20160 B  win  247 us  dati  16916 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+ BANDA 2 BW=0 RED=0 LUT0 ATTESO NERO  [0x24=0x00 0x26=0x00, testo bianco]
+   0x24 y=168..335 val=00  20160 B  win  247 us  dati  16913 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+   0x26 y=168..335 val=00  20160 B  win  247 us  dati  16916 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+ BANDA 3 BW=1 RED=1 LUT3 IL ROSSO IN USO OGGI  [0x24=0xFF 0x26=0xFF, testo bianco]
+   0x24 y=336..503 val=FF  20160 B  win  247 us  dati  16915 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+   0x26 y=336..503 val=FF  20160 B  win  247 us  dati  16915 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+ BANDA 4 BW=0 RED=1 LUT2 MAI USATA DAL FIRMWARE  [0x24=0x00 0x26=0xFF, testo bianco]
+   0x24 y=504..671 val=00  20160 B  win  251 us  dati  16919 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+   0x26 y=504..671 val=FF  20160 B  win  250 us  dati  16915 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+  8 fasce scritte in 178 ms
+
+[1] >> LE 4 BANDE IN DISPLAY MODE 1 0X22=F7   [0x22=0xF7]
+   BUSY su dopo 0 ms, attesa .........  24015 ms di BUSY in 1 fase
+temperatura dopo Mode 1        raw 0x0000  -> linea di lettura non cablata o sensore non campionato
+
+[1] vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+[1] GUARDA IL PANNELLO: SCHERMATA 1, il numero sta nel riquadro in
+[1] alto a destra dell'area appena ridipinta
+[1] LE 4 BANDE IN MODE 1: banda 3 contro banda 4
+[1]
+[1]   0..167    BANDA 1 (BW=1 RED=0) LUT1, attesa bianca
+[1] 168..335    BANDA 2 (BW=0 RED=0) LUT0, attesa nera
+[1] 336..503    BANDA 3 (BW=1 RED=1) LUT3, il rosso che il firmware scrive
+[1] 504..671    BANDA 4 (BW=0 RED=1) LUT2, mai generata dal firmware
+[1] 
+[1] banda 3 e banda 4 sono a contatto sulla linea y=504, e il confronto va
+[1] fatto lì: la linea si vede, o sono un unico blocco uniforme?
+[1]   uniforme -> LUT2 = LUT3, tre colori, nessun quarto colore
+[1]   diverse  -> esiste un quarto stato di pixel, e vive su una coppia di
+[1]     bit dei due piani esistenti
+[1] 
+[1] se banda 1 non è bianca o banda 2 non è nera, init o cablaggio non
+[1] funzionano e nessun'altra riga di questo test ha valore
+[1] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+il canale 0x28 non viene sondato: già misurato come VCOM Sense
+(BUSY alto ~10 s alla scrittura, nessuna forma sul vetro)
+
+[1] GUARDA IL PANNELLO E ANNOTA: parte la passata DISPLAY Mode 2, che sovrascrive il risultato
+[1] premi INVIO quando hai finito, o aspetta 10 s
+[1]   5 s
+
+[2] >> LE 4 BANDE IN DISPLAY MODE 2 0X22=FF   [0x22=0xFF]
+   BUSY su dopo 0 ms, attesa .........  24015 ms di BUSY in 1 fase
+temperatura dopo Mode 2        raw 0x0000  -> linea di lettura non cablata o sensore non campionato
+
+[2] vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+[2] GUARDA IL PANNELLO: SCHERMATA 2, il numero sta nel riquadro in
+[2] alto a destra dell'area appena ridipinta
+[2] LE STESSE 4 BANDE IN MODE 2: è cambiato qualcosa?
+[2]
+[2] stessa RAM della schermata precedente, solo il Display Mode è diverso
+[2] 
+[2] i colori delle quattro bande sono gli stessi?
+[2]   sì -> Mode 2 su questo pannello legge le due RAM come Mode 1
+[2]   no -> Mode 2 le legge come (frame precedente, frame nuovo), e la
+[2]     differenza va interpretata prima di chiamarla colore
+[2] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+[2] GUARDA IL PANNELLO E ANNOTA: parte il probe del quarto colore, che pilota LUT2 e LUT3 a tensioni diverse
+[2] premi INVIO quando hai finito, o aspetta 10 s
+[2]   5 s
+
+=== probe del quarto colore: LUT2 a VSH1 contro LUT3 a VSH2 ===
+le tensioni restano quelle dell'OTP: 0x32 scrive i byte 0..104 della
+waveform, mentre VSH1 e VSH2 stanno ai byte 106 e 107 e arrivano da
+0x04, che questa sonda non tocca. Cambia solo QUALE delle due tensioni
+già presenti nel silicio viene applicata a ciascuna LUT.
+  reset hardware       40000 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      229 us  (5 comandi, 9 parametri)
+  finestra RAM piena     235 us  (4 comandi, 12 parametri)
+  0x47  param 0xF7  BUSY su dopo 0 ms, riempito in 8 ms  (push SPI equivalente 67 ms, 8.4x)
+  0x46  param 0x77  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+
+[3] >> FONDO BIANCO PRIMA DEL PROBE DEI LIVELLI   [0x22=0xF7]
+   BUSY su dopo 0 ms, attesa .........  24016 ms di BUSY in 1 fase
+  reset hardware       40000 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      229 us  (5 comandi, 9 parametri)
+  finestra RAM piena     228 us  (4 comandi, 12 parametri)
+  0x47  param 0xF7  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+  0x46  param 0x77  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+   0x26 y=336..671 val=FF  40320 B  win  246 us  dati  33451 us  0.83 us/B  1.21 MB/s  blocchi 256
+   0x24 y=504..671 val=00  20160 B  win  246 us  dati  16721 us  0.83 us/B  1.21 MB/s  blocchi 256
+
+[3] >> PROBE LIVELLI LUT2 VSH1 CONTRO LUT3 VSH2 0X22=C4   [0x22=0xC4]
+   BUSY su dopo 0 ms, attesa .  4067 ms di BUSY in 1 fase
+  BUSY 4067 ms (200 frame attesi, la LUT non ripete il gruppo)
+
+[3] vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+[3] GUARDA IL PANNELLO: SCHERMATA 3, il numero sta nel riquadro in
+[3] alto a destra dell'area appena ridipinta
+[3] PROBE DEI LIVELLI: le due bande in basso
+[3]
+[3] banda 3, sopra la linea y=504: accent=1 BW=1 -> LUT3 -> VSH2
+[3] banda 4, sotto la linea y=504: accent=1 BW=0 -> LUT2 -> VSH1
+[3] 
+[3] DOMANDA: le due bande hanno colore diverso?
+[3]   DIVERSO  -> il film separa VSH1 da VSH2: esiste un quarto stato, e il
+[3]     driver può arrivarci con la coppia di bit che ha già più una LUT
+[3]     custom
+[3]   IDENTICO -> tre pigmenti: è la prova diretta che mancava, la questione
+[3]     del quarto colore si chiude qui
+[3]   ENTRAMBE BIANCHE -> 200 frame non bastano, o la LUT custom non viene
+[3]     applicata: se anche la sonda precedente non ha dipinto è
+[3]     inconcludente
+[3] 
+[3] il riquadro col numero è stato dipinto dal fondo bianco: la passata dei
+[3] livelli non tocca i pixel bianchi e neri, quindi lì resta invariato
+[3] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+  reset hardware       40000 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      229 us  (5 comandi, 9 parametri)
+  finestra RAM piena     228 us  (4 comandi, 12 parametri)
+  reset hardware finale: le LUT tornano quelle dell'OTP
+
+[3] GUARDA IL PANNELLO E ANNOTA: riparte il test
+[3] premi INVIO quando hai finito, o aspetta 10 s
+[3]   5 s
+
+[3] GUARDA IL PANNELLO E ANNOTA: parte la sonda differenziale, che azzera lo schermo e lo riscrive
+[3] premi INVIO quando hai finito, o aspetta 10 s
+[3]   5 s
+
+=== sonda del refresh differenziale, candidato ~600 ms ===
+baseline: entrambi i piani a nero col pattern, poi refresh pieno Mode 1
+  0x47  param 0x77  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+  0x46  param 0x77  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+
+>> BASELINE NERA DELLA SONDA DIFFERENZIALE   [0x22=0xF7]
+   BUSY su dopo 0 ms, attesa .........  24015 ms di BUSY in 1 fase
+   0x24 y=  0..671 val=FF  80640 B  win  247 us  dati  67638 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+
+[4] >> DIFFERENZIALE 1 DA NERO A BIANCO 0X22=FC   [0x22=0xFC]
+   BUSY su dopo 0 ms, attesa .........  23873 ms di BUSY in 1 fase
+   0x26 y=  0..671 val=FF  80640 B  win  247 us  dati  67643 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+   0x24 y=  0..671 val=00  80640 B  win  253 us  dati  67637 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+
+[4] >> DIFFERENZIALE 2 DA BIANCO A NERO 0X22=FC   [0x22=0xFC]
+   BUSY su dopo 0 ms, attesa .........  23872 ms di BUSY in 1 fase
+
+esito della sonda differenziale:
+  passata 1  23873 ms
+  passata 2  23872 ms
+  riferimenti: 24015 ms il refresh pieno qui, 600 ms il partial del
+               GDEM133T91 monocromatico sullo stesso silicio
+  durata da refresh pieno: 0xFC ricade sulla waveform completa
+
+[4] vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+[4] GUARDA IL PANNELLO: SCHERMATA 4, il numero sta nel riquadro in
+[4] alto a destra dell'area appena ridipinta
+[4] SONDA DIFFERENZIALE: quale frase è rimasta sul vetro
+[4]
+[4] le due passate scrivono, in ordine, DIFFERENZIALE 1 DA NERO A BIANCO e
+[4] DIFFERENZIALE 2 DA BIANCO A NERO
+[4] 
+[4] DOMANDA: sul vetro c'è la frase della SECONDA passata?
+[4]   sì, con durate sotto i 3 s -> il banco differenziale esiste in OTP
+[4]   sì, con durate da 24 s     -> 0xFC ricade sulla waveform piena
+[4]   no, schermo nero o frase della prima -> la seconda non ha dipinto, e
+[4]     una durata breve lì è un refresh ingoiato, non un partial
+[4] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+=== sonda differenziale approfondita: gli interruttori non provati ===
+la sequenza 0xFC della sonda base è quella del driver monocromatico di
+riferimento sullo stesso silicio: qui si provano gli interruttori
+   0x24 y=  0..671 val=FF  80640 B  win  270 us  dati  67642 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+   0x26 y=  0..671 val=FF  80640 B  win  249 us  dati  67638 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+
+>> DIFFERENZA ZERO 0X24 E 0X26 IDENTICI 0X22=FC   [0x22=0xFC]
+   BUSY su dopo 0 ms, attesa .........  23870 ms di BUSY in 1 fase
+   0x26 y=  0..671 val=FF  80640 B  win  248 us  dati  67639 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+   0x24 y=  0..671 val=00  80640 B  win  250 us  dati  67638 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+
+>> DIFFERENZA MASSIMA 0X24 INVERSO DI 0X26 0X22=FC   [0x22=0xFC]
+   BUSY su dopo 0 ms, attesa .........  23869 ms di BUSY in 1 fase
+
+accent spento: da qui ogni passata scrive la propria frase, e quella
+che resta sul vetro dice chi ha davvero dipinto
+  0x46  param 0x77  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+   0x24 y=  0..671 val=FF  80640 B  win  245 us  dati  67632 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+
+>> CARICO LUT MODE 2 0X22=99 NON DIPINGE   [0x22=0x99]
+   BUSY su dopo 0 ms, attesa   1 ms di BUSY in 1 fase
+
+-- 2a-2c saltate: il carico della LUT costa 1 ms, quindi
+   dipingere senza ricaricarla non può far risparmiare di più.
+   Sono tre refresh da ~25 s che non avrebbero niente da trovare.
+
+-- 3, 3b e 4 saltate: differenza zero e differenza massima
+   coincidono, quindi il controller non confronta i due piani.
+   Rifare la stessa misura con 0x26 bypassata, col 0x21 di fabbrica
+   o con l'init di fabbrica non può cambiare un esito che non
+   dipende dal contenuto delle RAM: sono cinque refresh risparmiati.
+
+0x37 sono 10 byte che di norma vengono dall'OTP e contengono i bit di
+Display Mode dei 36 stadi della waveform: senza read-back è un tentativo
+alla cieca, e solo un esito POSITIVO vale.
+   0x24 y=  0..671 val=FF  80640 B  win  250 us  dati  67634 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+
+[5] >> RAM PING PONG VIA 0X37 0X22=FC   [0x22=0xFC]
+   BUSY su dopo 0 ms, attesa .........  23871 ms di BUSY in 1 fase
+
+reset hardware: rimetto i valori OTP dopo il tentativo su 0x37
+  reset hardware       40000 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      231 us  (5 comandi, 9 parametri)
+  finestra RAM piena     228 us  (4 comandi, 12 parametri)
+
+esito della sonda differenziale approfondita:
+   23870 ms      DIFFERENZA ZERO 0X24 E 0X26 IDENTICI 0X22=FC
+   23869 ms      DIFFERENZA MASSIMA 0X24 INVERSO DI 0X26 0X22=FC
+       1 ms      CARICO LUT MODE 2 0X22=99 NON DIPINGE
+   23871 ms      RAM PING PONG VIA 0X37 0X22=FC
+  riferimento: refresh pieno 0xF7 24015 ms
+  differenza zero 23870 ms contro differenza massima 23869 ms: scarto -1 ms
+  la durata NON dipende dal contenuto dei piani: il controller non li
+  confronta, quindi su questo pannello il refresh differenziale non
+  esiste, e hasFastPartialUpdate = false non è prudenza ma un fatto
+  fuori dal conteggio, 0x99 per costruzione non dipinge: CARICO LUT MODE 2 0X22=99 NON DIPINGE
+  nessuna passata che dipinge è scesa sotto i 3 s: nessuna combinazione
+  di 0x22, 0x21 e 0x37 provata qui apre un partial su questo pannello
+
+[5] vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+[5] GUARDA IL PANNELLO: SCHERMATA 5, il numero sta nel riquadro in
+[5] alto a destra dell'area appena ridipinta
+[5] SONDA APPROFONDITA: quale frase è rimasta sul vetro
+[5]
+[5] passate che dipingono sotto i 3 s: 0
+[5] ogni passata scrive la propria frase, e la tabella qui sopra le elenca
+[5] tutte con la loro durata
+[5] 
+[5] DOMANDA: quale frase c'è sul vetro?
+[5]   quella di una passata sotto i 3 s -> quella sequenza è il partial di
+[5]     questo pannello
+[5]   quella di una passata da 24 s -> le veloci non hanno dipinto, e la loro
+[5]     durata è un refresh ingoiato
+[5] 
+[5] il riquadro col numero lo porta solo l'ultima passata, RAM PING PONG: le
+[5] altre confrontano i due piani e un riquadro li renderebbe diversi
+[5] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+=== sonda del partial con LUT caricata via 0x32 ===
+la strada mai provata: le passate cronometrate finora ricaricavano
+tutte la LUT dall'OTP (bit 4 di 0x22), quindi misuravano sempre la
+stessa waveform lunga. Qui la waveform la scrive l'MCU e 0x22 ha il
+bit 4 spento, come fa il GDEH116T91 sullo stesso silicio a 700 ms.
+
+-- fascia y=0..167: PARTIAL 1 LUT 1160 MODE 2 0X22=CC
+  reset hardware       39998 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      232 us  (5 comandi, 9 parametri)
+  finestra RAM piena     230 us  (4 comandi, 12 parametri)
+  0x46  param 0xF7  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+  0x47  param 0xF7  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+   0x24 y=  0..167 val=00  20160 B  win  247 us  dati  16918 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+
+[6] >> PARTIAL 1 LUT 1160 MODE 2 0X22=CC   [0x22=0xCC]
+   BUSY su dopo 0 ms, attesa   641 ms di BUSY in 1 fase
+
+-- fascia y=168..335: PARTIAL 2 LUT TABLE 6-4 MODE 1 0X22=C4
+  reset hardware       40000 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      231 us  (5 comandi, 9 parametri)
+  finestra RAM piena     228 us  (4 comandi, 12 parametri)
+  0x46  param 0x77  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+  0x47  param 0xF7  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+   0x24 y=  0..167 val=00  20160 B  win  247 us  dati  16915 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+   0x24 y=168..335 val=00  20160 B  win  248 us  dati  16919 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+
+[6] >> PARTIAL 2 LUT TABLE 6-4 MODE 1 0X22=C4   [0x22=0xC4]
+   BUSY su dopo 0 ms, attesa   641 ms di BUSY in 1 fase
+
+esito della sonda del partial con LUT custom:
+    641 ms                  PARTIAL 1 LUT 1160 MODE 2 0X22=CC
+    641 ms                  PARTIAL 2 LUT TABLE 6-4 MODE 1 0X22=C4
+  riferimento: refresh pieno 0xF7 24015 ms
+
+[6] vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+[6] GUARDA IL PANNELLO: SCHERMATA 6, il numero sta nel riquadro in
+[6] alto a destra dell'area appena ridipinta
+[6] PARTIAL CON LUT CUSTOM: quale fascia è nera
+[6]
+[6] passate sotto i 3 s: 2
+[6] fascia 1, y=0..167    PARTIAL 1 LUT 1160 MODE 2 0X22=CC
+[6] fascia 2, y=168..335  PARTIAL 2 LUT TABLE 6-4 MODE 1 0X22=C4
+[6] 
+[6] DOMANDA: quale delle due fasce è diventata nera?
+[6]   una fascia NERA, con la durata sotto i 3 s che il riepilogo ha
+[6]     stampato -> IL PARTIAL ESISTE, e va nel driver come _Init_Part
+[6]     più _Update_Part
+[6]   NESSUNA nera con durate sotto i 3 s -> la LUT viene accettata ma non
+[6]     pilota: la waveform va aggiustata, la strada è giusta
+[6]   NESSUNA nera con durate da 24 s -> il silicio ricarica l'OTP anche col
+[6]     bit 4 spento, e hasFastPartialUpdate = false resta la scelta giusta
+[6] 
+[6] guarda anche la CORNICE: con 0x3C=0xC0 non deve lampeggiare
+[6] il riquadro col numero può uscire incompleto: la LUT custom non pilota
+[6] tutte le LUT, e quello che non pilota resta come stava
+[6] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+  reset hardware       40000 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      231 us  (5 comandi, 9 parametri)
+  finestra RAM piena     228 us  (4 comandi, 12 parametri)
+  reset hardware finale: le LUT tornano quelle dell'OTP
+
+[6] GUARDA IL PANNELLO E ANNOTA: riparte il test
+[6] premi INVIO quando hai finito, o aspetta 10 s
+[6]   5 s
+
+[6] GUARDA IL PANNELLO E ANNOTA: parte la sonda del partial d'area, che riporta lo schermo a bianco
+[6] premi INVIO quando hai finito, o aspetta 10 s
+[6]   5 s
+[6]   ripartito su richiesta dopo 8 s
+
+=== sonda del partial d'area: la finestra RAM limita il refresh? ===
+questa sonda misura l'INDIRIZZAMENTO, non la waveform: la domanda è se
+la finestra RAM limita l'area ridipinta. Il discriminante è la fascia
+di trappola, che nessuna finestra comprende.
+0x26 resta a 0 per tutta la sonda, cioè accent spento: serve a tenere il
+pannello in bianco e nero, altrimenti le strisce non si vedono.
+
+baseline: schermo bianco col pattern, poi refresh pieno Mode 1
+  0x47  param 0xF7  BUSY su dopo 0 ms, riempito in 8 ms  (push SPI equivalente 67 ms, 8.4x)
+  0x46  param 0x77  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+
+>> BASELINE BIANCA DELLA SONDA D AREA   [0x22=0xF7]
+   BUSY su dopo 0 ms, attesa .........  24013 ms di BUSY in 1 fase
+
+trappola: fascia nera scritta in 0x24 a y=176..215, che nessuna finestra di
+refresh comprende. Se compare sul pannello, la finestra non è rispettata
+
+-- finestra x=0..959 y=0..167, 168 righe, 20160 byte
+   0x24 scritto in 16923 us (0.84 us/B)
+
+[7] >> AREA 1 STRISCIA ALTA NERA BORDO 0X3C=01 0X22=FC   [0x22=0xFC]
+   BUSY su dopo 0 ms, attesa .........  23873 ms di BUSY in 1 fase
+
+-- finestra x=0..959 y=336..503, 168 righe, 20160 byte
+   0x24 scritto in 16921 us (0.84 us/B)
+
+[7] >> AREA 2 STRISCIA CENTRALE NERA BORDO 0X3C=80 0X22=FC   [0x22=0xFC]
+   BUSY su dopo 0 ms, attesa .........  23870 ms di BUSY in 1 fase
+
+-- finestra x=256..511 y=504..671, 168 righe, 5376 byte, fascia uniforme: la frase sta solo a larghezza piena
+   0x24 scritto in 4459 us (0.83 us/B)
+
+[7] >> AREA 3 RIQUADRO RISTRETTO ANCHE IN X 0X22=FC   [0x22=0xFC]
+   BUSY su dopo 0 ms, attesa .........  23870 ms di BUSY in 1 fase
+
+-- passate 4 e 5 saltate: la passata 1 è durata come un refresh
+   pieno, quindi non c'è nessun tempo da far scalare e nessuna
+   catena di partial che valga la pena provare
+
+[7] vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+[7] GUARDA IL PANNELLO: SCHERMATA 7, il numero sta nel riquadro in
+[7] alto a destra dell'area appena ridipinta
+[7] PARTIAL D'AREA, prima della passata Mode 1
+[7]
+[7] la fascia di trappola y=176..215 è nera in RAM e nessuna finestra la
+[7] comprende: se è ancora bianca, le finestre sono rispettate
+[7] 
+[7] guardala ADESSO: la passata Mode 1 che sta per partire potrebbe farla
+[7] comparire, e a quel punto non si saprebbe più chi l'ha fatta comparire
+
+[7] GUARDA IL PANNELLO E ANNOTA: parte la passata Mode 1 su finestra
+[7] premi INVIO quando hai finito, o aspetta 10 s
+[7]   5 s
+[7] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+-- finestra x=0..959 y=264..311, 48 righe, 5760 byte
+   0x24 scritto in 4833 us (0.84 us/B)
+
+[7] >> AREA MODE 1 SU FINESTRA 0X22=F4   [0x22=0xF4]
+   BUSY su dopo 0 ms, attesa .........  23871 ms di BUSY in 1 fase
+
+esito della sonda del partial d'area:
+  finestra              righe  push us  refresh   frase sulla fascia
+  x=  0..959 y=  0..167    168    16923   23873 ms  AREA 1 STRISCIA ALTA NERA BORDO 0X3C=01 0X22=FC
+  x=  0..959 y=336..503    168    16921   23870 ms  AREA 2 STRISCIA CENTRALE NERA BORDO 0X3C=80 0X22=FC
+  x=256..511 y=504..671    168     4459   23870 ms  AREA 3 RIQUADRO RISTRETTO ANCHE IN X 0X22=FC
+  x=  0..959 y=264..311     48     4833   23871 ms  AREA MODE 1 SU FINESTRA 0X22=F4
+  passata d'area 23873 ms contro 24015 ms del refresh pieno: 1.0x
+  ciclo su una fascia di 168 righe: 17 ms di push + 23873 ms di refresh = 23.89 s
+  la passata d'area costa come un refresh pieno: non c'è nessun
+  partial_refresh_time da mettere nel driver
+  Mode 1 su finestra (0x22=0xF4) 23871 ms su 48 righe, contro 24015 ms del pieno
+  Mode 1 dura come il pieno: la finestra non accorcia la sua waveform
+  le passate 0xFC valgono per frame in bianco e nero: 0x26 lì fa da
+  frame precedente, quindi in quella modalità l'accent non esiste
+
+[7] vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+[7] GUARDA IL PANNELLO: SCHERMATA 7, il numero sta nel riquadro in
+[7] alto a destra dell'area appena ridipinta
+[7] PARTIAL D'AREA: fasce, fascia di trappola e riquadro
+[7]
+[7]   0..167    AREA 1 nera, poi AREA 4 di nuovo bianca
+[7] 176..215    fascia di trappola, mai compresa in una finestra
+[7] 224..247    AREA 5, finestra sottile di 24 righe
+[7] 264..311    AREA MODE 1 su finestra
+[7] 336..503    AREA 2 nera, bordo 0x3C=0x80
+[7] 504..671    AREA 3, riquadro ristretto anche in X, x=256..511
+[7] 
+[7] il numero compare in alto a destra di OGNI fascia ridipinta, non una
+[7] volta sola: le passate hanno finestre diverse
+[7] 
+[7] la fascia di trappola è BIANCA o NERA?
+[7]   bianca -> la finestra RAM limita davvero l'area ridipinta
+[7]   nera   -> il refresh ripassa tutto il pannello, qualunque finestra sia
+[7]     impostata
+[7] è comparsa solo DOPO la passata Mode 1? allora solo 0xFC rispetta la
+[7]   finestra, e un partial d'area costa l'accent
+[7] 
+[7] i bordi verticali del riquadro x=256..511 sono netti? se no, lungo X la
+[7]   finestra non vale e nel driver il partial va allargato a tutta la riga
+[7] la striscia in cima porta la frase AREA 4 su fondo bianco? se no, la
+[7]   catena di partial sulla stessa area non passa pulita e serve un refresh
+[7]   pieno periodico
+[7] ha lampeggiato solo la cornice di AREA 1 (0x3C=0x01)? allora il driver
+[7]   deve mandare 0x3C=0x80 prima di un partial e rimettere 0x01 dopo
+[7] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+[7] GUARDA IL PANNELLO E ANNOTA: parte la sonda dei banchi per temperatura, che riscrive lo schermo
+[7] premi INVIO quando hai finito, o aspetta 10 s
+[7]   5 s
+
+=== sonda dei banchi di waveform per temperatura ===
+il §6.9 del datasheet dà l'OTP per capace di 34 set di waveform,
+WS0..WS33, uno per range di temperatura TR0..TR33, scelti dal
+controller in base alla temperatura letta. Tutte le passate di questo
+test hanno girato col sensore interno a temperatura ambiente, quindi
+hanno esercitato un solo set: qui si prova a chiederne altri.
+Sono waveform di fabbrica, tarate su questo film: se una è più corta,
+il partial esiste senza LUT inventate e senza rischio. Una più LUNGA non
+è un fallimento della sonda: dice che i banchi esistono e che verso il
+freddo la waveform si allunga, e per questo il timeout qui è 120000 ms.
+  reset hardware       40000 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      231 us  (5 comandi, 9 parametri)
+  finestra RAM piena     228 us  (4 comandi, 12 parametri)
+  0x47  param 0xF7  BUSY su dopo 0 ms, riempito in 8 ms  (push SPI equivalente 67 ms, 8.4x)
+  0x46  param 0x77  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+   0x24 y=  0..167 val=00  20160 B  win  246 us  dati  16918 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+
+[8] >> TEMPERATURA 0 GRADI 0X1A=000   [0x22=0xF7]
+   BUSY su dopo 0 ms, attesa .......................  59067 ms di BUSY in 1 fase
+  reset hardware       40000 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      228 us  (5 comandi, 9 parametri)
+  finestra RAM piena     228 us  (4 comandi, 12 parametri)
+  0x47  param 0xF7  BUSY su dopo 0 ms, riempito in 8 ms  (push SPI equivalente 67 ms, 8.4x)
+  0x46  param 0x77  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+   0x24 y=  0..167 val=00  20160 B  win  245 us  dati  16914 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+   0x24 y=168..335 val=00  20160 B  win  247 us  dati  16915 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+
+[8] >> TEMPERATURA 20 GRADI 0X1A=140   [0x22=0xF7]
+   BUSY su dopo 0 ms, attesa .........  24007 ms di BUSY in 1 fase
+  reset hardware       40000 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      228 us  (5 comandi, 9 parametri)
+  finestra RAM piena     228 us  (4 comandi, 12 parametri)
+  0x47  param 0xF7  BUSY su dopo 0 ms, riempito in 8 ms  (push SPI equivalente 67 ms, 8.4x)
+  0x46  param 0x77  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+   0x24 y=  0..167 val=00  20160 B  win  245 us  dati  16914 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+   0x24 y=168..335 val=00  20160 B  win  247 us  dati  16915 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+   0x24 y=336..503 val=00  20160 B  win  246 us  dati  16918 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+
+[8] >> TEMPERATURA 40 GRADI 0X1A=280   [0x22=0xF7]
+   BUSY su dopo 0 ms, attesa .........  22963 ms di BUSY in 1 fase
+
+-- 70 °C, fuori dal range dichiarato: qui un BUSY corto è un rifiuto
+  reset hardware       40000 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      228 us  (5 comandi, 9 parametri)
+  finestra RAM piena     228 us  (4 comandi, 12 parametri)
+  0x47  param 0xF7  BUSY su dopo 0 ms, riempito in 8 ms  (push SPI equivalente 67 ms, 8.4x)
+  0x46  param 0x77  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+   0x24 y=  0..167 val=00  20160 B  win  246 us  dati  16918 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+   0x24 y=168..335 val=00  20160 B  win  247 us  dati  16915 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+   0x24 y=336..503 val=FF  20160 B  win  245 us  dati  16726 us  0.83 us/B  1.21 MB/s  blocchi 256
+
+[8] >> TEMPERATURA 70 GRADI FUORI RANGE 0X1A=460   [0x22=0xF7]
+   BUSY su dopo 0 ms, attesa .........  22961 ms di BUSY in 1 fase
+
+esito della sonda dei banchi per temperatura:
+  0x000   59067 ms    TEMPERATURA 0 GRADI 0X1A=000
+  0x140   24007 ms    TEMPERATURA 20 GRADI 0X1A=140
+  0x280   22963 ms    TEMPERATURA 40 GRADI 0X1A=280
+  0x460   22961 ms    TEMPERATURA 70 GRADI FUORI RANGE 0X1A=460
+  riferimento: refresh pieno a temperatura ambiente 24015 ms
+  scarto fra le passate concluse: 36104 ms
+  fra le concluse ce n'è una molto più corta: se la sua fascia è
+  nera il driver può forzare quella temperatura, vedi il blocco qui sotto
+
+[8] vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+[8] GUARDA IL PANNELLO: SCHERMATA 8, il numero sta nel riquadro in
+[8] alto a destra dell'area appena ridipinta
+[8] BANCHI PER TEMPERATURA: quali fasce sono nere
+[8]
+[8]   0..167    TEMPERATURA 0 GRADI
+[8] 168..335    TEMPERATURA 20 GRADI
+[8] 336..503    TEMPERATURA 40 GRADI
+[8] 
+[8] quali fasce sono nere? una fascia nera con una durata molto sotto le
+[8] altre è un banco più veloce, e il driver può forzarne la temperatura
+[8] via 0x18/0x1A prima del refresh
+[8] 
+[8] la fascia TEMPERATURA 40 GRADI c'è ancora dopo la passata a 70 °C?
+[8]   sì -> la passata fuori range è stata rifiutata, che è quello che il
+[8]     datasheet descrive quando nessun range corrisponde: la sua durata
+[8]     breve non è una waveform veloce
+[8]   no -> quella waveform ha dipinto in una frazione del tempo, ed è una
+[8]     scoperta
+[8] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+[8] GUARDA IL PANNELLO E ANNOTA: riparte il test
+[8] premi INVIO quando hai finito, o aspetta 10 s
+[8]   5 s
+
+=== sonda del MUX: il refresh scala con le gate line scandite? ===
+la sonda d'area ha mostrato che restringere la FINESTRA RAM non
+accorcia il refresh, ma quelle passate scandivano comunque tutte le
+672 gate. Qui si riduce il MUX di 0x01, cioè quante gate il driver
+scandisce davvero: è l'unica leva geometrica non ancora provata.
+  reset hardware       39998 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      232 us  (5 comandi, 9 parametri)
+  finestra RAM piena     230 us  (4 comandi, 12 parametri)
+  0x47  param 0xF7  BUSY su dopo 0 ms, riempito in 8 ms  (push SPI equivalente 67 ms, 8.4x)
+  0x46  param 0x77  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+   0x24 y=  0..167 val=00  20160 B  win  246 us  dati  16911 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+
+[9] >> MUX 672 GATE LINE   [0x22=0xF7]
+   BUSY su dopo 0 ms, attesa .........  24010 ms di BUSY in 1 fase
+  reset hardware       40000 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      231 us  (5 comandi, 9 parametri)
+  finestra RAM piena     228 us  (4 comandi, 12 parametri)
+  0x47  param 0xF7  BUSY su dopo 0 ms, riempito in 8 ms  (push SPI equivalente 67 ms, 8.4x)
+  0x46  param 0x77  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+   0x24 y=  0.. 83 val=00  10080 B  win  247 us  dati   8460 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+
+[9] >> MUX 336 GATE LINE   [0x22=0xF7]
+   BUSY su dopo 0 ms, attesa .........  24031 ms di BUSY in 1 fase
+  reset hardware       40000 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      231 us  (5 comandi, 9 parametri)
+  finestra RAM piena     228 us  (4 comandi, 12 parametri)
+  0x47  param 0xF7  BUSY su dopo 0 ms, riempito in 8 ms  (push SPI equivalente 67 ms, 8.4x)
+  0x46  param 0x77  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+   0x24 y=  0.. 41 val=00   5040 B  win  246 us  dati   4230 us  0.84 us/B  1.19 MB/s  righe 120 + testo
+
+[9] >> MUX 168 GATE LINE   [0x22=0xF7]
+   BUSY su dopo 0 ms, attesa .........  24033 ms di BUSY in 1 fase
+  reset hardware       40000 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      231 us  (5 comandi, 9 parametri)
+  finestra RAM piena     228 us  (4 comandi, 12 parametri)
+
+esito della sonda del MUX:
+  MUX    BUSY      ms per gate line   frase sulla fascia
+   671    24010 ms           35.729   MUX 672 GATE LINE
+   335    24031 ms           71.521   MUX 336 GATE LINE
+   167    24033 ms          143.054   MUX 168 GATE LINE
+  riferimento: refresh pieno 24015 ms
+  MUX pieno contro un quarto: 1.00x (4.00 se il costo è per gate line,
+  1.00 se il frame rate è fisso)
+  il refresh NON scala: il frame rate della waveform è fisso e il
+  controller aspetta il tempo di frame anche con meno linee.
+  Nessuna leva geometrica può accorciare il refresh
+
+[9] vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+[9] GUARDA IL PANNELLO: SCHERMATA 9, il numero sta nel riquadro in
+[9] alto a destra dell'area appena ridipinta
+[9] MUX RIDOTTO: la fascia nera in cima
+[9]
+[9] le tre passate scrivono in cima una fascia nera alta un quarto delle
+[9] gate scandite, con la frase MUX 672 / 336 / 168 GATE LINE
+[9] 
+[9] sul vetro c'è la fascia dell'ULTIMA passata, MUX 168?
+[9]   sì -> a tutti e tre i valori il pannello scandisce la fascia
+[9]   no -> a quel MUX non scandisce: o il valore è troppo basso, o la
+[9]     finestra RAM non è stata riadattata
+[9] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+[9] GUARDA IL PANNELLO E ANNOTA: parte la sonda del deep sleep, che si chiude con lo schermo nero
+[9] premi INVIO quando hai finito, o aspetta 10 s
+[9]   5 s
+
+=== sonda del deep sleep: si addormenta, e soprattutto si sveglia? ===
+
+-- 0x10 = 0x03  (A[1:0]=11, l'unico valore che il datasheet definisce)
+  reset hardware       39870 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      231 us  (5 comandi, 9 parametri)
+  finestra RAM piena     228 us  (4 comandi, 12 parametri)
+   BUSY dopo il comando: ALTO, come il datasheet descrive il deep sleep
+   livello compatibile col deep sleep, ma un pin flottante fa lo stesso:
+   la conferma arriva dalla prova lunga più sotto
+
+-- 0x10 = 0x11  (A[1:0]=01, fuori tabella, ed è quello che il driver manda oggi)
+  reset hardware       39802 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      228 us  (5 comandi, 9 parametri)
+  finestra RAM piena     228 us  (4 comandi, 12 parametri)
+   BUSY dopo il comando: ALTO, come il datasheet descrive il deep sleep
+   livello compatibile col deep sleep, ma un pin flottante fa lo stesso:
+   la conferma arriva dalla prova lunga più sotto
+
+parametro scelto per il resto della sonda: 0x10 = 0x03
+
+-- prova decisiva: da addormentato, un refresh intero viene eseguito?
+  reset hardware       39791 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      228 us  (5 comandi, 9 parametri)
+  finestra RAM piena     228 us  (4 comandi, 12 parametri)
+   prova di sordità: BUSY alto, si manda pattern nero + refresh
+   BUSY mai sceso in 32015 ms: il comando non è stato eseguito, dorme
+
+[9] vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+[9] GUARDA IL PANNELLO: SCHERMATA 9, il numero sta nel riquadro in
+[9] alto a destra dell'area appena ridipinta
+[9] DEEP SLEEP: l'immagine resta intatta mentre dorme?
+[9]
+[9] sul vetro c'è ancora la schermata di prima: entrare in deep sleep non
+[9] deve sporcarla
+[9] 
+[9] MISURA ORA LA CORRENTE sul 3V3 del pannello e confrontala con quella a
+[9] controller sveglio e fermo: è l'unica prova del risparmio, e il firmware
+[9] non può farla
+[9] il pannello resta addormentato per 10 s
+[9]   10 s
+[9]   5 s
+[9] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+-- risveglio: reset hardware più init
+  reset hardware       39873 us
+  SWRESET             BUSY salito dopo 0 ms, alto per 2 ms (il driver attende 200 ms fissi)
+  config 0x0C..0x11      231 us  (5 comandi, 9 parametri)
+  finestra RAM piena     228 us  (4 comandi, 12 parametri)
+   reset più init in 251 ms
+  0x47  param 0x77  BUSY su dopo 0 ms, riempito in 8 ms  (push SPI equivalente 67 ms, 8.4x)
+  0x46  param 0x77  BUSY su dopo 0 ms, riempito in 9 ms  (push SPI equivalente 67 ms, 7.5x)
+
+[10] >> REFRESH DI PROVA DOPO IL RISVEGLIO DAL DEEP SLEEP   [0x22=0xF7]
+   BUSY su dopo 0 ms, attesa .........  24010 ms di BUSY in 1 fase
+
+[10] vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+[10] GUARDA IL PANNELLO: SCHERMATA 10, il numero sta nel riquadro in
+[10] alto a destra dell'area appena ridipinta
+[10] DEEP SLEEP: il refresh di prova dopo il risveglio
+[10]
+[10] lo schermo è diventato NERO?
+[10]   sì -> il ciclo dormi / svegliati / stampa funziona e hibernate() è
+[10]     utilizzabile: dopo il risveglio il driver rifà init e riscrive i
+[10]     piani, perchè il deep sleep non conserva la RAM
+[10]   no -> da lì non si torna, e hibernate() lascerebbe il pannello morto
+[10]     fino al power cycle
+[10] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+pannello riaddormentato con 0x10 = 0x03, BUSY alto
+
+--- riepilogo tempi ---
+dati sul bus     1332432 byte in 1116908 us -> 0.84 us/byte, 1.19 MB/s
+transazioni      1035 comandi, 2744 parametri a singolo byte
+attese BUSY      598363 ms in totale
+setup completo   737056 ms
+heap             321672 byte liberi (600 byte consumati dal test)
+
+--- stima di un aggiornamento a schermo pieno ---
+push 2 piani (BW+RED) 161280 byte -> 135 ms a blocchi da 120 byte
+clear dei 2 piani col pattern hardware: 18 ms invece di 135 ms
+ciclo completo        24.2 s: 135 ms di push + 24015 ms di refresh
+refresh Mode 1 24015 ms, Mode 2 24015 ms: durate uguali, probabilmente lo stesso banco
+refresh differenziale (0x22=0xFC) 23873 ms, seconda passata 23872 ms -> 1.01x, cioè come il refresh pieno: nessun guadagno
+partial d'area, valido solo se la fascia di trappola è rimasta bianca:
+  0xFC su 168 righe: 17 ms di push + 23873 ms di refresh = 23.89 s
+  0xF4 su 48 righe: 23871 ms di refresh
+
+--- deep sleep ---
+parametro         0x10 = 0x03, BUSY alto mentre dorme
+sordità           ignora anche un refresh intero: dorme davvero
+risveglio         251 ms di reset più init
+primo frame dopo  24010 ms di refresh -> ciclo completo 24.3 s
+il risparmio in corrente non è misurabile da qui: vedi la scheda
+
+============ SCHEDA DI OSSERVAZIONE ============
+solo le domande dell'occhio: quello che si deduce da una durata lo hanno
+già scritto i verdetti delle sonde. Il numero di ogni voce è quello del
+riquadro sul vetro e delle righe di log della schermata.
+
+schermate prodotte:
+  [1] le 4 bande, Display Mode 1
+  [2] le stesse 4 bande, Display Mode 2
+  [3] probe dei livelli di sorgente
+  [4] sonda differenziale
+  [5] sonda differenziale approfondita
+  [6] partial con LUT custom
+  [7] partial d'area
+  [8] banchi di waveform per temperatura
+  [9] MUX ridotto
+  [10] deep sleep, refresh di prova dopo il risveglio
+
+[1] LE 4 BANDE, 0x22 = 0xF7
+[1]   BANDA 1 (BW=1 RED=0) LUT1  colore ................
+[1]   BANDA 2 (BW=0 RED=0) LUT0  colore ................
+[1]   BANDA 3 (BW=1 RED=1) LUT3  colore ................
+[1]   BANDA 4 (BW=0 RED=1) LUT2  colore ................
+[1]   la linea y=504 si vede?    SI / NO
+[1]   atteso, già misurato      -> 1 bianca, 2 nera, 3 e 4 entrambe rosse:
+[1]                                LUT2 = LUT3, nessun quarto colore
+[1]   banda 1 o 2 sbagliate     -> init o cablaggio: nient'altro vale
+
+[2] LE STESSE BANDE IN DISPLAY MODE 2, 0x22 = 0xFF
+[2]   è cambiato qualcosa rispetto alla schermata precedente?  ................
+
+[3] PROBE DEI LIVELLI, le due fasce in basso
+[3]   sopra y=504 (LUT3 a VSH2)  colore ................
+[3]   sotto y=504 (LUT2 a VSH1)  colore ................
+[3]   colori DIVERSI            -> esiste un quarto stato: coppia di bit più
+[3]                                una LUT custom via 0x32
+[3]   colori IDENTICI           -> tre pigmenti, la questione si chiude
+[3]   entrambe bianche          -> inconcludente: leggilo insieme alla sonda
+[3]                                del partial con LUT
+
+[6] PARTIAL CON LUT CUSTOM, la domanda più importante
+[6]   quale fascia è NERA:  PARTIAL 1 ....  PARTIAL 2 ....  nessuna ....
+[6]   fascia nera sotto 1 s     -> IL PARTIAL ESISTE: il lavoro da fare sul
+[6]                                driver è elencato in README.md
+[6]   nessuna nera              -> la LUT è accettata ma non pilota: la
+[6]                                waveform va aggiustata
+[6]   vince PARTIAL 1           -> il silicio legge (precedente, nuovo), e in
+[6]                                Mode 2 un frame in partial è senza accent
+[6]   vince PARTIAL 2           -> legge la Table 6-4, cioè (accent, BW)
+[6]   la cornice ha lampeggiato? con 0x3C = 0xC0 non deve   SI / NO
+
+[7] PARTIAL D'AREA
+[7]   trappola y=176..215       -> era   BIANCA / NERA
+[7]   bianca                    -> la finestra RAM limita l'area ridipinta
+[7]   nera                      -> il refresh ripassa tutto il pannello
+[7]   nera solo dopo AREA MODE 1-> solo 0xFC rispetta la finestra, e un
+[7]                                partial d'area costa l'accent
+[7]   mai comparsa              -> anche Mode 1 la rispetta: il partial d'area
+[7]                                resta compatibile con l'accent
+[7]   bordi x=256..511 non netti-> lungo X la finestra non vale: nel driver il
+[7]                                partial va a x=0 e w=WIDTH
+[7]   in cima non c'è AREA 4    -> la catena di partial non passa pulita:
+[7]                                serve un contatore che forzi _Update_Full
+[7]                                ogni N
+[7]   lampeggia solo AREA 1     -> 0x3C = 0x80 prima di un partial, 0x01 prima
+[7]                                di un refresh pieno
+
+[8] BANCHI PER TEMPERATURA
+[8]   fasce nere:  0 GRADI ....   20 GRADI ....   40 GRADI ....
+[8]   40 GRADI ancora sul vetro -> la passata a 70 °C è stata rifiutata, come
+[8]                                il datasheet descrive quando nessun range
+[8]                                corrisponde: la sua durata breve non è una
+[8]                                waveform veloce
+
+[9] MUX RIDOTTO
+[9]   fascia nera in cima:  672 ....   336 ....   168 ....
+[9]   manca a un valore         -> a quel MUX il pannello non scandisce la
+[9]                                fascia: valore troppo basso, o finestra RAM
+[9]                                non riadattata
+
+[10] DEEP SLEEP
+[10]   schermo NERO a fine test  -> il ciclo funziona e hibernate() è
+[10]                                utilizzabile: dopo il risveglio il driver
+[10]                                rifà init e riscrive i piani
+[10]   schermo non tornato       -> da lì non si torna: hibernate() lascerebbe
+[10]                                il pannello morto fino al power cycle
+[10]   immagine sporcata         -> dormi solo dopo un refresh completo, mai a
+[10]                                metà di una sequenza
+[10]   CORRENTE sul 3V3, l'unica cosa che il firmware non può misurare:
+[10]     addormentato ....... mA      sveglio e fermo ....... mA
+[10]   i due valori coincidono   -> nessun risparmio: il guadagno vero sarebbe
+[10]                                togliere alimentazione al pannello
+
+================================================

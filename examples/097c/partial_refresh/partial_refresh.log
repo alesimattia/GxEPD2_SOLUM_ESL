@@ -1,0 +1,173 @@
+_Update_Full : 24010001
+[1] >> refresh pieno di riferimento              24013 ms   <- durata da refresh pieno
+
+[1] vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+[1] GUARDA IL PANNELLO: SCHERMATA 1, il numero sta nel riquadro in
+[1] alto a destra dell'area appena ridipinta
+[1] FONDO DI RIFERIMENTO: da qui parte tutto
+[1]
+[1] atteso: fondo BIANCO, una fascia ROSSA a y=196..251 e una
+[1] fascia NERA a y=476..531
+[1] 
+[1] se il fondo non e' bianco o i testimoni non ci sono, il
+[1] refresh pieno non funziona e nient'altro di questo test vale
+[1] 
+[1] guarda bene QUANTO sono saturi i due testimoni: la fase [6]
+[1] chiedera' di confrontarli con adesso
+[1] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+[1] GUARDA IL PANNELLO E ANNOTA: parte l'allineamento di 0x26, che non tocca il vetro
+[1] premi INVIO quando hai finito, o aspetta 10 s
+[1]   5 s
+
+--- fase 2: allineamento di 0x26 al piano BW (NESSUNA schermata) ---
+_fillPlaneByPattern : 7001
+    0x26 := 0x24 in 19 ms, nessun refresh: il vetro non cambia e
+    non c'e' niente da guardare, la schermata resta la [1]
+
+--- fase 3: fascia A a NERO, in partial ---
+_PowerOn : 82001
+_Update_Part : 639001
+[3] >> drawImagePartial fascia A -> nero           775 ms   <- partial
+
+[3] vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+[3] GUARDA IL PANNELLO: SCHERMATA 3, il numero sta nel riquadro in
+[3] alto a destra dell'area appena ridipinta
+[3] IL PARTIAL: la fascia A e' diventata nera?
+[3]
+[3] la fascia A e' y=0..167, e il riquadro col 3 sta dentro di lei
+[3] 
+[3]   fascia NERA con la durata sotto il secondo -> IL PARTIAL
+[3]     FUNZIONA attraverso il driver, non solo a SPI diretta
+[3]   fascia nera ma con ~24 s -> la LUT custom non ha preso e il
+[3]     controller ha usato la waveform dell'OTP
+[3]   fascia non cambiata -> la LUT viene accettata ma non pilota
+[3] 
+[3] e soprattutto: i due TESTIMONI sono ancora al loro posto?
+[3] se si', la confinatura per LUT funziona; se il rosso e'
+[3] cambiato, il partial ha pilotato pixel che non doveva
+[3] 
+[3] guarda anche la CORNICE del pannello: con 0x3C=0xC0 non deve
+[3] lampeggiare
+[3] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+[3] GUARDA IL PANNELLO E ANNOTA: la fascia A torna bianca
+[3] premi INVIO quando hai finito, o aspetta 15 s
+[3]   10 s
+[3]   5 s
+
+--- fase 4: fascia A di nuovo BIANCA, senza preparazione ---
+_Update_Part : 639001
+[4] >> drawImagePartial fascia A -> bianco         692 ms   <- partial
+
+[4] vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+[4] GUARDA IL PANNELLO: SCHERMATA 4, il numero sta nel riquadro in
+[4] alto a destra dell'area appena ridipinta
+[4] L'INVARIANTE: la fascia A torna bianca da sola?
+[4]
+[4] fra la schermata 3 e questa NON e' stato riallineato 0x26: se la
+[4] fascia torna bianca vuol dire che drawImagePartial() ricopia da
+[4] se' il frame nuovo nella RAM del frame precedente, e una catena
+[4] di partial si puo' allungare quanto si vuole
+[4] 
+[4]   fascia BIANCA col riquadro 4 -> invariante a posto
+[4]   fascia rimasta nera          -> la ricopia in 0x26 non funziona
+[4]   fascia grigia o a chiazze    -> ricopia parziale
+[4] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+[4] GUARDA IL PANNELLO E ANNOTA: si dipinge la fascia B, piu' in basso
+[4] premi INVIO quando hai finito, o aspetta 15 s
+[4]   10 s
+[4]   5 s
+[4]   ripartito su richiesta dopo 13 s
+
+--- fase 5: fascia B a righe, in partial ---
+_Update_Part : 639001
+[5] >> drawImagePartial fascia B -> righe          692 ms   <- partial
+
+[5] vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+[5] GUARDA IL PANNELLO: SCHERMATA 5, il numero sta nel riquadro in
+[5] alto a destra dell'area appena ridipinta
+[5] CONFINATURA: il resto dello schermo si e' mosso?
+[5]
+[5] la fascia B e' y=280..447, a righe verticali, e il riquadro col
+[5] 5 sta dentro di lei: il numero compare in alto a destra di OGNI
+[5] area ridipinta, non sempre nello stesso posto
+[5] 
+[5] il refresh scandisce TUTTE le gate line, perche' la finestra RAM
+[5] su questo pannello non confina niente: a limitare l'area
+[5] ridipinta e' la LUT, che non pilota i pixel uguali nelle due RAM
+[5] 
+[5]   fascia A ancora bianca e testimoni intatti -> confermato
+[5]   qualcos'altro e' cambiato -> 0x26 non era allineato a 0x24
+[5] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+[5] GUARDA IL PANNELLO E ANNOTA: partono otto alternanze sulla fascia A
+[5] premi INVIO quando hai finito, o aspetta 15 s
+[5]   10 s
+[5]   ripartito su richiesta dopo 7 s
+
+--- fase 6: otto alternanze sulla fascia A ---
+_Update_Part : 639001
+_Update_Part : 639001
+_Update_Part : 639001
+_Update_Part : 639001
+_Update_Part : 639001
+_Update_Part : 639001
+_Update_Part : 639001
+_Update_Part : 639001
+[6] >> otto passate di partial                    5536 ms   <- 692 ms per passata
+
+[6] vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+[6] GUARDA IL PANNELLO: SCHERMATA 6, il numero sta nel riquadro in
+[6] alto a destra dell'area appena ridipinta
+[6] SBIADIMENTO: quanto costa una catena lunga
+[6]
+[6] la fascia A ha alternato nero e bianco otto volte e adesso e'
+[6] bianca, col riquadro 6
+[6] 
+[6] confronta ADESSO con la schermata 1, che avevi guardato bene:
+[6]   il testimone ROSSO e' meno saturo?
+[6]   il testimone NERO e' diventato grigio?
+[6]   il fondo bianco si e' sporcato?
+[6] 
+[6] sono pixel che nessun partial ha indirizzato: si schiariscono
+[6] lo stesso perche' il pannello viene pilotato tutto. Quanto si
+[6] vede qui detta ogni quanti partial serve un refresh pieno
+[6] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+[6] GUARDA IL PANNELLO E ANNOTA: parte il refresh pieno di pulizia
+[6] premi INVIO quando hai finito, o aspetta 20 s
+[6]   15 s
+[6]   ripartito su richiesta dopo 7 s
+
+--- fase 7: accent ricostruito + refresh pieno ---
+_fillPlaneByPattern : 7001
+_fillPlaneByPattern : 7001
+_Update_Full : 24007001
+[7] >> refresh pieno finale                      24010 ms   <- durata da refresh pieno
+
+[7] vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+[7] GUARDA IL PANNELLO: SCHERMATA 7, il numero sta nel riquadro in
+[7] alto a destra dell'area appena ridipinta
+[7] RITORNO: si torna alla waveform di produzione?
+[7]
+[7] il vetro deve tornare netto come alla schermata 1, col riquadro
+[7] che pero' adesso porta il 7: fondo bianco pulito, testimone
+[7] ROSSO saturo, testimone NERO pieno, nessuna traccia delle fasce
+[7] 
+[7]   torna netto        -> il ritorno dalla LUT custom alla
+[7]     waveform dell'OTP funziona, e il driver rimette il border da se'
+[7]   schermo ROSSO      -> l'accent non e' stato ricostruito prima del
+[7]     refresh: e' la trappola che questa fase esiste per dimostrare
+[7]   restano fantasmi   -> un solo refresh pieno non basta a
+[7]     cancellare la catena, e ne serve piu' di uno
+[7] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+pannello in deep sleep. Fine del test.
