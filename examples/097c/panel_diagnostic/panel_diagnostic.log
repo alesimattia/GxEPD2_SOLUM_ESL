@@ -1,0 +1,448 @@
+ets Jul 29 2019 12:21:46
+
+rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:1
+load:0x3fff0030,len:4876
+ho 0 tail 12 room 4
+load:0x40078000,len:16532
+load:0x40080400,len:3500
+entry 0x400805b4
+
+=== panel_diagnostic: SOLUM ESL 9.7 pollici, SSD1677, SPI diretta ===
+pannello 960 x 672, 80640 byte per piano, clock 10000000 Hz, timeout 40000 ms
+il numero fra parentesi quadre e' il riquadro in alto a destra dell'area ridipinta
+
+-- sonde, fra parentesi i refresh da 24 s --
+ b bus e controller         (0) 1 4 bande Mode 1           (1) 2 4 bande Mode 2           (1)
+ 3 livelli di sorgente      (2) 4 sequenze di 0x22         (3) 5 finestra RAM e trappola  (3)
+ 6 banchi per temperatura   (4) 7 MUX ridotto              (3) i sequenze di partenza     (7)
+ w waveform piena 370       (3) 8 partial LUT senza 0x04   (2) p catena di partial        (3)
+ t taratura waveform        (4) 0 deep sleep               (4) m passata libera           (1)
+-- sessione:  a tutte   s riepilogo   c parametri   e init   l waveform   x esaustivo=no   v dettagli=no   h menu
+
+== b  bus e controller (0 refresh) ==
+[0] bus blocco  120 B: 0.902 us/B, 89% del limite del clock
+[0] bus blocco  256 B: 0.897 us/B, 89% del limite del clock
+[0] bus blocco 4096 B: 0.895 us/B, 89% del limite del clock
+[0] bus writeData 39.56 us/B, writeCommand 42.73 us, piano da 80640 B in 73 ms
+[0] MEAS  PATTERN 0x47 BIANCO                             8 ms
+[0] MEAS  PATTERN 0x46 SPENTO                             8 ms
+[0] MEAS  POWER ON 0x22=C0                   22=C0      82 ms
+[0] MEAS  HV READY 0x14                                   0 ms
+[0] MEAS  VCI DETECT 0x15                                 4 ms
+[0] MEAS  POWER OFF 0x22=C3                  22=C3     221 ms
+[0] MEAS  POWER OFF 0x22=83                  22=83     139 ms
+[0] MEAS  POWER OFF 0x22=03                  22=03     139 ms
+[0] MEAS  LOAD TEMP E LUT 0x22=B1            22=B1       3 ms
+[0] MEAS  LOAD LUT MODE 2 0x22=99            22=99       0 ms
+[0] MEAS  SOFT RESET 2 0x13                              -1 ms
+[0] VERDICT 0x13 non alza il BUSY: nessun effetto osservabile
+[0] 0x2F status 0x00: chip ID non atteso, letture da ignorare
+[0] 0x2E user ID 00 00 00 00 00 00 00 00 00 00
+[0] 0x1B temperatura a init finita: raw 0x0000, non attendibile
+
+== 1  4 bande Mode 1 (1 refresh) ==
+[1] MEAS  LE 4 BANDE MODE 1                  22=F7   24019 ms
+[1] 0x1B temperatura dopo il refresh: raw 0x0000, non attendibile
+[1] guarda: 1 bianca, 2 nera, 3 e 4 rosse: la linea y=504 si vede? [o/n]
+[1] tasto...
+[1] SEEN  o
+
+== 2  4 bande Mode 2 (1 refresh) ==
+[2] MEAS  LE 4 BANDE MODE 2                  22=FF     225 ms
+[2] VERDICT Mode 1 24019 ms, Mode 2 225 ms: banchi diversi
+[2] guarda: i colori sono gli stessi della schermata Mode 1? [o/n]
+[2] tasto...
+[2] SEEN  o
+
+== 3  livelli di sorgente (2 refresh) ==
+[3] MEAS  FONDO BIANCO PRIMA DEI LIVELLI     22=F7   24019 ms
+[3] MEAS  LIVELLI LUT2 VSH1 CONTRO LUT3 VSH2 22=C4    4067 ms
+[3] guarda: le due bande in basso hanno colore diverso? [o/n] o = quarto colore
+[3] tasto...
+[3] SEEN  n
+
+== 4  sequenze di 0x22 (3 refresh) ==
+[4] MEAS  RIFERIMENTO 0X22=F7                22=F7   24014 ms
+[4] MEAS  DIFFERENZA ZERO 0X22=FC            22=FC      85 ms
+[4] MEAS  DIFFERENZA MASSIMA 0X22=FC         22=FC      85 ms
+[4] VERDICT zero 85 ms, massima 85 ms, scarto 0 ms: il controller NON confronta i due piani
+[4] guarda: quale frase e' rimasta sul vetro? e' quella dell'ultima passata? [o/n]
+[4] tasto...
+[4] SEEN  o
+
+== 5  finestra RAM e trappola (3 refresh) ==
+[5] MEAS  BASELINE BIANCA DELL AREA          22=F7   24014 ms
+[5] MEAS  AREA 1 FASCIA ALTA NERA 0X22=FC    22=FC   23869 ms
+[5] MEAS  AREA MODE 1 SU FINESTRA 0X22=F4    22=F4   23871 ms
+[5] VERDICT area 23869 ms contro 24014 ms del pieno: nessun guadagno dalla finestra
+[5] guarda: la trappola y=176..215 e' rimasta BIANCA? [o/n] n = il refresh ripassa tutto
+[5] tasto...
+[5] SEEN  o
+
+== 6  banchi per temperatura (4 refresh) ==
+[6] MEAS  TEMPERATURA 0 GRADI 0X1A=000       22=F7   59060 ms
+[6] MEAS  TEMPERATURA 20 GRADI 0X1A=140      22=F7   24008 ms
+[6] MEAS  TEMPERATURA 40 GRADI 0X1A=280      22=F7   22962 ms
+[6] MEAS  TEMPERATURA 70 GRADI FUORI RANGE 0X1A=460 22=F7   22959 ms
+[6] guarda: quali fasce sono nere, e quella fuori range e' stata rifiutata? [o/n]
+[6] tasto...
+[6] SEEN  n
+
+== 7  MUX ridotto (3 refresh) ==
+[7] MEAS  MUX 680 GATE LINE                  22=F7   24009 ms
+[7] MEAS  MUX 672 GATE LINE                  22=F7   24007 ms
+[7] MEAS  MUX 336 GATE LINE                  22=F7   24032 ms
+[7] VERDICT MUX 680 contro 336: 1.00x, il refresh NON scala
+[7] guarda: la fascia dell'ultima passata c'e'? [o/n]
+[7] tasto...
+[7] SEEN  o
+
+== i  sequenze di partenza (7 refresh) ==
+[8] MEAS  custom                             22=F7   24012 ms
+[8] guarda: nero pieno, rosso saturo, riga in fondo, testo dritto? [o/n]
+[8] tasto...
+[8] SEEN  o
+[9] MEAS  SOLUM fabbrica                     22=F7   24009 ms
+[9] guarda: nero pieno, rosso saturo, riga in fondo, testo dritto? [o/n]
+[9] tasto...
+[9] SEEN  n
+[10] MEAS  GDEM133Z91                         22=F7   24011 ms
+[10] guarda: nero pieno, rosso saturo, riga in fondo, testo dritto? [o/n]
+[10] tasto...
+[10] SEEN  o
+[11] MEAS  GDEH116T91                         22=F4   23867 ms
+[11] guarda: nero pieno, rosso saturo, riga in fondo, testo dritto? [o/n]
+[11] tasto...
+[11] SEEN  o
+[12] MEAS  GDEH075Z90                         22=C7   24003 ms
+[12] guarda: nero pieno, rosso saturo, riga in fondo, testo dritto? [o/n]
+[12] tasto...
+[12] SEEN  o
+[13] MEAS  GDEQ0426T82                        22=F7   24011 ms
+[13] guarda: nero pieno, rosso saturo, riga in fondo, testo dritto? [o/n]
+[13] tasto...
+[13] SEEN  n
+[14] MEAS  GDEM102Z91                         22=F7   24011 ms
+[14] guarda: nero pieno, rosso saturo, riga in fondo, testo dritto? [o/n]
+[14] tasto...
+[14] SEEN  n
+
+== w  waveform piena 370 (3 refresh) ==
+[15] MEAS  RIFERIMENTO OTP PRIMA DELLA 370    22=F7   24011 ms
+[15] guarda: fascia nera in alto e fascia rossa al centro, entrambe sature? [o/n]
+[15] tasto...
+[15] SEEN  o
+[15] waveform 370: 38 frame, attesi ~843 ms
+[16] MEAS  WAVEFORM 370 AREA A NERO 0X22=CF   22=CF     979 ms
+[16] guarda: la scritta e' comparsa sotto il secondo, e il rosso e' sparito? [o/n]
+[16] tasto...
+[16] SEEN  n
+[17] MEAS  WAVEFORM 370 AREA A BIANCO 0X22=CF 22=CF     978 ms
+[17] VERDICT 370 978 ms contro 24011 ms dell'OTP: 25x
+[17] guarda: il bianco e' pulito, senza fantasmi della scritta? [o/n]
+[17] tasto...
+[17] SEEN  n
+
+== 8  partial LUT senza 0x04 (2 refresh) ==
+[18] MEAS  PARTIAL 1 LUT DRIVER MODE 2 0X22=CC 22=CC     640 ms
+[18] MEAS  PARTIAL 2 LUT TABLE 6-4 MODE 1 0X22=C4 22=C4     640 ms
+[18] VERDICT partial 640 ms contro 24011 ms del pieno: 38x
+[18] guarda: quale delle due fasce e' diventata nera? [1/2/n] e il nero e' pieno?
+[18] tasto...
+[18] SEEN  2
+
+== p  catena di partial (3 refresh) ==
+[19] MEAS  CATENA RIFERIMENTO CON I DUE TESTIMONI 22=F7   24014 ms
+[19] guarda: fondo bianco, fascia rossa a y=196, fascia nera a y=476: sature? [o/n]
+[19] tasto...
+[19] SEEN  o
+[19] 0x26 allineato a 0x24: nessun refresh, il vetro non cambia
+[19] MEAS  CATENA FASCIA A NERA               22=CC     640 ms
+[20] guarda: fascia A nera in meno di un secondo, testimoni fermi, cornice ferma? [o/n]
+[20] tasto...
+[20] SEEN  o
+[19] MEAS  CATENA FASCIA A BIANCA             22=CC     640 ms
+[21] guarda: la fascia A e' tornata bianca senza preparazione? [o/n]
+[21] tasto...
+[21] SEEN  n
+[19] MEAS  CATENA FASCIA B A RIGHE            22=CC     640 ms
+[22] guarda: solo la fascia B e' cambiata, il resto e' fermo? [o/n]
+[22] tasto...
+[22] SEEN  o
+[19] MEAS  CATENA ALTERNANZA                  22=CC     640 ms
+[23] otto passate in 11880 ms, 1485 ms per passata
+[23] guarda: testimoni e fondo come al riferimento, o sbiaditi? [o/n]
+[23] tasto...
+[23] SEEN  o
+[24] MEAS  CATENA USCITA CON PULIZIA DI 0X26  22=F7   24014 ms
+[24] guarda: il vetro e' netto come al riferimento? [o/n]
+[24] tasto...
+[24] SEEN  o
+
+== t  taratura waveform (4 refresh) ==
+
+  taratura: 1 sweep VSH1 | 2 struttura | 3 bianco | a tutte
+[24] MEAS  TARATURA RIFERIMENTO               22=F7   24012 ms
+[24] MEAS  NUMERO DI SCHERMATA                22=CC     640 ms
+[24] MEAS  VSH1  9 V                          22=CC     640 ms
+[26] banda 1  VSH1  9 V                  640 ms   28 fr  atteso   643
+[24] MEAS  VSH1 10 V                          22=CC     640 ms
+[26] banda 2  VSH1 10 V                  640 ms   28 fr  atteso   643
+[24] MEAS  VSH1 11 V                          22=CC     640 ms
+[26] banda 3  VSH1 11 V                  640 ms   28 fr  atteso   643
+[24] MEAS  VSH1 12 V                          22=CC     640 ms
+[26] banda 4  VSH1 12 V                  640 ms   28 fr  atteso   643
+[24] MEAS  VSH1 13 V                          22=CC     640 ms
+[26] banda 5  VSH1 13 V                  640 ms   28 fr  atteso   643
+[24] MEAS  VSH1 14 V                          22=CC     640 ms
+[26] banda 6  VSH1 14 V                  640 ms   28 fr  atteso   643
+[24] MEAS  VSH1 15 V (POR)                    22=CC     640 ms
+[26] banda 7  VSH1 15 V (POR)            640 ms   28 fr  atteso   643
+[26] guarda: quale banda ha il NERO PIENO contro il nero accanto? [1-7]
+[26] tasto...
+[26] SEEN  7
+[24] MEAS  NUMERO DI SCHERMATA                22=CC     640 ms
+[24] MEAS  VSH1  9 V                          22=CC     640 ms
+[27] banda 1  VSH1  9 V                  640 ms   28 fr  atteso   643
+[24] MEAS  VSH1 10 V                          22=CC     640 ms
+[27] banda 2  VSH1 10 V                  640 ms   28 fr  atteso   643
+[24] MEAS  VSH1 11 V                          22=CC     640 ms
+[27] banda 3  VSH1 11 V                  640 ms   28 fr  atteso   643
+[24] MEAS  VSH1 12 V                          22=CC     640 ms
+[27] banda 4  VSH1 12 V                  640 ms   28 fr  atteso   643
+[24] MEAS  VSH1 13 V                          22=CC     640 ms
+[27] banda 5  VSH1 13 V                  640 ms   28 fr  atteso   643
+[24] MEAS  VSH1 14 V                          22=CC     640 ms
+[27] banda 6  VSH1 14 V                  640 ms   28 fr  atteso   643
+[24] MEAS  VSH1 15 V (POR)                    22=CC     640 ms
+[27] banda 7  VSH1 15 V (POR)            640 ms   28 fr  atteso   643
+[27] guarda: quale banda torna BIANCA PULITA, senza fantasma della cifra? [1-7]
+[27] tasto...
+[27] SEEN  n
+  banda vincente della fase 1 [1..7, invio = 7]: 1
+[24] fase 1: vince la banda 1, VSH1 0x23
+[24] MEAS  TARATURA RIFERIMENTO               22=F7   24016 ms
+[24] MEAS  NUMERO DI SCHERMATA                22=CC     640 ms
+[24] MEAS  LUT del driver                     22=CC     640 ms
+[29] banda 1  LUT del driver             640 ms   28 fr  atteso   643
+[24] MEAS  compositore, uguale                22=CC     640 ms
+[29] banda 2  compositore, uguale        640 ms   28 fr  atteso   643
+[24] MEAS  frame rate 25 Hz                   22=CC    1198 ms
+[29] banda 3  frame rate 25 Hz          1198 ms   28 fr  atteso  1203
+[24] MEAS  drive x2                           22=CC     998 ms
+[29] banda 4  drive x2                   998 ms   46 fr  atteso  1003
+[24] MEAS  drive x4                           22=CC    1716 ms
+[29] banda 5  drive x4                  1716 ms   82 fr  atteso  1723
+[24] MEAS  + VGH 20 V (POR)                   22=CC     640 ms
+[29] banda 6  + VGH 20 V (POR)           640 ms   28 fr  atteso   643
+[24] MEAS  + VCOM -1,7 V                      22=CC     640 ms
+[29] banda 7  + VCOM -1,7 V              640 ms   28 fr  atteso   643
+[29] guarda: 1 driver | 2 stessi totali | 3 durata doppia | 4-5 piu frame | 6 VGH | 7 VCOM [o/n]
+[29] tasto...
+[29] SEEN  1
+[24] MEAS  TARATURA RIFERIMENTO               22=F7   24014 ms
+[24] MEAS  NUMERO DI SCHERMATA                22=CC     640 ms
+[24] MEAS  LUT del driver                     22=CC     640 ms
+[31] banda 1  LUT del driver             640 ms   28 fr  atteso   643
+[24] MEAS  LUT1 simmetrica                    22=CC     640 ms
+[31] banda 2  LUT1 simmetrica            640 ms   28 fr  atteso   643
+[24] MEAS  compositore, cicli 1               22=CC     640 ms
+[31] banda 3  compositore, cicli 1       640 ms   28 fr  atteso   643
+[24] MEAS  compositore, cicli 3               22=CC     620 ms
+[31] banda 7  compositore, cicli 3       620 ms   27 fr  atteso   623
+[24] MEAS  + VCOM -0,9 V                      22=CC     640 ms
+[31] banda 4  + VCOM -0,9 V              640 ms   28 fr  atteso   643
+[24] MEAS  + VCOM -1,3 V                      22=CC     640 ms
+[31] banda 5  + VCOM -1,3 V              640 ms   28 fr  atteso   643
+[24] MEAS  + VCOM -1,7 V                      22=CC     640 ms
+[31] banda 6  + VCOM -1,7 V              640 ms   28 fr  atteso   643
+[31] guarda: guarda i BORDI fra bande consecutive: quale bianco e' piu pulito? [1-7]
+[31] tasto...
+[31] SEEN  7
+
+== 0  deep sleep (4 refresh) ==
+[32] MEAS  RIFERIMENTO PRIMA DI 0X10=01       22=F7   24013 ms
+[32] 0x10 = 0x01: BUSY alto, comandi ignorati
+[32] guarda: l'immagine e' rimasta intatta mentre dorme? misura la corrente sul 3V3 [o/n]
+[32] tasto...
+[32] SEEN  o
+[32] MEAS  RISVEGLIO RESET PIU INIT                      234 ms
+[32] MEAS  RAM DOPO 0X10=01 SENZA RISCRITTURA 22=F7   24015 ms
+[33] guarda: e' tornata l'immagine di prima? [o/n] o = la RAM e' ritenuta
+[33] tasto...
+[33] SEEN  o
+[33] VERDICT 0x10 = 0x01: RAM RITENUTA dopo il risveglio
+[34] MEAS  RIFERIMENTO PRIMA DI 0X10=03       22=F7   24014 ms
+[34] 0x10 = 0x03: BUSY alto, comandi ignorati
+[34] guarda: l'immagine e' rimasta intatta mentre dorme? misura la corrente sul 3V3 [o/n]
+[34] tasto...
+[34] SEEN  o
+[34] MEAS  RISVEGLIO RESET PIU INIT                      234 ms
+[34] MEAS  RAM DOPO 0X10=03 SENZA RISCRITTURA 22=F7   24014 ms
+[35] guarda: e' tornata l'immagine di prima? [o/n] o = la RAM e' ritenuta
+[35] tasto...
+[35] SEEN  n
+[35] VERDICT 0x10 = 0x03: RAM persa dopo il risveglio
+[34] sonno OEPL 0x13 + 0x10 = 0x01: BUSY alto
+
+-- misure --
+  sonda  0x22      ms  vis  descrizione
+  b       --        8       PATTERN 0x47 BIANCO
+  b       --        8       PATTERN 0x46 SPENTO
+  b       C0       82       POWER ON 0x22=C0
+  b       --        0       HV READY 0x14
+  b       --        4       VCI DETECT 0x15
+  b       C3      221       POWER OFF 0x22=C3
+  b       83      139       POWER OFF 0x22=83
+  b       03      139       POWER OFF 0x22=03
+  b       B1        3       LOAD TEMP E LUT 0x22=B1
+  b       99        0       LOAD LUT MODE 2 0x22=99
+  b       --        -       SOFT RESET 2 0x13
+  1       F7    24019   o   LE 4 BANDE MODE 1  [1]
+  2       FF      225   o   LE 4 BANDE MODE 2  [2]
+  3       F7    24019       FONDO BIANCO PRIMA DEI LIVELLI  [3]
+  3       C4     4067   n   LIVELLI LUT2 VSH1 CONTRO LUT3 VSH2  [3]
+  4       F7    24014       RIFERIMENTO 0X22=F7  [4]
+  4       FC       85       DIFFERENZA ZERO 0X22=FC  [4]
+  4       FC       85   o   DIFFERENZA MASSIMA 0X22=FC  [4]
+  5       F7    24014       BASELINE BIANCA DELL AREA  [5]
+  5       FC    23869       AREA 1 FASCIA ALTA NERA 0X22=FC  [5]
+  5       F4    23871   o   AREA MODE 1 SU FINESTRA 0X22=F4  [5]
+  6       F7    59060       TEMPERATURA 0 GRADI 0X1A=000  [6]
+  6       F7    24008       TEMPERATURA 20 GRADI 0X1A=140  [6]
+  6       F7    22962       TEMPERATURA 40 GRADI 0X1A=280  [6]
+  6       F7    22959   n   TEMPERATURA 70 GRADI FUORI RANGE 0X1A=460  [6]
+  7       F7    24009       MUX 680 GATE LINE  [7]
+  7       F7    24007       MUX 672 GATE LINE  [7]
+  7       F7    24032   o   MUX 336 GATE LINE  [7]
+  i       F7    24012   o   custom  [8]
+  i       F7    24009   n   SOLUM fabbrica  [9]
+  i       F7    24011   o   GDEM133Z91  [10]
+  i       F4    23867   o   GDEH116T91  [11]
+  i       C7    24003   o   GDEH075Z90  [12]
+  i       F7    24011   n   GDEQ0426T82  [13]
+  i       F7    24011   n   GDEM102Z91  [14]
+  w       F7    24011   o   RIFERIMENTO OTP PRIMA DELLA 370  [15]
+  w       CF      979   n   WAVEFORM 370 AREA A NERO 0X22=CF  [16]
+  w       CF      978   n   WAVEFORM 370 AREA A BIANCO 0X22=CF  [17]
+  8       CC      640       PARTIAL 1 LUT DRIVER MODE 2 0X22=CC  [18]
+  8       C4      640   2   PARTIAL 2 LUT TABLE 6-4 MODE 1 0X22=C4  [18]
+  p       F7    24014   o   CATENA RIFERIMENTO CON I DUE TESTIMONI  [19]
+  p       CC      640   o   CATENA FASCIA A NERA  [19]
+  p       CC      640   n   CATENA FASCIA A BIANCA  [19]
+  p       CC      640   o   CATENA FASCIA B A RIGHE  [19]
+  p       CC      640   o   CATENA ALTERNANZA  [19]
+  p       F7    24014   o   CATENA USCITA CON PULIZIA DI 0X26  [24]
+  t       F7    24012       TARATURA RIFERIMENTO  [24]
+  t       CC      640       NUMERO DI SCHERMATA  [24]
+  t       CC      640       VSH1  9 V  [24]
+  t       CC      640       VSH1 10 V  [24]
+  t       CC      640       VSH1 11 V  [24]
+  t       CC      640       VSH1 12 V  [24]
+  t       CC      640       VSH1 13 V  [24]
+  t       CC      640       VSH1 14 V  [24]
+  t       CC      640   7   VSH1 15 V (POR)  [24]
+  t       CC      640       NUMERO DI SCHERMATA  [24]
+  t       CC      640       VSH1  9 V  [24]
+  t       CC      640       VSH1 10 V  [24]
+  t       CC      640       VSH1 11 V  [24]
+  t       CC      640       VSH1 12 V  [24]
+  t       CC      640       VSH1 13 V  [24]
+  t       CC      640       VSH1 14 V  [24]
+  t       CC      640   n   VSH1 15 V (POR)  [24]
+  t       F7    24016       TARATURA RIFERIMENTO  [24]
+  t       CC      640       NUMERO DI SCHERMATA  [24]
+  t       CC      640       LUT del driver  [24]
+  t       CC      640       compositore, uguale  [24]
+  t       CC     1198       frame rate 25 Hz  [24]
+  t       CC      998       drive x2  [24]
+  t       CC     1716       drive x4  [24]
+  t       CC      640       + VGH 20 V (POR)  [24]
+  t       CC      640   1   + VCOM -1,7 V  [24]
+  t       F7    24014       TARATURA RIFERIMENTO  [24]
+  t       CC      640       NUMERO DI SCHERMATA  [24]
+  t       CC      640       LUT del driver  [24]
+  t       CC      640       LUT1 simmetrica  [24]
+  t       CC      640       compositore, cicli 1  [24]
+  t       CC      620       compositore, cicli 3  [24]
+  t       CC      640       + VCOM -0,9 V  [24]
+  t       CC      640       + VCOM -1,3 V  [24]
+  t       CC      640   7   + VCOM -1,7 V  [24]
+  0       F7    24013   o   RIFERIMENTO PRIMA DI 0X10=01  [32]
+  0       --      234       RISVEGLIO RESET PIU INIT  [32]
+  0       F7    24015   o   RAM DOPO 0X10=01 SENZA RISCRITTURA  [32]
+  0       F7    24014   o   RIFERIMENTO PRIMA DI 0X10=03  [34]
+  0       --      234       RISVEGLIO RESET PIU INIT  [34]
+  0       F7    24014   n   RAM DOPO 0X10=03 SENZA RISCRITTURA  [34]
+
+-- schermate --
+  [1] 4 bande, Display Mode 1
+  [2] 4 bande, Display Mode 2
+  [3] livelli di sorgente, quarto colore
+  [4] sequenze di 0x22
+  [5] finestra RAM e fascia di trappola
+  [6] banchi di waveform per temperatura
+  [7] MUX ridotto
+  [8] custom
+  [9] SOLUM fabbrica
+  [10] GDEM133Z91
+  [11] GDEH116T91
+  [12] GDEH075Z90
+  [13] GDEQ0426T82
+  [14] GDEM102Z91
+  [15] riferimento prima della waveform 370
+  [16] waveform 370, area a nero
+  [17] waveform 370, area a bianco
+  [18] partial con LUT via 0x32, senza 0x04
+  [19] catena di partial, riferimento
+  [20] catena, fascia A a nero
+  [21] catena, fascia A di nuovo bianca
+  [22] catena, fascia B a righe
+  [23] catena, otto alternanze
+  [24] catena, uscita con pulizia di 0x26
+  [25] taratura, riferimento
+  [26] taratura fase 1, sweep VSH1 al nero
+  [27] taratura fase 1, le stesse bande al bianco
+  [28] taratura, riferimento
+  [29] taratura fase 2, struttura e tensioni
+  [30] taratura, riferimento
+  [31] taratura fase 3, il bianco
+  [32] deep sleep, riferimento
+  [33] deep sleep, RAM dopo il risveglio
+  [34] deep sleep, riferimento
+  [35] deep sleep, RAM dopo il risveglio
+
+-- bus --
+  3270960 byte in 2948736 us -> 0.90 us/byte
+  3996 comandi, 12848 parametri, 900236 ms di attesa BUSY, heap 291096
+
+-- per il driver --
+DRV  _Update_Full 0xF7          24019 ms                     <- sonda 1 [1]
+DRV  _busy_timeout              59060 ms, timeout > 118120 ms <- sonda 6 [6]
+DRV  power_on_time              82 ms                        <- sonda b [0]
+DRV  power_off_time             221 ms                       <- sonda b [0]
+DRV  _Init_Part senza 0x04      640 ms senza 0x04            <- sonda 8 [18]
+DRV  _Update_Part 0xCC          640 ms con 0x04              <- sonda p [19]
+DRV  _Init_Full alla 370        979 ms, waveform dall'MCU    <- sonda w [16]
+DRV  _InitDisplay: varianti promosse dall'occhio
+DRV    custom            24012 ms  visto o  [8]
+DRV    SOLUM fabbrica    24009 ms  visto n  [9]
+DRV    GDEM133Z91        24011 ms  visto o  [10]
+DRV    GDEH116T91        23867 ms  visto o  [11]
+DRV    GDEH075Z90        24003 ms  visto o  [12]
+DRV    GDEQ0426T82       24011 ms  visto n  [13]
+DRV    GDEM102Z91        24011 ms  visto n  [14]
+DRV  hibernate                  0x10 = 0x01                 
+DRV  cfg.seq  custom-live reset 2 ms, 0x0C[4] 80, MUX 671/00, 0x11 03, 0x21 0000@0, 0x22 F7, off -1
+DRV  cfg.lut  sorgente 0, VSH1 41 VSH2 A8 VSL 32 VGH 00 VCOM 00 (non inviato), 10+18 frame x1, FR 2, border C0
+
+-- sonde, fra parentesi i refresh da 24 s --
+ b bus e controller         (0) 1 4 bande Mode 1           (1) 2 4 bande Mode 2           (1)
+ 3 livelli di sorgente      (2) 4 sequenze di 0x22         (3) 5 finestra RAM e trappola  (3)
+ 6 banchi per temperatura   (4) 7 MUX ridotto              (3) i sequenze di partenza     (7)
+ w waveform piena 370       (3) 8 partial LUT senza 0x04   (2) p catena di partial        (3)
+ t taratura waveform        (4) 0 deep sleep               (4) m passata libera           (1)
+-- sessione:  a tutte   s riepilogo   c parametri   e init   l waveform   x esaustivo=no   v dettagli=no   h menu

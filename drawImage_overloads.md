@@ -170,8 +170,11 @@ void powerOff();
 void hibernate();
 ```
 
-`refresh()` always performs a full-window refresh (~22 s); the panel does
-not support fast partial update. `hibernate()` puts the controller in
+`refresh()` always performs a full-window refresh (~24 s), in both overloads:
+it is the entry point the template uses for **colour** frames, and a black and
+white partial there would drop the red. The panel does have a fast partial,
+640 ms, but it lives in the driver's opt-in API (`drawImagePartial()` and
+siblings), not here. `hibernate()` puts the controller in
 deep sleep and should be called to reduce power consumption between
 distant refreshes (called automatically by `showImage()` when
 `hibernateAfter=true`).
@@ -221,7 +224,11 @@ array` or inside `showImage(GXEPD_BWRY_IMAGE(...))`):
 |---|---|
 | `GXEPD_BW_IMAGE(ptr, w, h)` | B/W single-buffer descriptor |
 | `GXEPD_BWR_IMAGE(pb, pr, w, h)` | 3-color descriptor (black + red) |
-| `GXEPD_BWRY_IMAGE(pb, pr, py, w, h)` | 4-color descriptor (black + red + yellow) |
+| `GXEPD_BWRY_IMAGE(pb, pr, py, w, h)` | 3-plane descriptor (black + red + yellow) |
+
+For a 3-plane descriptor `showImage()` renders `data0` and `data1` only: no
+driver in this library writes `data2`, which is left to a caller with a
+four-color panel and its own primitive to drive it.
 
 The `epd_image_converter.pyw` script automatically generates a variable
 `img_<name>_desc` of type `GxEPDImage::Descriptor` at each conversion,

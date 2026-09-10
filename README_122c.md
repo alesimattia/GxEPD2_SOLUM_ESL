@@ -1,15 +1,29 @@
 # GxEPD2_SOLUM_122c_960x768 — driver custom
 
-> **La sequenza di init di questo driver è da riscrivere.** Il bring-up ha
-> stabilito due cose che il codice non riflette ancora: il pannello risponde a
-> **SSD16xx**, non a UC8179, e ogni controller pilota **960×384** con lo split
-> sull'**asse corto**, non le colonne 0..479 / 480..959. Resta valido tutto lo
-> scheletro dual-controller (`ScreenPart`, `_writeCommandAll`,
-> `_waitWhileAnyBusy`, dispatch outer-class) e resta valida l'infrastruttura
-> immagine. Le evidenze e le misure sono in
+> **Stato: una banda validata, le due bande insieme no.** Il command set del
+> driver è **SSD16xx** e lo split è per righe, 960×384 per controller — entrambi
+> misurati e già nel codice. Con una sola coda cablata si stampa correttamente
+> una banda 960×384, ed è la metà che il firmware di produzione già disegna.
+>
+> **Quello che resta non verificato è il modello a due chip select** su cui è
+> costruito il dispatch di questo file. Le evidenze raccolte dicono che i due
+> controller sono con ogni probabilità una coppia in **cascade**: un solo CS, lo
+> slave indirizzato sommando `0x80` all'opcode, e soprattutto lo slave **senza
+> oscillatore nè booster**, che riceve clock e tensioni dal master. Se
+> `examples/12_2c/dual_panel_finder` lo conferma, di questo driver cambiano il
+> dispatch e il modo di parlare al secondo controller. Fino ad allora il codice
+> resta com'è. Evidenze in
+> [docs/fonti_esterne.md §4](docs/fonti_esterne.md) e
 > [docs/122c/identificazione_pannello.md](docs/122c/identificazione_pannello.md),
-> lo stato punto per punto in
+> stato punto per punto in
 > [§5](#5-punti-todoverify-da-validare-al-bring-up).
+
+Il codice modello si legge come `EL <taglia> <generazione> <colore scocca>
+<colore display> <tipo tag>`, quindi `EL122H6W4A` = 12.2", generazione H6,
+scocca bianca, campo colore `4`, tag con pulsante. Il `4` **non** va letto come
+"questa unità è BWRY": è costante su tutta la linea PRO, e la serigrafia sul
+vetro della stessa unità dice `Newton PRO 12.2" BWR normal`. Il colore lo decide
+il vetro; dettaglio in [docs/fonti_esterne.md §2](docs/fonti_esterne.md).
 
 Driver header-only per pannello e-paper **SOLUM 12.2"** (linee Newton PRO e
 Newton Core / M3, stesso pannello)
@@ -22,14 +36,15 @@ da 960×384 ciascuno) su **ESP32**. Estende
   script Python) e bitmap raw 1bpp B/N (formato
   [image2cpp](https://javl.github.io/image2cpp/));
 - **2 API siblings uniformi** `writeImageBlack` / `writeImageRed` per
-  scrittura single-channel. Il giallo non esiste su questo pannello:
-  `writeImageYellow` e `preserveYellow` sono no-op, vedi
-  [§6](#6-convivenza-con-il-driver-solum-97);
+  scrittura single-channel. Le primitive del terzo piano
+  (`writeImageYellow`, `preserveYellow`, `isYellowPreserved`) sono dichiarate
+  ma ancora senza corpo, in attesa che il bring-up dica se il quarto colore su
+  questo pannello esista: vedi [§6](#6-convivenza-con-il-driver-solum-97);
 - **sistema di descrittori universali** (`GxEPDImage::Descriptor`) condiviso
   con il driver 9.7", di cui qui sono utili i formati BW e BWR;
 - **dispatch dual-controller master/slave** trasparente al chiamante: le due
-  metà del pannello sono bande da 960×384 sull'asse corto, il codice le
-  spartisce ancora per colonne e va allineato — vedi
+  metà del pannello sono bande da 960×384 sull'asse corto e il codice le
+  spartisce per righe, traslando lo slave di `y - M.HEIGHT` — vedi
   [§3](#3-architettura-dual-controller-masterslave).
 
 Il driver 9.7" della stessa libreria è documentato in [README.md](README.md).
@@ -67,6 +82,17 @@ Sketch di esempio nella libreria:
   l'addressing a finestra parziale con x diverso da zero, cronometra power on e
   power off, prova entrambi i parametri di deep sleep e ripete il pattern a
   20 MHz per validare il clock che il driver usa per default.
+  Due sonde chiudono le domande che il resto non poteva porre, e lo fanno
+  caricando una waveform via `0x32`, cioè scritta dall'MCU invece che presa
+  dall'OTP: il **partial** con `0x22 = 0xCC` / `0xC4`, che hanno il bit 4
+  *load LUT* spento e quindi non sovrascrivono la LUT custom — le passate
+  `0xFC` e `0xF4` della sonda d'area ce l'hanno attivo, quindi misurano sempre
+  la waveform dell'OTP e non possono dire niente su una breve; e il **quarto
+  colore per livello di sorgente**, che pilota LUT2 a VSH1 e LUT3 a VSH2 per
+  distinguere un film a tre pigmenti da una waveform che ne pilota solo tre —
+  distinzione che il frame a bande non fa, perchè la Table 6-4 aliasa LUT3 su
+  LUT2. Nessuna delle due tocca le tensioni: stanno ai byte 105..109 della LUT,
+  e `0x32` scrive solo 0..104.
   La *fase driver* esercita invece **questo** driver
   attraverso l'ombrello di selezione: `clearScreen()` sui tre colori pieni,
   dispatch a due controller e un frame di tile a cavallo della giunzione fra le
@@ -102,7 +128,7 @@ SOLUM 9.7" del progetto
 (`namespace GxEPDImage`, bulk-SPI, `_cleanAccentIfDirty`, page-hint,
 `setPaged()` override).
 
-### Perché 1248c e non 1330c
+### Perchè 1248c e non 1330c
 
 Il driver SOLUM 9.7" del progetto era stato fork dal
 [`GxEPD2_1330c_GDEM133Z91`](https://github.com/ZinggJM/GxEPD2/blob/master/src/gdem3c/GxEPD2_1330c_GDEM133Z91.cpp)
@@ -126,26 +152,44 @@ vanno prese dal 9.7". Il perchè in
 l'SSD1677 ha 960 source × 680 gate, e con 768 gate da coprire in due chip
 nessuna spartizione sta dentro i 800×600 dell'UC8179.
 
-### Sequenza comandi UC8179 (da sostituire)
+### Sequenza comandi: SSD16xx, presa dal 9.7"
 
-Il codice implementa ancora la sequenza UC8179, portata 1:1 dal 1248c con i
-parametri di resolution a 480×768 per ScreenPart. È la parte da riscrivere:
+Del 1248c è rimasta solo la **struttura**. Tutti i comandi UC8179 sono stati
+sostituiti con quelli SSD16xx del driver 9.7" della libreria, che gira sullo
+stesso silicio:
 
-- panel setting (`0x00 = 0x0f` master, `0x03` slave reverse scan)
-- booster soft start (`0x06 = 0x27 0x27 0x18 0x17`)
-- resolution setting (`0x61 = 0x01 0xE0 0x03 0x00` per ogni ScreenPart)
-- DUSPI (`0x15 = 0x20`, single DIN)
-- Vcom and data interval (`0x50 = 0x11 0x07`)
-- TCON (`0x60 = 0x22`)
-- cascade setting (`0xE0 = 0x03`)
-- temperature (`0xE5`)
-- power-on (`0x04`) / power-off (`0x02`)
-- display refresh (`0x12`)
-- deep sleep (`0x07 = 0xA5`)
-- partial in/out (`0x91`/`0x92`) e partial window (`0x90`)
+> Nota storica, per chi ritrovasse la vecchia sequenza in un diff: quello che
+> questo documento chiamava "sequenza UC8179" (`0x00` PSR, `0x06` BTST, `0x50`
+> CDI, `0x60` TCON, `0x61` TRES `= 480 × 768`, `0xE0`) è in realtà una sequenza
+> in stile **SSD2677**, il chip Solomon a 4 colori da 960 × 680 con command set
+> UC — archiviato in `docs/`. Non è il nostro: il pannello risponde a SSD16xx.
+
+| Cosa | Comando |
+|---|---|
+| soft reset | `0x12` + 200 ms |
+| soft start | `0x0C = AE C7 C3 C0 80` |
+| driver output control (MUX) | `0x01`, derivato da `PART_HEIGHT`: oggi 383 → 384 gate line |
+| border waveform | `0x3C = 0x01` |
+| sensore di temperatura interno | `0x18 = 0x80` |
+| entry mode | `0x11 = 0x03` |
+| finestra RAM e cursore | `0x44` / `0x45` / `0x4E` / `0x4F`, in pixel |
+| piani immagine | `0x24` B/N, `0x26` accent |
+| power on / power off | `0x22 = 0xC0` / `0xC3` + `0x20` |
+| refresh | `0x22 = 0xF7` + `0x20` |
+| deep sleep | `0x10 = 0x03` |
+
+L'init non fa power on: su SSD16xx lo fa la display update sequence.
 
 Rispetto ai driver stock di GxEPD2 per pannelli simili, questa versione
 introduce le ottimizzazioni descritte nelle sezioni successive.
+
+> Nota sulla scelta della base, con quello che si sa oggi: per un pannello a due
+> controller **SSD16xx in cascade** il modello upstream più vicino non è il
+> 1248c (UC8179, quattro CS separati) ma
+> [`GxEPD2_579c_GDEY0579Z93`](https://github.com/ZinggJM/GxEPD2/blob/1.6.9/src/gdey3c/GxEPD2_579c_GDEY0579Z93.cpp)
+> — Good Display 5.79" 792×272, due controller SSD1683 su **un solo CS**, con lo
+> slave indirizzato da `opcode | 0x80` e il mirror di una metà fatto con l'entry
+> mode. Se il bring-up conferma la cascade è da lì che va ripreso il dispatch.
 
 ---
 
@@ -215,27 +259,31 @@ Il caso **4** bypassa il template GFX e si chiama standalone (incluso
 
 ## 2. Due API siblings single-channel uniformi
 
-I 2 canali del controller UC8179 sono esposti con shape identica per
+I 2 piani RAM del controller SSD16xx sono esposti con shape identica per
 scritture single-channel (no refresh):
 
 ```cpp
 void writeImageBlack(const uint8_t* bitmap, int16_t x, int16_t y,
-                     int16_t w, int16_t h, bool pgm = true);  // cmd 0x10
+                     int16_t w, int16_t h, bool pgm = true);  // cmd 0x24
 void writeImageRed  (const uint8_t* bitmap, int16_t x, int16_t y,
-                     int16_t w, int16_t h, bool pgm = true);  // cmd 0x13
+                     int16_t w, int16_t h, bool pgm = true);  // cmd 0x26
 ```
 
 Convenzione bitmap input: bit=1 dove il pixel **non** appartiene a quel
 canale (formato compatibile con lo script Python e image2cpp). Per
 l'accent rosso il driver applica `~data` prima del transfer SPI per
-allinearsi alla polarity nativa UC8179 (bit=1 in RAM = colorante acceso).
+allinearsi alla polarity nativa SSD16xx (bit=1 in RAM = accent acceso).
 
-Differenza rispetto al 9.7": **nessuna** `writeImageYellow`. Il driver
-12.2" è BWR-only, il quarto colore non è supportato dal pannello
-Newton PRO 12.2" (l'etichetta di fabbrica dice BWR). Stub no-op `isYellowPreserved()` / `writeImageYellow()`
-sono presenti SOLO per ODR-compatibility con il template `showImage<>`
-del 9.7" se entrambi gli header finissero inclusi nello stesso TU
-(scenario non supportato — vedi §6).
+Differenza rispetto al 9.7": qui le primitive del terzo piano esistono, ma
+**senza corpo**. Non le chiede il contratto della libreria, che è di due soli
+metodi (`setPaged()` e `showImagePageHint()`) e in cui `showImage()` compone
+black e red senza toccare un eventuale terzo piano: sono dichiarate perchè su
+questo pannello il quarto colore è **una questione ancora aperta**. Il codice
+modello `EL122H6W4A` ha campo colore `4`, cioè BWRY nominale, mentre il vetro
+porta serigrafato `Newton PRO 12.2" BWR normal`, e il bring-up è fermo alla
+seconda coda muta: non c'è modo di misurarlo. Quando lo si saprà, o prendono un
+corpo vero o vanno rimosse — il 9.7", che la stessa domanda l'ha chiusa con la
+misura, non le dichiara affatto. Vedi §6.
 
 ---
 
@@ -254,8 +302,13 @@ Ogni `ScreenPart` gestisce le scritture verso un singolo controller:
 - proprio CS, DC condiviso col master (i 2 controller condividono SCK,
   MOSI, MISO, DC, RST a livello hardware);
 - `WIDTH` e `HEIGHT` riferiti alla **metà** del pannello che gestisce;
-- flag `_rev_scan` per applicare reverse scan alla metà che scandisce dal
-  proprio bordo verso il centro nel verso opposto all'altra.
+- flag `_mirror_x` / `_mirror_y`, impostabili dallo sketch con
+  `setMasterMirror()` / `setSlaveMirror()`, per ribaltare la banda che scandisce
+  dal proprio bordo verso il centro nel verso opposto all'altra. Il
+  ribaltamento è nel data path (ordine di righe, byte e bit), non nei registri:
+  è una scelta di implementazione, non un obbligo — il contatore di indirizzo
+  saprebbe decrementare da sè con `0x11`, ed è così che GxEPD2 tratta le due
+  metà del GDEY0579Z93.
 
 ### Split del frame buffer
 
@@ -275,11 +328,8 @@ l'ESP32 su una sola coda FFC.
 I 960 px sono l'asse **source** (le due code si attaccano al centro dei bordi
 lunghi, che sono i bordi dei source), i 768 px sono l'asse **gate**, spartito
 384 + 384. Quale delle due bande stia su quale coda è ancora da annotare, e
-una delle due va scandita in reverse perchè le bande risultino contigue e
+una delle due va probabilmente ribaltata perchè le bande risultino contigue e
 con lo stesso verso.
-
-Il codice implementa ancora lo split per colonne (`x - M.WIDTH` sul dispatch,
-`0x61` a 480×768): entrambi vanno rifatti su righe e su `960×384`.
 
 ### Dispatch outer-class
 
@@ -289,11 +339,13 @@ le 2 ScreenPart:
 
 ```cpp
 M.writeImagePart(command, bitmap, ..., x, y, ...);
-S.writeImagePart(command, bitmap, ..., x - M.WIDTH, y, ...);
+S.writeImagePart(command, bitmap, ..., x, y - M.HEIGHT, ...);
 ```
 
-Le coordinate `x` per lo slave sono traslate di `-M.WIDTH` per
-riallinearle al sistema di coordinate locale dello slave (0..479).
+Le coordinate `y` per lo slave sono traslate di `-M.HEIGHT` per
+riallinearle al sistema di coordinate locale dello slave (righe 0..383 della
+sua banda). Il clipping lo fa la `ScreenPart`, quindi la `y` negativa che il
+master riceve per le righe basse, e viceversa, non produce scritture.
 
 Per i comandi globali (init, power, refresh) il driver fornisce 2
 helper `_writeCommandAll(uint8_t)` / `_writeDataAll(uint8_t)` che
@@ -301,6 +353,12 @@ abbassano simultaneamente CS_M e CS_S, in modo che entrambi i controller
 ricevano lo stesso comando in parallelo. Il busy wait usa il pattern
 `_waitWhileAnyBusy` che attende OR-degli-AND-negati: usciamo solo
 quando NESSUNO dei due controller è busy.
+
+> ⚠️ È qui che il modello potrebbe rivelarsi sbagliato. Se i due controller sono
+> una coppia in cascade stanno su **un solo** chip select e si distinguono per
+> il bit 7 dell'opcode: `_writeCommandAll` con due CS non avrebbe più senso, e
+> `_cs_s` / `_busy_s` sparirebbero. Lo decide
+> `examples/12_2c/dual_panel_finder`.
 
 ### Modalità single-CS per bring-up
 
@@ -322,7 +380,7 @@ namespace GxEPDImage {
   enum Format : uint8_t {
     FORMAT_BW_1BPP   = 0,   // 1 buffer 1bpp (compat image2cpp)
     FORMAT_BWR_1BPP  = 1,   // buffer separati black + red
-    FORMAT_BWRY_1BPP = 2,   // 3 buffer: solo 9.7", qui non raggiungibile
+    FORMAT_BWRY_1BPP = 2,   // 3 buffer: showImage rende i primi due
   };
 
   struct Descriptor {
@@ -333,7 +391,7 @@ namespace GxEPDImage {
 }
 ```
 
-Il descrittore porta con sé formato e dimensioni. Per costruire
+Il descrittore porta con sè formato e dimensioni. Per costruire
 descrittori inline lo header espone le macro di comodo:
 
 ```cpp
@@ -341,9 +399,10 @@ GXEPD_BW_IMAGE(ptr, w, h)
 GXEPD_BWR_IMAGE(black, red, w, h)
 ```
 
-`GXEPD_BWRY_IMAGE` esiste ma su questo pannello produce un descrittore il
-cui terzo piano non viene mai scritto: il ramo del giallo dentro
-`showImage()` chiama le no-op di questo driver.
+`GXEPD_BWRY_IMAGE` esiste, ma `showImage()` rende i soli `data0` e `data1`: il
+terzo piano di un descrittore non viene scritto da nessuna parte, su nessun
+driver. Per pilotarlo servirebbe una scrittura out-of-band del chiamante, prima
+di `firstPage()`, con una primitiva del driver che abbia davvero un corpo.
 
 Lo script Python `epd_image_converter.pyw` genera automaticamente una
 variabile `img_<nome>_desc` ad ogni conversione, pronta per essere
@@ -364,13 +423,16 @@ Stato punto per punto, con il valore che il codice usa oggi:
 
 | Punto | Nel codice oggi | Stato | Cosa fare |
 |---|---|---|---|
-| Controller IC | UC8179 (sequenza 1248c) | **risolto: SSD16xx** | Sostituire `_InitDisplay`/`_PowerOn`/`_PowerOff`/`_Update_Full`/`hibernate` con la sequenza SSD1677 del 9.7" |
-| Split master/slave | colonne 0..479 / 480..959 | **risolto: 960×384 sull'asse corto** | Rifare il dispatch su righe 0..383 / 384..767 (traslazione `y - M.HEIGHT` invece di `x - M.WIDTH`) |
-| Geometria per controller | `0x61` = 480×768 | **risolto: 960×384** | In SSD1677 diventano `0x01` driver output control (384 gate), `0x44`/`0x45` window (0..119 byte × 0..383) e `0x4E`/`0x4F` |
+| Controller IC | sequenza SSD16xx presa dal 9.7" | **chiuso** | — |
+| Split master/slave | righe 0..383 / 384..767, `y - M.HEIGHT` | **chiuso** | — |
+| Geometria per controller | `0x01` MUX da `PART_HEIGHT` = 384, finestre `0x44`/`0x45` in pixel | **chiuso** | — |
+| Come si indirizza il secondo controller | due CS, `_writeCommandAll` li abbassa insieme | **aperto, ed è il punto critico** | Le evidenze puntano alla cascade: un solo CS e `opcode \| 0x80`, più `0x21` B[4] = 1 sul master. Lo prova `dual_panel_finder`; se conferma, dispatch da rifare sul modello `GxEPD2_579c_GDEY0579Z93` |
+| Perchè la seconda coda non risponde | n/a | **aperto, spiegazione probabile: è lo slave** | In cascade lo slave non ha oscillatore nè booster: servono CL e i rail portati dal connettore master, vedi [docs/fonti_esterne.md §4](docs/fonti_esterne.md) |
+| Perchè i controller sono due, e divisi per righe | `PART_HEIGHT` = 384 | **chiuso, per conto** | L'SSD1677 ha 960 source e **680 gate**. Nativi: 9.7" = 672 gate, 11.6" = 640, 12.2" = **768**. Il 12.2" sfora il limite di un chip solo, quindi due controller sono obbligati e lo split **deve** stare sull'asse gate: su quello source un chip solo basterebbe. Non è più un'osservazione, è una derivazione |
 | Quale coda è quale banda | M = prima metà | aperto | Annotare al bring-up del secondo controller, eventualmente swap M↔S via cablaggio |
-| Reverse scan | `0x00` panel setting `0x0f`/`0x03` | aperto, il comando non esiste su SSD1677 | Usare data entry mode `0x11` + bit di `0x01`, una banda sola in reverse |
-| Booster soft start | `0x06 = 0x27 0x27 0x18 0x17` | comando inesistente su SSD1677 | Sostituire con `0x0C` soft start dal 9.7" |
+| Ribaltamento della banda | data path (righe, byte, bit) con `setSlaveMirror(true, true)` di default | aperto quale combinazione serva | Provare le quattro combinazioni dallo sketch. Alternativa da valutare: entry mode `0x11` con decremento, come fa GxEPD2 sul GDEY0579Z93 |
 | Refresh time | `full_refresh_time = 25000` ms | da misurare | Allineare al tempo reale misurato sulla banda che stampa |
+| Clock SPI | default 20 MHz nel driver | da verificare | Su alcuni pannelli SSD1677 il controller non tollera clock alti (il 9.7" della libreria gira a 10 MHz). Se comparissero errori intermittenti, abbassare il clock è la prima prova |
 | LUT | OTP del controller | da verificare | Se ghosting, LUT esplicite via `0x32` |
 
 ---
@@ -383,14 +445,13 @@ libreria. Includere due header driver nella stessa translation unit non
 ridefinisce niente, e il template `showImage()` è uno solo per entrambi i
 pannelli.
 
-Il namespace condiviso dichiara anche `FORMAT_BWRY_1BPP`, che su questo
-pannello non è raggiungibile: il ramo del giallo dentro `showImage()` è
-guardato dal formato del descrittore, quindi con un descrittore BW o BWR non
-viene mai imboccato. Le tre primitive del giallo (`preserveYellow`,
-`isYellowPreserved`, `writeImageYellow`) sono qui delle **no-op**: servono
-perchè il template è condiviso e perchè i moduli applicativi scritti per il
-9.7" chiamano `preserveYellow()` senza sapere quale pannello è montato. Così
-lo stesso firmware compila contro i due driver senza rami condizionali.
+Il contratto che quel namespace chiede sono **due soli metodi**, `setPaged()` e
+`showImagePageHint()`: `showImage()` compone i piani black e red e non tocca un
+eventuale terzo piano, quindi nessun driver deve dichiarare primitive che non
+gli servono, e nessuno ha no-op imposti dal contratto. Il namespace dichiara
+anche `FORMAT_BWRY_1BPP`, di cui `showImage()` rende i primi due piani: un
+descrittore a tre piani è quindi stampabile su entrambi i driver, con il terzo
+ignorato, e lo stesso firmware compila contro i due senza rami condizionali.
 
 La scelta del pannello si fa a monte, con il define di selezione che
 [`src/GxEPD2_SOLUM.h`](src/GxEPD2_SOLUM.h) traduce in include e nome della
@@ -430,14 +491,14 @@ Differenze API rispetto al 9.7":
 |---|---|---|
 | `clearScreen(value)` | ✓ | ✓ |
 | `clearScreen(black, color)` | ✓ | ✓ |
-| `clearScreen(black, color, yellow)` | ✓ | **assente** |
+| `clearScreen(black, color, yellow)` | **assente** | **assente** |
 | `writeScreenBuffer(value)` | ✓ | ✓ |
 | `writeScreenBuffer(black, color)` | ✓ | ✓ |
-| `writeScreenBuffer(black, color, yellow)` | ✓ | **assente** |
-| `writeImageBlack` | ✓ (cmd 0x24) | ✓ (cmd 0x10) |
-| `writeImageRed` | ✓ (cmd 0x26) | ✓ (cmd 0x13) |
-| `writeImageYellow` | ✓ (cmd 0x28) | **stub no-op** |
-| `preserveYellow` / `isYellowPreserved` | ✓ | **stub** (sempre `true`) |
+| `writeScreenBuffer(black, color, yellow)` | **assente** | **assente** |
+| `writeImageBlack` | ✓ (cmd 0x24) | ✓ (cmd 0x24) |
+| `writeImageRed` | ✓ (cmd 0x26) | ✓ (cmd 0x26) |
+| `writeImageYellow` | **assente** (0x28 è VCOM Sense, misurato) | dichiarata, corpo vuoto |
+| `preserveYellow` / `isYellowPreserved` | **assenti** | dichiarate, corpo vuoto |
 | `setPaged()` override | ✓ | ✓ |
 | `showImagePageHint()` getter | ✓ | ✓ |
 | Bulk-SPI `writeBytes` | ✓ | ✓ |
@@ -492,8 +553,23 @@ secondo connettore FFC esterno cablato a mano.
 | 3V3 / GND | — | FFC interno + jumper | FFC #1 + FFC #2 | 🟧 condiviso |
 | **CS_M** | 15 | FFC interno della board | FFC #1 | 🟦 master |
 | **BUSY_M** | 25 | FFC interno della board | FFC #1 | 🟦 master |
-| **CS_S** | 33 | Pin header espansione | FFC #2 esterno | 🟪 slave |
+| **CS_S** | ~~33~~ **32** | Pin header espansione | FFC #2 esterno | 🟪 slave |
 | **BUSY_S** | 35 | Pin header espansione | FFC #2 esterno | 🟪 slave |
+
+> ⚠️ **GPIO33 non è portato fuori su questa board.** Nelle net dello schematico
+> compaiono 32, 34 e 35 su pin consecutivi dell'header e il 33 non c'è: il
+> candidato per `CS_S` è **GPIO32**, output-capable, sull'header e non usato da
+> nient'altro. Gli snippet qui sotto riportano ancora 33 perchè è il valore che
+> sta nel firmware: se la coda lunga non risponde, questo è il primo posto da
+> guardare, prima del pannello.
+>
+> ⚠️ E prima ancora: se i due controller sono una coppia in **cascade**, un
+> secondo chip select non serve affatto — serve invece un ponte passivo che
+> porti CL e i rail dal connettore master a quello slave. Vedi
+> [docs/fonti_esterne.md §4](docs/fonti_esterne.md). I due pin della cascade
+> stanno nel pin table dell'SSD1677 stesso, solo dichiarati riservati: `M/S#`
+> *"reserved pin, should be connected to VDDIO"* e `CL` **I/O**, *"left open in
+> application"* ma presente sia fra i VIH d'ingresso sia fra i VOH d'uscita.
 
 Costruttore corrispondente:
 
@@ -582,8 +658,15 @@ GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS,
    - **BUSY o RST fuori posizione**: il driver resta appeso in attesa e non
      arriva alcun comando.
 
-   Dettaglio delle tre ipotesi e come distinguerle in
-   [docs/122c/identificazione_pannello.md §6](docs/122c/identificazione_pannello.md#6-perchè-la-seconda-coda-resta-muta).
+   **Spiegazione che le comprende tutte, ed è la più probabile**: quella coda è
+   lo **slave di una coppia in cascade**, e da sola non può funzionare per
+   costruzione — niente oscillatore, niente booster, clock e tensioni dal
+   master. Lo dicono il datasheet SSD1683 §6.12 e il tag di fabbrica, che ha
+   l'elettronica analogica attorno a un solo connettore e l'altro nudo.
+
+   Dettaglio delle ipotesi e come distinguerle in
+   [docs/122c/identificazione_pannello.md §5-§6](docs/122c/identificazione_pannello.md#6-perchè-la-seconda-coda-resta-muta)
+   e [docs/fonti_esterne.md §4](docs/fonti_esterne.md).
 
 ### Approvigionamento breakout FFC: usare 22 / 24 pin con 1 pin libero
 
@@ -679,5 +762,5 @@ pannelli moderni ma capita su ESL vecchi).
 | **Tensione** | Pannello NON 5V tolerant. VCC + tutte le data line a 3.3V. |
 | **Lunghezza jumper** | < 10 cm consigliato. > 15 cm → ringing visibile a 20 MHz. Se i byte SPI sono corrotti, abbassa il clock SPI. |
 | **Alimentazione** | Pacco da 6× CR2450 da datasheet → assorbimento non banale. Se la 3V3 cala sotto 3.0V durante refresh, alimenta il pannello da fonte esterna 3.3V. |
-| **GPIO 35 input-only** | OK per BUSY_S, NON usabile per CS_S. Per CS_S serve un GPIO output-capable (4, 5, 16, 17, 21, 22, 32, 33). |
-| **Strapping pins** | GPIO 0, 2, 5, 12, 15 sono strapping. GPIO 15 (CS_M) è OK perché parte HIGH. Evita di mettere il pannello su GPIO 0, 2, 12. |
+| **GPIO 35 input-only** | OK per BUSY_S, NON usabile per CS_S. Per CS_S serve un GPIO output-capable: sulla board Waveshare **32** (consigliato), in alternativa 4, 21, 22. Il **33 non è portato fuori** su quella board. |
+| **Strapping pins** | GPIO 0, 2, 5, 12, 15 sono strapping. GPIO 15 (CS_M) è OK perchè parte HIGH. Evita di mettere il pannello su GPIO 0, 2, 12. |
