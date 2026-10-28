@@ -30,7 +30,7 @@
  * L'inizializzazione per lista rispetta l'ordine di dichiarazione dei campi:
  *
  *   GxEPD2_SOLUM_Pins{ 15, 27, 26, 25 }                       // 9.7"
- *   GxEPD2_SOLUM_Pins{ 15, 27, 26, 25, 33, 35, 13, 12, 14 }   // 12.2" dual
+ *   GxEPD2_SOLUM_Pins{ 15, 27, 26, 25, 32, 35, 13, 12, 14 }   // 12.2" dual
  *
  * Richiede C++14 o superiore per l'inizializzazione per lista con default
  * member initializer: il core ESP32 compila a gnu++17, quindi va.

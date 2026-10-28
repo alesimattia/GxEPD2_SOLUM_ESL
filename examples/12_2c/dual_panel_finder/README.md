@@ -308,14 +308,23 @@ per chip, quindi generato localmente: se sia condiviso lo dice il multimetro, no
 coppia in cascade, e allora è il pannello a non essere quello che il conteggio dei gate dice: vale
 la pena rileggere tutto da capo prima di saldare qualsiasi cosa.
 
-## Il log su file
+## Acquisire il log
+
+L'ESP32 non può scrivere sul disco del PC: per avere il log su file si può usare
+[`tools/registra_run.py`](../../../tools/registra_run.py), un monitor seriale che mostra l'output
+della board, le inoltra i tasti con cui si risponde al gate e alle domande e registra tutto in un
+file. Dalla cartella di questo esempio:
 
 ```
-python3 ../../tools/registra_run.py /dev/cu.usbmodemXXXX -o .
+python3 ../../../tools/registra_run.py /dev/cu.usbmodemXXXX -o .
 ```
 
-Solo libreria standard, seriale raw a 115200 via `stty`. Il monitor deve poter **inviare**: il gate
-si chiude con un tasto qualsiasi, e le domande leggono una riga chiusa da INVIO.
+Qualunque monitor si usi deve poter **inviare**: il gate si chiude con un tasto qualsiasi, e le
+domande leggono una riga chiusa da INVIO, che lo script inoltra come `\n`.
+
+Il log finisce in `dual_panel_finder_<AAAAMMGG-hhmmss>.txt` nella cartella indicata da `-o`. Senza
+la porta come argomento lo script elenca quelle disponibili, Ctrl-C chiude il file. Usa solo la
+libreria standard ma gira su macOS, perchè si appoggia a `termios` e a `stty -f`.
 
 ## Nota sul pannello: il quarto colore
 

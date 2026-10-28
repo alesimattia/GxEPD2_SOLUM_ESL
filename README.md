@@ -874,7 +874,7 @@ GXEPD_BWR_IMAGE(black, red, w, h)
 GXEPD_BWRY_IMAGE(black, red, yellow, w, h)
 ```
 
-Lo script Python `epd_image_converter.pyw` genera automaticamente una
+Lo script Python [`tools/epd_image_converter.pyw`](tools/epd_image_converter.pyw) genera automaticamente una
 variabile `img_<nome>_desc` ad ogni conversione, pronta per essere
 passata a `showImage()`.
 

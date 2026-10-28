@@ -24,7 +24,7 @@
   <text x="200" y="340" font-size="11"
         text-anchor="middle">Pin header espansione</text>
   <text x="200" y="358" fill="#8250df" font-size="11"
-        text-anchor="middle" font-family="monospace">GPIO 33 → CS_S</text>
+        text-anchor="middle" font-family="monospace">GPIO 32 → CS_S</text>
   <text x="200" y="374" fill="#8250df" font-size="11"
         text-anchor="middle" font-family="monospace">GPIO 35 → BUSY_S</text>
   <text x="200" y="390" fill="#bf8700" font-size="11"

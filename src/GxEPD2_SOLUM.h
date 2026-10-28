@@ -14,7 +14,7 @@
 //   #include <GxEPD2_SOLUM.h>
 //
 //   GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS, SOLUM_MAX_HEIGHT(GxEPD2_SOLUM_DRIVER_CLASS)>
-//       display(GxEPD2_SOLUM_DRIVER_CLASS(GxEPD2_SOLUM_Pins{ 15, 27, 26, 25, 33, 35, 13, 12, 14 }));
+//       display(GxEPD2_SOLUM_DRIVER_CLASS(GxEPD2_SOLUM_Pins{ 15, 27, 26, 25, 32, 35, 13, 12, 14 }));
 //
 // Nè il nome della classe nè l'arità del costruttore compaiono nello sketch:
 // il pinout passa dalla struct uniforme GxEPD2_SOLUM_Pins, che ogni driver

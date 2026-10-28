@@ -67,7 +67,7 @@ driver è un secondo header dello stesso pacchetto. Nello sketch:
 // Pinout: cs, dc, rst, busy, cs2, busy2, sck, miso, mosi
 GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS, SOLUM_MAX_HEIGHT(GxEPD2_SOLUM_DRIVER_CLASS)>
     display(GxEPD2_SOLUM_DRIVER_CLASS(
-        GxEPD2_SOLUM_Pins{ 15, 27, 26, 25, 33, 35, 13, 12, 14 }));
+        GxEPD2_SOLUM_Pins{ 15, 27, 26, 25, 32, 35, 13, 12, 14 }));
 ```
 
 Sketch di esempio nella libreria:
@@ -404,7 +404,7 @@ terzo piano di un descrittore non viene scritto da nessuna parte, su nessun
 driver. Per pilotarlo servirebbe una scrittura out-of-band del chiamante, prima
 di `firstPage()`, con una primitiva del driver che abbia davvero un corpo.
 
-Lo script Python `epd_image_converter.pyw` genera automaticamente una
+Lo script Python [`tools/epd_image_converter.pyw`](tools/epd_image_converter.pyw) genera automaticamente una
 variabile `img_<nome>_desc` ad ogni conversione, pronta per essere
 passata a `showImage()`. Per il 12.2" lo script va invocato con il
 flag BWR (no canale giallo).
@@ -553,15 +553,14 @@ secondo connettore FFC esterno cablato a mano.
 | 3V3 / GND | — | FFC interno + jumper | FFC #1 + FFC #2 | 🟧 condiviso |
 | **CS_M** | 15 | FFC interno della board | FFC #1 | 🟦 master |
 | **BUSY_M** | 25 | FFC interno della board | FFC #1 | 🟦 master |
-| **CS_S** | ~~33~~ **32** | Pin header espansione | FFC #2 esterno | 🟪 slave |
+| **CS_S** | 32 | Pin header espansione | FFC #2 esterno | 🟪 slave |
 | **BUSY_S** | 35 | Pin header espansione | FFC #2 esterno | 🟪 slave |
 
 > ⚠️ **GPIO33 non è portato fuori su questa board.** Nelle net dello schematico
-> compaiono 32, 34 e 35 su pin consecutivi dell'header e il 33 non c'è: il
-> candidato per `CS_S` è **GPIO32**, output-capable, sull'header e non usato da
-> nient'altro. Gli snippet qui sotto riportano ancora 33 perchè è il valore che
-> sta nel firmware: se la coda lunga non risponde, questo è il primo posto da
-> guardare, prima del pannello.
+> compaiono 32, 34 e 35 su pin consecutivi dell'header e il 33 non c'è: `CS_S`
+> sta quindi su **GPIO32**, output-capable, sull'header e non usato da
+> nient'altro. È il valore degli snippet e del firmware (`PIN_CS_S` in
+> `Layout_122c.h`). Sulla dev board generica del Setup B il 33 resta valido.
 >
 > ⚠️ E prima ancora: se i due controller sono una coppia in **cascade**, un
 > secondo chip select non serve affatto — serve invece un ponte passivo che
@@ -762,5 +761,5 @@ pannelli moderni ma capita su ESL vecchi).
 | **Tensione** | Pannello NON 5V tolerant. VCC + tutte le data line a 3.3V. |
 | **Lunghezza jumper** | < 10 cm consigliato. > 15 cm → ringing visibile a 20 MHz. Se i byte SPI sono corrotti, abbassa il clock SPI. |
 | **Alimentazione** | Pacco da 6× CR2450 da datasheet → assorbimento non banale. Se la 3V3 cala sotto 3.0V durante refresh, alimenta il pannello da fonte esterna 3.3V. |
-| **GPIO 35 input-only** | OK per BUSY_S, NON usabile per CS_S. Per CS_S serve un GPIO output-capable: sulla board Waveshare **32** (consigliato), in alternativa 4, 21, 22. Il **33 non è portato fuori** su quella board. |
+| **GPIO 35 input-only** | OK per BUSY_S, NON usabile per CS_S. Per CS_S serve un GPIO output-capable: sulla board Waveshare **32**, in alternativa 4 (21 e 22 sono il cablaggio consigliato del BME680 della dashboard). Il **33 non è portato fuori** su quella board. |
 | **Strapping pins** | GPIO 0, 2, 5, 12, 15 sono strapping. GPIO 15 (CS_M) è OK perchè parte HIGH. Evita di mettere il pannello su GPIO 0, 2, 12. |

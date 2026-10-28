@@ -233,7 +233,7 @@
   <text x="200" y="340" fill="#c9d1d9" font-size="11"
         text-anchor="middle">Pin header espansione</text>
   <text x="200" y="358" fill="#d2a8ff" font-size="11"
-        text-anchor="middle" font-family="monospace">GPIO 33 (libero) → CS_S</text>
+        text-anchor="middle" font-family="monospace">GPIO 32 (libero) → CS_S</text>
   <text x="200" y="374" fill="#d2a8ff" font-size="11"
         text-anchor="middle" font-family="monospace">GPIO 35 (libero) → BUSY_S</text>
   <text x="200" y="390" fill="#f0883e" font-size="11"
@@ -320,7 +320,7 @@
     <tr><td>3V3 / GND</td><td>—</td><td>FFC interno + jumper</td><td>FFC #1 + FFC #2</td><td><span class="badge shared">CONDIVISO</span></td></tr>
     <tr><td><strong>CS_M</strong></td><td>15</td><td>FFC interno della board</td><td>FFC #1</td><td><span class="badge master">MASTER</span></td></tr>
     <tr><td><strong>BUSY_M</strong></td><td>25</td><td>FFC interno della board</td><td>FFC #1</td><td><span class="badge master">MASTER</span></td></tr>
-    <tr><td><strong>CS_S</strong></td><td>33</td><td>Pin header espansione</td><td>FFC #2 esterno</td><td><span class="badge slave">SLAVE</span></td></tr>
+    <tr><td><strong>CS_S</strong></td><td>32</td><td>Pin header espansione</td><td>FFC #2 esterno</td><td><span class="badge slave">SLAVE</span></td></tr>
     <tr><td><strong>BUSY_S</strong></td><td>35</td><td>Pin header espansione</td><td>FFC #2 esterno</td><td><span class="badge slave">SLAVE</span></td></tr>
   </tbody>
 </table>
@@ -337,7 +337,7 @@ GxEPD2_3C&lt;GxEPD2_SOLUM_DRIVER_CLASS,
         /*dc   */ 27,
         /*rst  */ 26,
         /*busy */ 25,
-        /*cs2  */ 33,    // FFC esterno cablato a mano
+        /*cs2  */ 32,    // FFC esterno cablato a mano (la board non porta fuori il 33)
         /*busy2*/ 35,
         /*sck  */ 13,
         /*miso */ 12,    // -1 se non si legge dal controller
@@ -638,8 +638,9 @@ non si aggiorna correttamente, prova nell'ordine:</p>
   Vanno bene per <code>BUSY_S</code> ma <strong>non</strong> per
   <code>CS_S</code>. Se hai bisogno di altri input-only puoi usarli al
   posto di <code>BUSY_S</code> (es. GPIO 34 o GPIO 39); per
-  <code>CS_S</code> serve un GPIO output-capable (4, 5, 16, 17, 21, 22,
-  32, 33).
+  <code>CS_S</code> serve un GPIO output-capable: su una dev board generica
+  4, 5, 16, 17, 21, 22, 32, 33; sulla Waveshare V3 il 33 non è portato
+  fuori, quindi <strong>32</strong> (o 4).
 </div>
 
 <div class="note">

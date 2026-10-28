@@ -64,13 +64,20 @@ Le motivazioni non stanno sul seriale: un run completo fa una quarantina di refr
 paragrafo per sonda renderebbe illeggibile proprio la parte che serve. Stanno nei commenti dei
 file e in questo README.
 
-**Il log lo scrive il PC**, perchè l'ESP32 non può:
+## Acquisire il log
+
+L'ESP32 non può scrivere sul disco del PC: per avere il log su file si può usare
+[`tools/registra_run.py`](../../../tools/registra_run.py), un monitor seriale che mostra l'output
+della board, le inoltra i tasti con cui si risponde alle sonde e registra tutto in un file. Dalla
+cartella di questo esempio:
 
 ```
-python3 ../../tools/registra_run.py /dev/cu.usbmodemXXXX -o .
+python3 ../../../tools/registra_run.py /dev/cu.usbmodemXXXX -o .
 ```
 
-Senza argomenti elenca le porte. Nessuna dipendenza oltre la libreria standard.
+Il log finisce in `panel_diagnostic_<AAAAMMGG-hhmmss>.txt` nella cartella indicata da `-o`. Senza
+la porta come argomento lo script elenca quelle disponibili, Ctrl-C chiude il file. Usa solo la
+libreria standard ma gira su macOS, perchè si appoggia a `termios` e a `stty -f`.
 
 ## Le sonde
 
