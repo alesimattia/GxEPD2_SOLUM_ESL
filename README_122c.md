@@ -38,8 +38,8 @@ da 960×384 ciascuno) su **ESP32**. Estende
 - **2 API siblings uniformi** `writeImageBlack` / `writeImageRed` per
   scrittura single-channel. Le primitive del terzo piano
   (`writeImageYellow`, `preserveYellow`, `isYellowPreserved`) sono dichiarate
-  ma ancora senza corpo, in attesa che il bring-up dica se il quarto colore su
-  questo pannello esista: vedi [§6](#6-convivenza-con-il-driver-solum-97);
+  senza corpo, per compatibilità di API: il pannello è a tre colori e non ha
+  un piano giallo, vedi [§6](#6-convivenza-con-il-driver-solum-97);
 - **sistema di descrittori universali** (`GxEPDImage::Descriptor`) condiviso
   con il driver 9.7", di cui qui sono utili i formati BW e BWR;
 - **dispatch dual-controller master/slave** trasparente al chiamante: le due
@@ -81,7 +81,7 @@ Sketch di esempio nella libreria:
   Detection 0x14) tentando anche i registri in lettura. Verifica inoltre
   l'addressing a finestra parziale con x diverso da zero, cronometra power on e
   power off, prova entrambi i parametri di deep sleep e ripete il pattern a
-  20 MHz per validare il clock che il driver usa per default.
+  20 MHz per sapere se il pannello regge più dei 10 MHz di default del driver.
   Due sonde chiudono le domande che il resto non poteva porre, e lo fanno
   caricando una waveform via `0x32`, cioè scritta dall'MCU invece che presa
   dall'OTP: il **partial** con `0x22 = 0xCC` / `0xC4`, che hanno il bit 4
@@ -277,13 +277,11 @@ allinearsi alla polarity nativa SSD16xx (bit=1 in RAM = accent acceso).
 Differenza rispetto al 9.7": qui le primitive del terzo piano esistono, ma
 **senza corpo**. Non le chiede il contratto della libreria, che è di due soli
 metodi (`setPaged()` e `showImagePageHint()`) e in cui `showImage()` compone
-black e red senza toccare un eventuale terzo piano: sono dichiarate perchè su
-questo pannello il quarto colore è **una questione ancora aperta**. Il codice
-modello `EL122H6W4A` ha campo colore `4`, cioè BWRY nominale, mentre il vetro
-porta serigrafato `Newton PRO 12.2" BWR normal`, e il bring-up è fermo alla
-seconda coda muta: non c'è modo di misurarlo. Quando lo si saprà, o prendono un
-corpo vero o vanno rimosse — il 9.7", che la stessa domanda l'ha chiusa con la
-misura, non le dichiara affatto. Vedi §6.
+black e red senza toccare un eventuale terzo piano: restano dichiarate per
+compatibilità di API. Il pannello è a tre colori: il codice modello
+`EL122H6W4A` ha campo colore `4`, cioè BWRY nominale, ma il campo colore non è
+un dato per unità, e il vetro porta serigrafato `Newton PRO 12.2" BWR normal`.
+Il 9.7" non le dichiara affatto. Vedi §6.
 
 ---
 
@@ -350,8 +348,10 @@ master riceve per le righe basse, e viceversa, non produce scritture.
 Per i comandi globali (init, power, refresh) il driver fornisce 2
 helper `_writeCommandAll(uint8_t)` / `_writeDataAll(uint8_t)` che
 abbassano simultaneamente CS_M e CS_S, in modo che entrambi i controller
-ricevano lo stesso comando in parallelo. Il busy wait usa il pattern
-`_waitWhileAnyBusy` che attende OR-degli-AND-negati: usciamo solo
+ricevano lo stesso comando in parallelo; con un solo CS da abbassare
+delegano a `_writeCommand()` / `_writeData()` della base. L'attesa
+`_waitWhileAnyBusy` lascia il master a `_waitWhileBusy()` della base, con
+timeout, diagnostica e busy callback, e poi attende lo slave: esce solo
 quando NESSUNO dei due controller è busy.
 
 > ⚠️ È qui che il modello potrebbe rivelarsi sbagliato. Se i due controller sono
@@ -432,7 +432,7 @@ Stato punto per punto, con il valore che il codice usa oggi:
 | Quale coda è quale banda | M = prima metà | aperto | Annotare al bring-up del secondo controller, eventualmente swap M↔S via cablaggio |
 | Ribaltamento della banda | data path (righe, byte, bit) con `setSlaveMirror(true, true)` di default | aperto quale combinazione serva | Provare le quattro combinazioni dallo sketch. Alternativa da valutare: entry mode `0x11` con decremento, come fa GxEPD2 sul GDEY0579Z93 |
 | Refresh time | `full_refresh_time = 25000` ms | da misurare | Allineare al tempo reale misurato sulla banda che stampa |
-| Clock SPI | default 20 MHz nel driver | da verificare | Su alcuni pannelli SSD1677 il controller non tollera clock alti (il 9.7" della libreria gira a 10 MHz). Se comparissero errori intermittenti, abbassare il clock è la prima prova |
+| Clock SPI | default 10 MHz nel driver, come il 9.7" | da verificare | Su alcuni pannelli SSD1677 il controller non tollera clock alti: 10 MHz è il valore prudente, e la sonda a 20 MHz di `dual_panel_finder` dice se il pannello regge di più |
 | LUT | OTP del controller | da verificare | Se ghosting, LUT esplicite via `0x32` |
 
 ---
@@ -463,9 +463,17 @@ sketch che cambia pannello non riscrive nè l'include nè la riga di costruzione
 del display.
 
 **Bus SPI**: come il 9.7", questo driver passa da `_pSPIx` / `_spi_settings`
-della base `GxEPD2_EPD`, ScreenPart comprese. Il default impostato dai
-costruttori è l'oggetto `SPI` globale a 20 MHz; un `selectSPI(hspi, ...)`
-chiamato prima di `init()` lo sostituisce.
+della base `GxEPD2_EPD`. Le ScreenPart non ne tengono copie nè riferimenti: il
+driver glieli passa a ogni scrittura, perchè `GxEPD2_3C` tiene il driver per
+valore e lo copia, e un riferimento resterebbe legato all'oggetto d'origine. Il
+default impostato dai costruttori è l'oggetto `SPI` globale a 10 MHz; un
+`selectSPI(hspi, ...)` chiamato prima di `init()` lo sostituisce.
+
+**Init e pin dalla base**: il driver non tiene copie dei pin del master, usa
+`_cs`, `_dc`, `_rst` e `_busy` di `GxEPD2_EPD`. `init()` configura CS e BUSY
+dello slave, chiama `GxEPD2_EPD::init()` per flag, diagnostica, pin del master
+e impulso di reset, e riapre il bus sui pin `sck` / `miso` / `mosi` ricevuti
+dal costruttore. Il default di `reset_duration` è quello della base, 10 ms.
 
 ---
 

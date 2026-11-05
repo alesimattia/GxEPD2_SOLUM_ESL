@@ -57,16 +57,12 @@
 //
 // Il budget si può sovrascrivere definendo SOLUM_MAX_DISPLAY_BUFFER_SIZE prima
 // dell'include, oppure ignorare del tutto passando al template un valore
-// proprio: su un pannello 960 px di larghezza il default ESP32 produce page da
-// 273 righe (~65 KB di buffer), che è il compromesso di upstream ma non quello
-// di un firmware che ha altro in RAM.
+// proprio: su un pannello 960 px di larghezza il default produce page da 273
+// righe (~65 KB di buffer), che è il compromesso di upstream per ESP32, l'unica
+// architettura della libreria, ma non quello di un firmware che ha altro in RAM.
 // ---------------------------------------------------------------------------
 #if !defined(SOLUM_MAX_DISPLAY_BUFFER_SIZE)
-  #if defined(ESP32)
-    #define SOLUM_MAX_DISPLAY_BUFFER_SIZE 65536ul
-  #else
-    #define SOLUM_MAX_DISPLAY_BUFFER_SIZE 15000ul
-  #endif
+  #define SOLUM_MAX_DISPLAY_BUFFER_SIZE 65536ul
 #endif
 
 #define SOLUM_MAX_HEIGHT(EPD) \

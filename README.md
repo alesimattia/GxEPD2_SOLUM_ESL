@@ -95,7 +95,7 @@ libreria invece che negli esempi.
 | `SOLUM_PANEL_097C` / `SOLUM_PANEL_122C` | selezione del pannello, da definire **prima** dell'include. Esattamente uno: zero o due danno `#error` |
 | `GxEPD2_SOLUM_DRIVER_CLASS` | nome della classe del driver selezionato |
 | `SOLUM_MAX_HEIGHT(EPD)` | altezza della page derivata dal budget RAM, con cap a `EPD::HEIGHT`. Due piani da 1 bpp, quindi il budget si divide per due |
-| `SOLUM_MAX_DISPLAY_BUFFER_SIZE` | budget RAM dei buffer di page. Default 65536 su ESP32 (lo stesso di upstream), 15000 altrove. Definendolo prima dell'include si sovrascrive |
+| `SOLUM_MAX_DISPLAY_BUFFER_SIZE` | budget RAM dei buffer di page. Default 65536, lo stesso di upstream per ESP32, l'unica architettura della libreria. Definendolo prima dell'include si sovrascrive |
 | `GxEPD2_SOLUM_Pins` | struct di pinout uniforme fra i driver, in [`src/GxEPD2_SOLUM_Pins.h`](src/GxEPD2_SOLUM_Pins.h) |
 
 Con `SOLUM_MAX_DISPLAY_BUFFER_SIZE` al default, su un pannello da 960 px di
@@ -352,8 +352,7 @@ byte in 2.948.736 µs, che dà 0,901. I tempi qui sotto vengono da lì.
 I 10 MHz non sono solo prudenza: su alcuni pannelli SSD1677 il controller **non
 tollera clock più alti** (riscontro di terzi in `docs/ssd1677-driver.md` di
 papyrix-reader, dove un pannello regge 40 MHz e un altro dello stesso
-controller no). Il default del driver 12.2" è invece a 20 MHz: se quel pannello
-desse errori intermittenti, il clock è la prima cosa da abbassare.
+controller no). Anche il driver 12.2" parte da 10 MHz, per la stessa ragione.
 
 | Voce | Byte | Bulk (0,90 µs/B misurati) | Per-byte upstream (~1,5 µs/B) |
 |---|---|---|---|
@@ -803,7 +802,7 @@ chiamata in poi non serve nessuna preparazione.
 1. **aprire una catena dopo un frame a colori costa una scrittura in più.**
    L'invariante è che `0x26` contenga quello che sta sul vetro: su un fondo
    bianco ci pensa la guardia interna, ma dopo un frame a colori lì c'è
-   l'accent, e il piano B/N va rimesso dal chiamante con `writeImagePrevious()`,
+   l'accent, e il piano B/N va rimesso dal chiamante con `writeImageToPrevious()`,
    ~73 ms a schermo pieno. Sul silicio non esiste un comando di copia fra le due
    RAM, e il ping-pong di `0x37` non serve perchè la LUT non è simmetrica;
 2. **il partial aggiunge inchiostro bene e lo toglie male.** Bianco → nero rende
@@ -826,7 +825,7 @@ chiamata in poi non serve nessuna preparazione.
 | `drawImagePartialPart(bmp, xp, yp, wb, hb, x, y, w, h, invert, pgm)` | come sopra, da un rettangolo di una bitmap più grande |
 | `refreshPartial()` / `refreshPartial(x, y, w, h)` | solo la passata sulla RAM già scritta; le coordinate sono dichiarative |
 | `writeScreenBufferPrevious(value)` | allinea `0x26` a un valore costante col pattern hardware, 9 ms |
-| `writeImagePrevious(bmp, x, y, w, h, pgm)` | allinea `0x26` da una bitmap |
+| `writeImageToPrevious(bmp, x, y, w, h, invert, mirror_y, pgm)` | allinea `0x26` da una bitmap; è il virtuale nativo di `GxEPD2_EPD`, quindi `pgm` vale `false` per default |
 | `setPartialLut(lut110)` | sostituisce la waveform: 110 byte nel layout del waveform setting |
 
 ### `drawPixel(x, y, GxEPD_YELLOW)` finisce sul rosso, ed è corretto

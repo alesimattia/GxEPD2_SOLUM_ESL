@@ -237,7 +237,7 @@ Il blocco `DRV` del riepilogo mappa ogni rilevazione sul metodo da rivedere:
 | `full_refresh_time`, `_busy_timeout` | costanti e costruttore | `1`, `6` |
 | `power_on_time`, `power_off_time`, sequenza di off | `_PowerOn()`, `_PowerOff()` | `b` |
 | LUT, `0x04`, border, `0x22 = 0xCC`, `partial_refresh_time` | `_Init_Part()`, `_Update_Part()` | `8`, `p`, `t` |
-| allineamento di `0x26` e invariante di catena | `drawImagePartial()`, `writeImagePrevious()` | `p` |
+| allineamento di `0x26` e invariante di catena | `drawImagePartial()`, `writeImageToPrevious()` | `p` |
 | uscita dalla catena | `_cleanColorIfPrevious()`, `setPaged()` | `p` con `x` |
 | refresh d'area: pieno o partial | override di `refresh(x, y, w, h)` | `5` |
 | refresh pieno B/N veloce | un `_Init_Full()` alla 370 e un'API dedicata | `w` |

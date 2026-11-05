@@ -147,7 +147,7 @@
 //   NUOVO), sempre: Table 6-4 e Table 6-5 indicizzano entrambe così, e fra le
 //   due cambia solo l'aliasing che la waveform di fabbrica mette nelle LUT.
 //   Quindi 0x26 cambia significato, ed è tutto il contratto dell'API. Vedi
-//   writeImagePrevious() e drawImagePartial().
+//   writeImageToPrevious() e drawImagePartial().
 //   Tre conseguenze che si pagano se ignorate:
 //     - un frame aggiornato in partial è per forza SENZA ROSSO, perchè 0x26 sta
 //       facendo il frame precedente e non l'accent. La scelta è per frame e non
@@ -183,8 +183,8 @@
 //   misura, non quattro. La taratura del silicio aveva già escluso sette
 //   tensioni fra 9 e 15 V con waveform simmetrica, la LUT1 resa duale di LUT2,
 //   il multiciclo a frame costanti e tre valori di VCOM. L'ultimo rimasto era
-//   la DURATA, e examples/097c/partial_api_check l'ha provata attraverso il
-//   driver scalando i TP del gruppo di drive:
+//   la DURATA, e una sonda l'ha provata attraverso il driver scalando i TP
+//   del gruppo di drive:
 //       drive x1    28 frame   nero 765 ms   bianco  682 ms
 //       drive x2    46 frame   nero 1124     bianco 1040
 //       drive x4    82 frame   nero 1841     bianco 1758
@@ -322,11 +322,12 @@
 //   di una stessa page senza desincronizzare il counter — il counter avanza
 //   solo quando il template chiude la page con writeImage(black, color).
 //
-//   LIMITAZIONE residua (irrilevante per il progetto): in modalità partial
-//   window del template (setPartialWindow), nextPage() salta il writeImage()
-//   per le pages che non intersecano la window — il counter si disallinea
-//   per quelle iterazioni. Il progetto attuale usa solo setFullWindow,
-//   quindi non incappa in questo edge case.
+//   In finestra parziale (setPartialWindow) la page k del template parte
+//   dalla riga _pw_y + k * pageHeight, e _pw_y è privato di GxEPD2_3C: il
+//   driver lo vede solo dopo la prima page. Per questo showImage() salta le
+//   righe sorgente soltanto su un lato, quello che nessuna finestra può
+//   anticipare, e disegna le altre lasciando il taglio a drawPixel: vedi
+//   GxEPDImage.h.
 //
 // Author: Mattia Alesi
 // =============================================================================
@@ -427,7 +428,7 @@
 // precedente e non l'accent. Una waveform che volesse un partial a colori
 // dovrebbe portare a VSH2 la LUT dell'accent, ed è terreno mai provato.
 // ---------------------------------------------------------------------------
-static const uint8_t GxEPD2_SOLUM_097c_lut_partial[110] PROGMEM =
+inline constexpr uint8_t GxEPD2_SOLUM_097c_lut_partial[110] PROGMEM =
 {
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // LUT0, pixel fermo
   0x01, 0x2A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // LUT1, nero -> bianco
@@ -562,7 +563,7 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
     // fuori dall'area che cambia finiscono su LUT0 o LUT3, che sono a zero, e
     // non vengono pilotati qualunque cosa mostri il vetro. Su un fondo uniforme
     // è una sola chiamata a writeScreenBufferPrevious() (9 ms, nessun buffer);
-    // su un fondo qualsiasi la si completa con writeImagePrevious() sulle sole
+    // su un fondo qualsiasi la si completa con writeImageToPrevious() sulle sole
     // aree che differiscono dal fondo. Dal secondo partial in poi ci pensa
     // drawImagePartial(), che riallinea 0x26 da sè.
     //
@@ -577,32 +578,36 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
     // Una refresh(false) nuda dipingerebbe quindi lo schermo di rosso, e un
     // frame a colori dal loop paged uscirebbe con sette ottavi di rosso spurio,
     // perchè il template riscrive 0x26 una page alla volta. Ci pensa
-    // _cleanColorIfPrevious(), chiamata da _Update_Full() e da setPaged():
-    // entrambe le trappole sono strutturalmente impossibili. Vedi il commento
-    // di _previous_in_color_ram per il perchè quella pulizia non può mai
-    // cancellare un accent legittimo.
+    // _cleanColorIfPrevious(), chiamata da _Update_Full(), da setPaged() e da
+    // ogni scrittura di un accent vero (writeImage(black, color),
+    // writeImagePart(black, color), writeImageRed()), così anche un frame a
+    // colori scritto senza loop paged non viene azzerato dal refresh. Vedi il
+    // commento di _previous_in_color_ram per il perchè quella pulizia non può
+    // mai cancellare un accent legittimo.
     //
     // Dentro una catena di partial NON vanno usate writeImage(bitmap, ...),
     // writeImagePart(bitmap, ...) nè le drawImage() che ci passano sopra: sono
     // le API a canale singolo che chiamano _cleanColorIfDirty(), e siccome
-    // writeImagePrevious() alza il dirty flag azzererebbero 0x26, cioè proprio
+    // writeImageToPrevious() alza il dirty flag azzererebbero 0x26, cioè proprio
     // il frame precedente. Per il piano BW dentro la catena c'è
-    // writeImageBlack(), che il dirty flag non lo guarda.
+    // writeImageBlack(), che il dirty flag non lo guarda. writeImageBlack() e
+    // writeImageToPrevious() passano da _ensurePartialRamDefined(), quindi
+    // possono aprire una catena anche subito dopo un init o un hibernate.
     // ------------------------------------------------------------------
 
     /** Riempie tutta la RAM 0x26 con un valore costante in polarità BW
      *  (0xFF = frame precedente tutto bianco) usando il pattern hardware del
      *  controller: 9 ms e nessun buffer, contro gli 80.640 byte che servirebbero
-     *  a writeImagePrevious() a schermo pieno. È il modo normale di aprire una
+     *  a writeImageToPrevious() a schermo pieno. È il modo normale di aprire una
      *  catena di partial. */
     void writeScreenBufferPrevious(uint8_t value = 0xFF);
 
-    /** Scrive la RAM 0x26 come frame precedente, in polarità BW (bit=1 =
-     *  bianco) e quindi SENZA l'invert che writeImageRed() applica all'accent.
-     *  Alza il dirty flag e quello di frame precedente: il prossimo disegno a
-     *  colori, e qualunque refresh pieno, ripuliscono 0x26. */
-    void writeImagePrevious(const uint8_t* bitmap, int16_t x, int16_t y,
-                            int16_t w, int16_t h, bool pgm = true);
+    /** Override del virtuale nativo di GxEPD2_EPD: scrive la RAM 0x26 come
+     *  frame precedente, in polarità BW (bit=1 = bianco), come fanno i driver
+     *  SSD1677 di GxEPD2. Alza il dirty flag e quello di frame precedente: il
+     *  prossimo disegno a colori, e qualunque refresh pieno, ripuliscono 0x26. */
+    void writeImageToPrevious(const uint8_t bitmap[], int16_t x, int16_t y, int16_t w, int16_t h,
+                              bool invert = false, bool mirror_y = false, bool pgm = false) override;
 
     /** Passata di partial sulla RAM già scritta. Senza coordinate, e non è una
      *  semplificazione: la finestra di 0x44/0x45 non confina il refresh, il
@@ -750,10 +755,10 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
     /** Passata di partial: la sequenza cronometrata dalla sonda, 639 ms. */
     void _Update_Part();
 
-    /** Alto quando nel controller c'è la LUT custom del partial al posto di
-     *  quella dell'OTP. Lo abbassano _InitDisplay(), perchè il SWRESET rimette
-     *  l'OTP, e _Update_Full(), perchè 0xF7 ha il bit 4 di ricarica acceso. */
-    bool _using_partial_mode = false;
+    // _using_partial_mode è il membro della base GxEPD2_EPD, come nei driver
+    // nativi: è alto quando nel controller c'è la LUT custom del partial al
+    // posto di quella dell'OTP. Lo abbassano init() della base, _InitDisplay(),
+    // perchè il SWRESET rimette l'OTP, _Update_Full() e setPartialLut().
 
     // Dirty flag del piano accent: traccia quando la RAM 0x26 contiene dati
     // non puliti dall'ultima writeScreenBuffer(). Permette di saltare il
@@ -765,7 +770,7 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
     /** Alto quando in 0x26 c'è un FRAME PRECEDENTE del partial e non un
      *  accent. È un flag distinto da _color_dirty, e la distinzione è ciò che
      *  rende la pulizia automatica sempre corretta: lo alzano soltanto
-     *  writeScreenBufferPrevious() e writeImagePrevious(), quindi quando è alto
+     *  writeScreenBufferPrevious() e writeImageToPrevious(), quindi quando è alto
      *  l'ultima scrittura in quella RAM È un frame precedente, e un refresh
      *  pieno non ha nessun uso possibile per quel contenuto perchè lo
      *  rileggerebbe come accent. Cancellarlo non può quindi mai distruggere un
@@ -791,9 +796,9 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
 // Implementazione inline dei metodi della classe.
 //
 // Scelta header-only: l'intero driver vive qui (no compilation unit .cpp).
-// Tutti i metodi sono definiti `inline` per permettere l'inclusione da più
-// TU senza violare la ODR; nel progetto attuale l'header viene incluso solo
-// dal .ino, quindi è sempre una sola TU.
+// Tutti i metodi sono definiti `inline`, e la waveform del partial è
+// `inline constexpr`, per permettere l'inclusione da più TU senza violare la
+// ODR; nel progetto attuale l'header viene incluso solo dal .ino.
 // =============================================================================
 
 inline GxEPD2_SOLUM_097c_960x672::GxEPD2_SOLUM_097c_960x672(int16_t cs, int16_t dc, int16_t rst, int16_t busy) :
@@ -966,11 +971,7 @@ inline bool GxEPD2_SOLUM_097c_960x672::_writeImage(uint8_t command, const uint8_
       uint32_t idx = mirror_y ? j + dx / 8 + uint32_t((h - 1 - (i + dy))) * wb : j + dx / 8 + uint32_t(i + dy) * wb;
       if (pgm)
       {
-#if defined(__AVR) || defined(ESP8266) || defined(ESP32)
         data = pgm_read_byte(&bitmap[idx]);
-#else
-        data = bitmap[idx];
-#endif
       }
       else
       {
@@ -1040,11 +1041,7 @@ inline bool GxEPD2_SOLUM_097c_960x672::_writeImagePart(uint8_t command, const ui
       uint32_t idx = mirror_y ? x_part / 8 + j + dx / 8 + uint32_t((h_bitmap - 1 - (y_part + i + dy))) * wb_bitmap : x_part / 8 + j + dx / 8 + uint32_t(y_part + i + dy) * wb_bitmap;
       if (pgm)
       {
-#if defined(__AVR) || defined(ESP8266) || defined(ESP32)
         data = pgm_read_byte(&bitmap[idx]);
-#else
-        data = bitmap[idx];
-#endif
       }
       else
       {
@@ -1061,14 +1058,17 @@ inline bool GxEPD2_SOLUM_097c_960x672::_writeImagePart(uint8_t command, const ui
 
 // HOT PATH (paged full-window): GxEPD2_3C::nextPage() in modalità full-window
 // chiama questa overload (non writeImagePart) - vedi GxEPD2_3C.h:368.
-// Qui non serve nessun cleanup preliminare: il template passa entrambi i piani
-// del pannello a ogni page, quindi 0x26 viene riscritto per intero e un
-// residuo di accent non può sopravvivere.
+// Un residuo di accent non può sopravvivere, perchè il template passa entrambi
+// i piani a ogni page. Un frame precedente del partial invece sì, se questa
+// overload la chiama uno sketch dopo una catena senza passare da setPaged():
+// _Update_Full() lo cancellerebbe insieme all'accent appena scritto, quindi lo
+// si ripulisce prima. Nel loop paged costa un confronto.
 inline void GxEPD2_SOLUM_097c_960x672::writeImage(const uint8_t* black, const uint8_t* color, int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
   if (black) _writeImage(0x24, black, x, y, w, h, invert, mirror_y, pgm);
   if (color)
   {
+    _cleanColorIfPrevious();
     _writeImage(0x26, color, x, y, w, h, !invert, mirror_y, pgm);
     _color_dirty = true;
   }
@@ -1079,9 +1079,9 @@ inline void GxEPD2_SOLUM_097c_960x672::writeImage(const uint8_t* black, const ui
   _show_image_page_hint++;
 }
 
-// HOT PATH (paged): chiamato 8 volte per refresh dal template GxEPD2_3C
-// durante nextPage() in modalità partial window. Come il fratello a full
-// window non fa cleanup: entrambi i piani arrivano dal template.
+// Scrittura d'area dei due piani: la chiama GxEPD2_3C::displayWindow(), una
+// volta, mentre il loop paged passa sempre dall'overload a schermo pieno
+// anche in finestra parziale.
 inline void GxEPD2_SOLUM_097c_960x672::writeImagePart(const uint8_t* black, const uint8_t* color, int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
     int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
@@ -1373,15 +1373,14 @@ inline void GxEPD2_SOLUM_097c_960x672::_Update_Full()
   // rileggerebbe come accent e dipingerebbe di rosso tutto quello che sul vetro
   // è bianco. Costa 9 ms e solo in quel caso.
   _cleanColorIfPrevious();
-  if (_using_partial_mode)
-  {
-    // Rimette il border sulla waveform di produzione. La LUT dell'OTP, e con
-    // essa le tensioni che _Init_Part() ha scritto con 0x04, le ricarica il
-    // bit 4 di 0xF7: non serve disfare niente a mano.
-    _writeCommand(0x3C);
-    _writeData(0x01); // LUT1, for white
-    _using_partial_mode = false;
-  }
+  // Rimette il border sulla waveform di produzione a ogni refresh pieno, non
+  // solo dopo una passata di partial: setPartialLut() abbassa
+  // _using_partial_mode con il border ancora in HiZ. La LUT dell'OTP, e con
+  // essa le tensioni che _Init_Part() ha scritto con 0x04, le ricarica il
+  // bit 4 di 0xF7. Costa due transazioni SPI su 24 s.
+  _writeCommand(0x3C);
+  _writeData(0x01); // LUT1, for white
+  _using_partial_mode = false;
   _setPartialRamArea(0, 0, WIDTH, HEIGHT);
   _writeCommand(0x22); // Display Update Sequence Options
   _writeData(0xF7);    //
@@ -1402,6 +1401,10 @@ inline void GxEPD2_SOLUM_097c_960x672::writeImageBlack(const uint8_t* bitmap,
     int16_t x, int16_t y, int16_t w, int16_t h, bool pgm)
 {
   if (!bitmap) return;
+  // Dopo un init o un hibernate _writeImage() riempirebbe 0x26 di 0x00, cioè
+  // frame precedente tutto nero, e la prossima passata di partial pilotrebbe
+  // tutto lo schermo: la guardia porta prima le due RAM al bianco.
+  _ensurePartialRamDefined();
   _writeImage(0x24, bitmap, x, y, w, h, false, false, pgm);
   // canale black non ha dirty flag: viene sempre riscritto a ogni frame.
 }
@@ -1449,7 +1452,7 @@ inline void GxEPD2_SOLUM_097c_960x672::_cleanColorIfDirty()
 
 // Gemella della precedente per il frame precedente del partial. La pulizia è
 // sempre corretta e non serve nessuna euristica: il flag lo alzano soltanto
-// writeScreenBufferPrevious() e writeImagePrevious(), quindi se è alto in 0x26
+// writeScreenBufferPrevious() e writeImageToPrevious(), quindi se è alto in 0x26
 // c'è un frame precedente e non un accent, e un refresh pieno quel contenuto lo
 // rileggerebbe come rosso. Vedi il commento di _previous_in_color_ram.
 inline void GxEPD2_SOLUM_097c_960x672::_cleanColorIfPrevious()
@@ -1558,17 +1561,20 @@ inline void GxEPD2_SOLUM_097c_960x672::writeScreenBufferPrevious(uint8_t value)
   // proprio l'allineamento appena fatto.
   _ensurePartialRamDefined();
   _writeScreenBuffer(0x26, value);
-  // Vale come per writeImagePrevious(): in 0x26 non c'è più un accent pulito,
+  // Vale come per writeImageToPrevious(): in 0x26 non c'è più un accent pulito,
   // ma un frame precedente. Il secondo flag è quello che fa ripulire quella RAM
   // a un refresh pieno o all'inizio di un loop paged.
   _markPreviousInColorRam();
 }
 
-inline void GxEPD2_SOLUM_097c_960x672::writeImagePrevious(const uint8_t* bitmap,
-    int16_t x, int16_t y, int16_t w, int16_t h, bool pgm)
+inline void GxEPD2_SOLUM_097c_960x672::writeImageToPrevious(const uint8_t bitmap[],
+    int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
   if (!bitmap) return;
-  _writeImage(0x26, bitmap, x, y, w, h, false, false, pgm);
+  // Stessa guardia di writeImageBlack(): può essere la prima scrittura dopo un
+  // init o un hibernate.
+  _ensurePartialRamDefined();
+  _writeImage(0x26, bitmap, x, y, w, h, invert, mirror_y, pgm);
   // In 0x26 non c'è più un accent pulito: il prossimo disegno a colori deve
   // ripulirla prima di usarla come piano rosso.
   _markPreviousInColorRam();
@@ -1636,7 +1642,7 @@ inline void GxEPD2_SOLUM_097c_960x672::_ensurePartialRamDefined()
 // mentre questa LUT non è simmetrica (LUT1 diverso da LUT2), quindi
 // servirebbero due waveform alternate per risparmiare 18 ms.
 //
-// Non passa da writeImageBlack() e writeImagePrevious() ma scrive i due piani
+// Non passa da writeImageBlack() e writeImageToPrevious() ma scrive i due piani
 // direttamente, perchè quelle due firme non hanno invert e cambiargliela
 // romperebbe i chiamanti che passano pgm per posizione.
 inline void GxEPD2_SOLUM_097c_960x672::drawImagePartial(const uint8_t* bitmap,

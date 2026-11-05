@@ -19,8 +19,8 @@
 //     "M3 12.2" NEWTON BWR Normal"), con lo stesso pannello: cambiano scheda
 //     tag e guscio. Quale sia un dato esemplare lo dice l'etichetta sul vetro.
 //   - Risoluzione: 768x960 nativi, pilotati in landscape come 960x768.
-//   - Colori: 3 colori nativi (bianco / nero / rosso). Niente giallo,
-//     a differenza del driver SOLUM 9.7" del progetto.
+//   - Colori: 3 colori nativi (bianco / nero / rosso), come il driver SOLUM
+//     9.7" del progetto: nessuno dei due pannelli ha il giallo.
 //   - Connettività: 2 code FFC, una per controller, al centro dei due bordi
 //     lunghi del pannello.
 //   - Refresh: solo full refresh, misurato in 18.3 s di BUSY e 19.1 s dalla
@@ -136,9 +136,11 @@
 //
 // BUS SPI:
 //   le primitive di bus passano da _pSPIx / _spi_settings della base
-//   GxEPD2_EPD, comprese quelle delle ScreenPart, che ne tengono un
-//   riferimento. Il default che i costruttori impostano è l'oggetto SPI
-//   globale a 20 MHz, cioè quello che il driver usava da sempre; uno
+//   GxEPD2_EPD. Le ScreenPart non ne tengono una copia nè un riferimento: la
+//   classe esterna glieli passa a ogni scrittura, perchè GxEPD2_3C tiene il
+//   driver per valore e lo copia, e un riferimento resterebbe legato al
+//   driver d'origine, distrutto subito dopo la costruzione del display. Il
+//   default che i costruttori impostano è l'oggetto SPI globale a 10 MHz; uno
 //   selectSPI(hspi, SPISettings(...)) dello sketch lo sostituisce, come sul
 //   driver 9.7". Va chiamato prima di init(), perchè è init() che apre il bus.
 //
@@ -159,9 +161,8 @@
 #include <GxEPD2_EPD.h>
 
 // Sistema di descrittori immagine e showImage(): condivisi con gli altri driver
-// della libreria, vedi src/GxEPDImage.h. Il ramo FORMAT_BWRY_1BPP non scatta su
-// questo pannello, che ha due soli piani: lo escludono il formato del
-// descrittore e le no-op del giallo dichiarate da questa classe.
+// della libreria, vedi src/GxEPDImage.h. showImage() compone i piani black e
+// red, quindi un descrittore a tre piani su questo pannello mostra i primi due.
 #include "GxEPDImage.h"
 
 // Pinout uniforme fra i driver della libreria.
@@ -262,13 +263,11 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
     static const uint16_t PART_HEIGHT = HEIGHT / 2; // master righe 0..383, slave 384..767
 
     // ----- Costruttori -----
-#if defined(ESP32)
     // Costruttore completo ESP32 con SPI espliciti (es. Waveshare ESP32 driver board).
     GxEPD2_SOLUM_122c_960x768(int16_t sck, int16_t miso, int16_t mosi,
                               int16_t cs_m, int16_t cs_s,
                               int16_t dc, int16_t rst,
                               int16_t busy_m, int16_t busy_s);
-#endif
     // Costruttore standard SPI (default SCK / MISO / MOSI).
     GxEPD2_SOLUM_122c_960x768(int16_t cs_m, int16_t cs_s,
                               int16_t dc, int16_t rst,
@@ -287,11 +286,11 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
     explicit GxEPD2_SOLUM_122c_960x768(const GxEPD2_SOLUM_Pins& pins);
 
     // ----- API pubbliche (pattern GxEPD2 standard, BWR-only) -----
-    // Override di init(): il base GxEPD2_EPD::init() configura solo i pin
-    // del master (_cs / _rst / _busy / SPI). Per il dual-controller serve
-    // estendere con pinMode su _cs_s e _busy_s. Pattern preso da 1248c.
-    void init(uint32_t serial_diag_bitrate = 0);
-    void init(uint32_t serial_diag_bitrate, bool initial, uint16_t reset_duration = 20, bool pulldown_rst_mode = false);
+    // init(serial_diag_bitrate) resta quello della base, che chiama l'override
+    // qui sotto: la base configura i pin del master, questo driver aggiunge
+    // quelli dello slave e apre il bus sui pin ricevuti dal costruttore.
+    using GxEPD2_EPD::init;
+    void init(uint32_t serial_diag_bitrate, bool initial, uint16_t reset_duration = 10, bool pulldown_rst_mode = false) override;
 
     void clearScreen(uint8_t value = 0xFF);
     void clearScreen(uint8_t black_value, uint8_t color_value);
@@ -343,16 +342,11 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
     int16_t showImagePageHint() const { return _show_image_page_hint; }
 
     /**
-     * Primitive del terzo piano, per ora senza corpo. Non sono parte del
-     * contratto di src/GxEPDImage.h, che chiede i soli setPaged() e
-     * showImagePageHint(): showImage() compone black e red e un terzo piano
-     * non lo tocca mai. Restano dichiarate perchè su questo pannello il
-     * quarto colore è una questione ancora aperta — il codice modello
-     * EL122H6W4A ha campo colore 4, cioè BWRY nominale, mentre il vetro
-     * porta serigrafato "Newton PRO 12.2" BWR normal" — e il bring-up è
-     * fermo alla seconda coda muta, quindi non c'è modo di misurarlo.
-     * Quando lo si saprà: o prendono un corpo vero, o vanno rimosse.
-     * Il 9.7" ha chiuso la stessa domanda e non le dichiara affatto.
+     * Primitive del terzo piano, senza corpo: il pannello è a tre colori
+     * (bianco, nero, rosso, come dice il vetro "Newton PRO 12.2" BWR normal")
+     * e non ha un piano giallo. Non sono parte del contratto di
+     * src/GxEPDImage.h, che chiede i soli setPaged() e showImagePageHint();
+     * restano dichiarate per la compatibilità di API con chi le chiama.
      */
     void preserveYellow(bool /*preserve*/) {}
     /**
@@ -422,6 +416,19 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
     }
 
   private:
+    /**
+     * Bus SPI di una scrittura, preso da _pSPIx e _spi_settings della base al
+     * momento della chiamata. Vive quanto la chiamata: nessuna ScreenPart lo
+     * conserva, così la copia del driver fatta da GxEPD2_3C non può restare
+     * legata al bus dell'oggetto d'origine.
+     */
+    struct Bus
+    {
+      SPIClass*          spi;
+      const SPISettings& settings;
+    };
+    Bus _bus() const { return Bus{ _pSPIx, _spi_settings }; }
+
     // ------------------------------------------------------------------
     // ScreenPart: gestisce un singolo controller (master o slave).
     // Pattern preso da GxEPD2_1248c::ScreenPart, semplificato per 2
@@ -432,13 +439,12 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
       public:
         const uint16_t WIDTH;
         const uint16_t HEIGHT;
-        ScreenPart(uint16_t width, uint16_t height, bool mirror_x, bool mirror_y, int16_t cs, int16_t dc,
-                   SPIClass*& pSPIx, SPISettings& spi_settings);
-        void writeScreenBuffer(uint8_t command, uint8_t value);
-        void writeImagePart(uint8_t command, const uint8_t bitmap[], int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
+        ScreenPart(uint16_t width, uint16_t height, bool mirror_x, bool mirror_y, int16_t cs, int16_t dc);
+        void writeScreenBuffer(const Bus& bus, uint8_t command, uint8_t value);
+        void writeImagePart(const Bus& bus, uint8_t command, const uint8_t bitmap[], int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
                             int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm);
-        void writeCommand(uint8_t c);
-        void writeData(uint8_t d);
+        void writeCommand(const Bus& bus, uint8_t c);
+        void writeData(const Bus& bus, uint8_t d);
         bool isActive() const { return _cs >= 0; }
         /** Riassegna chip select e offset degli opcode di questa ScreenPart.
          *  In cascade lo slave scrive sul CS del master e somma 0x80 ai propri
@@ -456,11 +462,7 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
         // dual-CS, 0x80 sullo slave in cascade. Non tocca i dati, che non
         // hanno opcode.
         uint8_t _cmd_offset;
-        // Riferimenti allo stato SPI del driver, non copie: così un
-        // selectSPI() dello sketch vale anche per le ScreenPart.
-        SPIClass*&   _pSPIx;
-        SPISettings& _spi_settings;
-        void _setPartialRamArea(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
+        void _setPartialRamArea(const Bus& bus, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
         // Inverte l'ordine degli 8 bit di un byte: serve quando la banda è
         // specchiata lungo X, perchè il ribaltamento dei soli byte lascerebbe
         // i pixel invertiti dentro ogni gruppo di 8.
@@ -475,7 +477,6 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
     void _writeImage(uint8_t command, const uint8_t* bitmap, int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm);
     void _writeImagePart(uint8_t command, const uint8_t* bitmap, int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
                          int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm);
-    void _resetDual();
     void _initSPI();
     void _PowerOn();
     void _PowerOff();
@@ -484,15 +485,17 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
     void _writeCommandAll(uint8_t c);
     void _writeDataAll(uint8_t d);
     void _waitWhileAnyBusy(const char* comment, uint16_t busy_time);
+    // Vero quando lo slave ha un proprio CS da abbassare insieme al master.
+    bool _isSlaveSelectedTogether() const { return (_addressing == ADDRESSING_DUAL_CS) && (_cs_s >= 0); }
 
     // ------------------------------------------------------------------
     // Stato.
     // ------------------------------------------------------------------
-    int16_t _sck, _miso, _mosi;
-    int16_t _cs_m, _cs_s;
-    int16_t _dc_pin;
-    int16_t _rst_pin;
-    int16_t _busy_m, _busy_s;
+    // I pin del master sono _cs, _dc, _rst e _busy della base. Quelli del bus
+    // non si chiamano _sck e _mosi perchè la base usa quei nomi per la lettura
+    // software dei registri, con un altro significato.
+    int16_t _bus_sck, _bus_miso, _bus_mosi;
+    int16_t _cs_s, _busy_s;
 
     ScreenPart M;
     ScreenPart S;
@@ -520,18 +523,16 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
 
 // ----- Costruttori outer-class -----
 
-#if defined(ESP32)
 inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(
     int16_t sck, int16_t miso, int16_t mosi,
     int16_t cs_m, int16_t cs_s,
     int16_t dc, int16_t rst,
     int16_t busy_m, int16_t busy_s) :
   GxEPD2_EPD(cs_m, dc, rst, busy_m, HIGH, 120000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
-  _sck(sck), _miso(miso), _mosi(mosi),
-  _cs_m(cs_m), _cs_s(cs_s), _dc_pin(dc), _rst_pin(rst),
-  _busy_m(busy_m), _busy_s(busy_s),
-  M(PART_WIDTH, PART_HEIGHT, false, false, cs_m, dc, _pSPIx, _spi_settings),
-  S(PART_WIDTH, PART_HEIGHT, true,  true,  cs_s, dc, _pSPIx, _spi_settings)
+  _bus_sck(sck), _bus_miso(miso), _bus_mosi(mosi),
+  _cs_s(cs_s), _busy_s(busy_s),
+  M(PART_WIDTH, PART_HEIGHT, false, false, cs_m, dc),
+  S(PART_WIDTH, PART_HEIGHT, true,  true,  cs_s, dc)
 {
   // Default: SPI globale a 10 MHz. Passa dai membri della base invece di essere
   // cablato nelle primitive, così un selectSPI() dello sketch lo sostituisce.
@@ -541,18 +542,16 @@ inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(
   // refresh full-screen, su un refresh che ne dura 19.000.
   selectSPI(SPI, SPISettings(10000000, MSBFIRST, SPI_MODE0));
 }
-#endif
 
 inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(
     int16_t cs_m, int16_t cs_s,
     int16_t dc, int16_t rst,
     int16_t busy_m, int16_t busy_s) :
   GxEPD2_EPD(cs_m, dc, rst, busy_m, HIGH, 120000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
-  _sck(SCK), _miso(MISO), _mosi(MOSI),
-  _cs_m(cs_m), _cs_s(cs_s), _dc_pin(dc), _rst_pin(rst),
-  _busy_m(busy_m), _busy_s(busy_s),
-  M(PART_WIDTH, PART_HEIGHT, false, false, cs_m, dc, _pSPIx, _spi_settings),
-  S(PART_WIDTH, PART_HEIGHT, true,  true,  cs_s, dc, _pSPIx, _spi_settings)
+  _bus_sck(SCK), _bus_miso(MISO), _bus_mosi(MOSI),
+  _cs_s(cs_s), _busy_s(busy_s),
+  M(PART_WIDTH, PART_HEIGHT, false, false, cs_m, dc),
+  S(PART_WIDTH, PART_HEIGHT, true,  true,  cs_s, dc)
 {
   // Default: SPI globale a 10 MHz. Passa dai membri della base invece di essere
   // cablato nelle primitive, così un selectSPI() dello sketch lo sostituisce.
@@ -569,11 +568,10 @@ inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(
 // del master si può validare in isolamento.
 inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(int16_t cs, int16_t dc, int16_t rst, int16_t busy) :
   GxEPD2_EPD(cs, dc, rst, busy, HIGH, 120000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
-  _sck(SCK), _miso(MISO), _mosi(MOSI),
-  _cs_m(cs), _cs_s(-1), _dc_pin(dc), _rst_pin(rst),
-  _busy_m(busy), _busy_s(-1),
-  M(PART_WIDTH, PART_HEIGHT, false, false, cs, dc, _pSPIx, _spi_settings),
-  S(PART_WIDTH, PART_HEIGHT, true,  true,  -1, dc, _pSPIx, _spi_settings)
+  _bus_sck(SCK), _bus_miso(MISO), _bus_mosi(MOSI),
+  _cs_s(-1), _busy_s(-1),
+  M(PART_WIDTH, PART_HEIGHT, false, false, cs, dc),
+  S(PART_WIDTH, PART_HEIGHT, true,  true,  -1, dc)
 {
   // Default: SPI globale a 10 MHz. Passa dai membri della base invece di essere
   // cablato nelle primitive, così un selectSPI() dello sketch lo sostituisce.
@@ -590,17 +588,12 @@ inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(int16_t cs, int16_t 
  * single-CS, con la metà slave del pannello non pilotata.
  */
 inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(const GxEPD2_SOLUM_Pins& pins) :
-#if defined(ESP32)
   GxEPD2_SOLUM_122c_960x768(pins.sck  >= 0 ? pins.sck  : int16_t(SCK),
                             pins.miso >= 0 ? pins.miso : int16_t(MISO),
                             pins.mosi >= 0 ? pins.mosi : int16_t(MOSI),
                             pins.cs, pins.cs2,
                             pins.dc, pins.rst,
                             pins.busy, pins.busy2)
-#else
-  GxEPD2_SOLUM_122c_960x768(pins.cs, pins.cs2, pins.dc, pins.rst,
-                            pins.busy, pins.busy2)
-#endif
 {
 }
 
@@ -609,7 +602,7 @@ inline GxEPD2_SOLUM_122c_960x768::GxEPD2_SOLUM_122c_960x768(const GxEPD2_SOLUM_P
 inline void GxEPD2_SOLUM_122c_960x768::setAddressingMode(AddressingMode mode)
 {
   _addressing = mode;
-  if (mode == ADDRESSING_CASCADE) S.setAddressing(_cs_m, CASCADE_CMD_OFFSET);
+  if (mode == ADDRESSING_CASCADE) S.setAddressing(_cs, CASCADE_CMD_OFFSET);
   else                            S.setAddressing(_cs_s, 0x00);
 }
 
@@ -650,12 +643,13 @@ inline void GxEPD2_SOLUM_122c_960x768::writeScreenBuffer(uint8_t black_value, ui
 
 inline void GxEPD2_SOLUM_122c_960x768::_writeScreenBuffer(uint8_t command, uint8_t value)
 {
-  M.writeScreenBuffer(command, value);
-  if (S.isActive()) S.writeScreenBuffer(command, value);
+  M.writeScreenBuffer(_bus(), command, value);
+  if (S.isActive()) S.writeScreenBuffer(_bus(), command, value);
 }
 
-// HOT PATH: chiamato dal template GxEPD2_3C in modalità BW (paged).
-// Pulisce il canale rosso se dirty e poi scrive il piano BW.
+// Scrittura del solo piano BW, per chi usa l'API single-channel di GxEPD2:
+// il template GxEPD2_3C chiama sempre l'overload a due piani. Pulisce il
+// canale rosso se dirty e poi scrive il piano BW.
 inline void GxEPD2_SOLUM_122c_960x768::writeImage(const uint8_t bitmap[], int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
   if (!_initial_write) _cleanAccentIfDirty(0x26, _color_dirty);
@@ -671,9 +665,9 @@ inline void GxEPD2_SOLUM_122c_960x768::_writeImage(uint8_t command, const uint8_
   // M.HEIGHT..HEIGHT-1. La ScreenPart::writeImagePart fa il clipping interno,
   // e la Y negativa passata allo slave diventa l'offset con cui pesca le righe
   // sorgente della propria banda.
-  M.writeImagePart(command, bitmap, 0, 0, w, h, x, y, w, h, invert, mirror_y, pgm);
+  M.writeImagePart(_bus(), command, bitmap, 0, 0, w, h, x, y, w, h, invert, mirror_y, pgm);
   if (S.isActive())
-    S.writeImagePart(command, bitmap, 0, 0, w, h, x, y - int16_t(M.HEIGHT), w, h, invert, mirror_y, pgm);
+    S.writeImagePart(_bus(), command, bitmap, 0, 0, w, h, x, y - int16_t(M.HEIGHT), w, h, invert, mirror_y, pgm);
 }
 
 inline void GxEPD2_SOLUM_122c_960x768::writeImagePart(const uint8_t bitmap[], int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
@@ -689,9 +683,9 @@ inline void GxEPD2_SOLUM_122c_960x768::_writeImagePart(uint8_t command, const ui
   if (_initial_write) writeScreenBuffer();
   if (!_init_display_done) _InitDisplay();
   if (!bitmap) return;
-  M.writeImagePart(command, bitmap, x_part, y_part, w_bitmap, h_bitmap, x, y, w, h, invert, mirror_y, pgm);
+  M.writeImagePart(_bus(), command, bitmap, x_part, y_part, w_bitmap, h_bitmap, x, y, w, h, invert, mirror_y, pgm);
   if (S.isActive())
-    S.writeImagePart(command, bitmap, x_part, y_part, w_bitmap, h_bitmap, x, y - int16_t(M.HEIGHT), w, h, invert, mirror_y, pgm);
+    S.writeImagePart(_bus(), command, bitmap, x_part, y_part, w_bitmap, h_bitmap, x, y - int16_t(M.HEIGHT), w, h, invert, mirror_y, pgm);
 }
 
 // HOT PATH (paged full-window): GxEPD2_3C::nextPage() in modalità full-window
@@ -844,69 +838,23 @@ inline void GxEPD2_SOLUM_122c_960x768::_cleanAccentIfDirty(uint8_t command, bool
   }
 }
 
-inline void GxEPD2_SOLUM_122c_960x768::_resetDual()
-{
-  if (_rst_pin >= 0)
-  {
-    digitalWrite(_rst_pin, LOW);
-    delay(_reset_duration);
-    digitalWrite(_rst_pin, HIGH);
-    delay(_reset_duration);
-  }
-  _hibernating = false;
-}
-
-// Override di init(): pattern 1248c. Configura pinMode di tutti i pin
-// (master + slave) e poi avvia SPI con i pin custom se ESP32 lo richiede.
-// NON chiama GxEPD2_EPD::init() base, perchè il base assume single-CS.
-inline void GxEPD2_SOLUM_122c_960x768::init(uint32_t serial_diag_bitrate)
-{
-  init(serial_diag_bitrate, true, 20, false);
-}
-
+/**
+ * Il reset è un solo pin condiviso dai due controller, quindi init() della
+ * base basta per flag, diagnostica, pin del master e impulso di reset. Qui si
+ * aggiungono i pin dello slave, prima della base così il suo CS è già alto
+ * durante il reset, e il bus sui pin ricevuti dal costruttore.
+ */
 inline void GxEPD2_SOLUM_122c_960x768::init(uint32_t serial_diag_bitrate, bool initial, uint16_t reset_duration, bool pulldown_rst_mode)
 {
-  _initial_write = initial;
-  _initial_refresh = initial;
-  _pulldown_rst_mode = pulldown_rst_mode;
-  _power_is_on = false;
-  _using_partial_mode = false;
-  _hibernating = false;
-  _init_display_done = false;
-  _reset_duration = reset_duration;
-  if (serial_diag_bitrate > 0)
-  {
-    Serial.begin(serial_diag_bitrate);
-    _diag_enabled = true;
-  }
-  // Pin master + slave. Ogni pin è guardato da >= 0 come fa
-  // GxEPD2_EPD::init() della base: -1 significa assente e non deve arrivare a
-  // pinMode(). È il valore che GxEPD2_SOLUM_Pins usa per i campi non
-  // valorizzati, quindi è raggiungibile dal costruttore a pinout uniforme.
-  if (_cs_m >= 0)
-  {
-    pinMode(_cs_m, OUTPUT);
-    digitalWrite(_cs_m, HIGH);
-  }
   // In cascade il secondo chip select non esiste: il pin resta libero e non va
   // pilotato, altrimenti si tiene alto un CS che sul pannello non arriva a
   // nessuno.
   if ((_addressing == ADDRESSING_DUAL_CS) && (_cs_s >= 0))
   {
+    digitalWrite(_cs_s, HIGH);
     pinMode(_cs_s, OUTPUT);
     digitalWrite(_cs_s, HIGH);
   }
-  if (_dc_pin >= 0)
-  {
-    pinMode(_dc_pin, OUTPUT);
-    digitalWrite(_dc_pin, HIGH);
-  }
-  if (_rst_pin >= 0)
-  {
-    pinMode(_rst_pin, OUTPUT);
-    digitalWrite(_rst_pin, HIGH);
-  }
-  if (_busy_m >= 0) pinMode(_busy_m, INPUT);
   /** Pull-down sul BUSY dello slave, non su quello del master, che è pilotato e
    *  non va toccato. Il BUSY è attivo alto: un pin non contattato che segue il
    *  pull viene letto "non occupato" e lascia passare le attese, mentre un
@@ -915,27 +863,20 @@ inline void GxEPD2_SOLUM_122c_960x768::init(uint32_t serial_diag_bitrate, bool i
    *  da ~45 kohm è irrilevante. Sui GPIO 34..39 dell'ESP32 la direttiva è
    *  inerte, perchè quei pin non hanno pull: lì l'unico rimedio è portare il
    *  BUSY su un pin che ne abbia. */
-#if defined(ESP32)
   if (_busy_s >= 0) pinMode(_busy_s, INPUT_PULLDOWN);
-#else
-  if (_busy_s >= 0) pinMode(_busy_s, INPUT);
-#endif
+  GxEPD2_EPD::init(serial_diag_bitrate, initial, reset_duration, pulldown_rst_mode);
   _initSPI();
-  _resetDual();
 }
 
 inline void GxEPD2_SOLUM_122c_960x768::_initSPI()
 {
-#if defined(ESP32)
-  if ((SCK != _sck) || (MISO != _miso) || (MOSI != _mosi))
+  // init() della base ha già chiamato begin(), e un secondo begin() su un bus
+  // aperto non fa niente: per passare ai pin del costruttore va chiuso prima.
+  if ((SCK != _bus_sck) || (MISO != _bus_miso) || (MOSI != _bus_mosi))
   {
     _pSPIx->end();
-    _pSPIx->begin(_sck, _miso, _mosi, _cs_m);
+    _pSPIx->begin(_bus_sck, _bus_miso, _bus_mosi, _cs);
   }
-  else _pSPIx->begin();
-#else
-  _pSPIx->begin();
-#endif
 }
 
 inline void GxEPD2_SOLUM_122c_960x768::_PowerOn()
@@ -1014,11 +955,11 @@ inline void GxEPD2_SOLUM_122c_960x768::_PowerOff()
  */
 inline void GxEPD2_SOLUM_122c_960x768::_InitDisplay()
 {
-  if (_hibernating) _resetDual();
+  if (_hibernating) _reset();
   delay(10);
   /**
    * IN CASCADE L'INIT NON ARRIVAVA ALLO SLAVE. _writeCommandAll() in cascade
-   * abbassa il solo _cs_m e trasmette l'opcode NUDO, senza | 0x80: lo slave non
+   * abbassa il solo CS del master e trasmette l'opcode NUDO, senza | 0x80: lo slave non
    * vedeva mai SWRESET, soft start, MUX, border, temperatura nè entry mode, e
    * riceveva solo i comandi di finestra e RAM, che sono i soli che ScreenPart
    * offsetta. Quel percorso non poteva funzionare nemmeno col cablaggio
@@ -1095,11 +1036,6 @@ inline void GxEPD2_SOLUM_122c_960x768::_Update_Full()
 }
 
 // ----- Dispatch comandi master/slave (pattern 1248c semplificato) -----
-//
-// Le guardie >= 0 sui pin sono quelle di GxEPD2_EPD::_writeCommand della base:
-// -1 significa pin assente ed è un valore legale di GxEPD2_SOLUM_Pins.
-
-
 
 /** Abbassa entrambi i CS e manda il byte una volta sola: i due controller lo
  *  ricevono in parallelo. Va bene perchè CS è un ingresso e MOSI è condiviso,
@@ -1113,36 +1049,51 @@ inline void GxEPD2_SOLUM_122c_960x768::_Update_Full()
  *  È il broadcast che usa GxEPD2_1248c upstream su un pannello a chip select
  *  separati, ed è corretto solo su quella topologia: se i due controller sono
  *  una coppia in cascade il broadcast non serve, perchè il chip select è uno e
- *  a distinguere i due chip è l'offset 0x80 sull'opcode. */
+ *  a distinguere i due chip è l'offset 0x80 sull'opcode.
+ *
+ *  Con un solo CS da abbassare la trasmissione è quella della base. Con due, il
+ *  CS dello slave si abbassa dentro la transazione come fa la base con il
+ *  master, così un altro dispositivo sullo stesso bus non gli manda clock. */
 inline void GxEPD2_SOLUM_122c_960x768::_writeCommandAll(uint8_t c)
 {
+  if (!_isSlaveSelectedTogether())
+  {
+    _writeCommand(c);
+    return;
+  }
   _pSPIx->beginTransaction(_spi_settings);
-  const bool dual = (_addressing == ADDRESSING_DUAL_CS);
-  if (_dc_pin >= 0) digitalWrite(_dc_pin, LOW);
-  if (_cs_m >= 0) digitalWrite(_cs_m, LOW);
-  if (dual && (_cs_s >= 0)) digitalWrite(_cs_s, LOW);
+  if (_dc >= 0) digitalWrite(_dc, LOW);
+  if (_cs >= 0) digitalWrite(_cs, LOW);
+  digitalWrite(_cs_s, LOW);
   _pSPIx->transfer(c);
-  if (_cs_m >= 0) digitalWrite(_cs_m, HIGH);
-  if (dual && (_cs_s >= 0)) digitalWrite(_cs_s, HIGH);
-  if (_dc_pin >= 0) digitalWrite(_dc_pin, HIGH);
+  if (_cs >= 0) digitalWrite(_cs, HIGH);
+  digitalWrite(_cs_s, HIGH);
+  if (_dc >= 0) digitalWrite(_dc, HIGH);
   _pSPIx->endTransaction();
 }
 
+// Come _writeCommandAll(), per un byte di dati.
 inline void GxEPD2_SOLUM_122c_960x768::_writeDataAll(uint8_t d)
 {
-  const bool dual = (_addressing == ADDRESSING_DUAL_CS);
+  if (!_isSlaveSelectedTogether())
+  {
+    _writeData(d);
+    return;
+  }
   _pSPIx->beginTransaction(_spi_settings);
-  if (_cs_m >= 0) digitalWrite(_cs_m, LOW);
-  if (dual && (_cs_s >= 0)) digitalWrite(_cs_s, LOW);
+  if (_cs >= 0) digitalWrite(_cs, LOW);
+  digitalWrite(_cs_s, LOW);
   _pSPIx->transfer(d);
-  if (_cs_m >= 0) digitalWrite(_cs_m, HIGH);
-  if (dual && (_cs_s >= 0)) digitalWrite(_cs_s, HIGH);
+  if (_cs >= 0) digitalWrite(_cs, HIGH);
+  digitalWrite(_cs_s, HIGH);
   _pSPIx->endTransaction();
 }
 
-/** Attende che entrambi i controller (master + slave) abbiano rilasciato il pin
- *  BUSY. Pattern OR-degli-AND-negati: usciamo solo quando NON è busy alcuno dei
- *  due.
+/** Attende che entrambi i controller abbiano rilasciato il BUSY. Il master lo
+ *  attende _waitWhileBusy() della base, con timeout, diagnostica e busy
+ *  callback: la callback del firmware si sveglia sul BUSY del master, quindi va
+ *  chiamata solo mentre è lui a essere occupato. Lo slave, che parte con lo
+ *  stesso comando, si attende dopo con un semplice polling.
  *
  *  Lo slave viene ignorato se manca il suo BUSY (`_busy_s < 0`) **oppure se
  *  manca il suo CS** (`_cs_s < 0`): un controller che non viene mai selezionato
@@ -1155,39 +1106,27 @@ inline void GxEPD2_SOLUM_122c_960x768::_writeDataAll(uint8_t d)
  *  un solo BUSY, e in cascade è il master a scandire per entrambi. */
 inline void GxEPD2_SOLUM_122c_960x768::_waitWhileAnyBusy(const char* comment, uint16_t busy_time)
 {
-  if (_busy_m >= 0)
+  _waitWhileBusy(comment, busy_time);
+  if (!_isSlaveSelectedTogether() || (_busy_s < 0)) return;
+  const unsigned long start = micros();
+  while (digitalRead(_busy_s) == _busy_level)
   {
     delay(1);
-    unsigned long start = micros();
-    while (true)
+    if (micros() - start > _busy_timeout)
     {
-      delay(1);
-      bool nb_m = (_busy_level != digitalRead(_busy_m));
-      bool nb_s = ((_addressing == ADDRESSING_DUAL_CS) && (_cs_s >= 0) && (_busy_s >= 0))
-                  ? (_busy_level != digitalRead(_busy_s)) : true;
-      if (nb_m && nb_s) break;
-      if (micros() - start > _busy_timeout)
-      {
-        if (_diag_enabled) Serial.println("Busy Timeout!");
-        break;
-      }
-    }
-    if (comment && _diag_enabled)
-    {
-      Serial.print(comment); Serial.print(" : "); Serial.println(micros() - start);
+      if (_diag_enabled) Serial.println("Busy Timeout! (slave)");
+      break;
     }
   }
-  else delay(busy_time);
 }
 
 // =============================================================================
 // IMPLEMENTAZIONI INLINE — ScreenPart (controller singolo: master o slave)
 // =============================================================================
 
-inline GxEPD2_SOLUM_122c_960x768::ScreenPart::ScreenPart(uint16_t width, uint16_t height, bool mirror_x, bool mirror_y, int16_t cs, int16_t dc,
-                                                         SPIClass*& pSPIx, SPISettings& spi_settings) :
+inline GxEPD2_SOLUM_122c_960x768::ScreenPart::ScreenPart(uint16_t width, uint16_t height, bool mirror_x, bool mirror_y, int16_t cs, int16_t dc) :
   WIDTH(width), HEIGHT(height), _mirror_x(mirror_x), _mirror_y(mirror_y), _cs(cs), _dc(dc),
-  _cmd_offset(0x00), _pSPIx(pSPIx), _spi_settings(spi_settings)
+  _cmd_offset(0x00)
 {
 }
 
@@ -1197,24 +1136,24 @@ inline GxEPD2_SOLUM_122c_960x768::ScreenPart::ScreenPart(uint16_t width, uint16_
 // refresh full-screen rispetto al pattern per-byte del 1248c originale.
 // La finestra RAM va sempre riscritta prima del piano: su SSD16xx il contatore
 // di indirizzo resta dov'era finito il write precedente.
-inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeScreenBuffer(uint8_t command, uint8_t value)
+inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeScreenBuffer(const Bus& bus, uint8_t command, uint8_t value)
 {
   if (_cs < 0) return; // ScreenPart non attiva
-  _setPartialRamArea(0, 0, WIDTH, HEIGHT);
-  writeCommand(command);
+  _setPartialRamArea(bus, 0, 0, WIDTH, HEIGHT);
+  writeCommand(bus, command);
   uint8_t buf[256];
   memset(buf, value, sizeof(buf));
   uint32_t remaining = uint32_t(WIDTH) * uint32_t(HEIGHT) / 8;
-  _pSPIx->beginTransaction(_spi_settings);
+  bus.spi->beginTransaction(bus.settings);
   digitalWrite(_cs, LOW);
   while (remaining > 0)
   {
     uint32_t chunk = remaining > sizeof(buf) ? (uint32_t)sizeof(buf) : remaining;
-    _pSPIx->writeBytes(buf, chunk);
+    bus.spi->writeBytes(buf, chunk);
     remaining -= chunk;
   }
   digitalWrite(_cs, HIGH);
-  _pSPIx->endTransaction();
+  bus.spi->endTransaction();
 }
 
 /** Scrittura partial della banda di pannello pertinente a questa ScreenPart.
@@ -1230,7 +1169,7 @@ inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeScreenBuffer(uint8_t com
  *  ordine inverso dentro il byte. Il flag mirror_y del chiamante è un'altra
  *  cosa e si compone con questo: quello ribalta il bitmap sorgente, questo la
  *  banda fisica. */
-inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeImagePart(uint8_t command, const uint8_t bitmap[],
+inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeImagePart(const Bus& bus, uint8_t command, const uint8_t bitmap[],
     int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
     int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
@@ -1254,12 +1193,12 @@ inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeImagePart(uint8_t comman
   h1 -= dy;
   if ((w1 <= 0) || (h1 <= 0)) return;
 
-  _setPartialRamArea(x1, y1, w1, h1);
-  writeCommand(command);
+  _setPartialRamArea(bus, x1, y1, w1, h1);
+  writeCommand(bus, command);
 
   const int16_t rowBytes = w1 / 8;
   uint8_t rowBuf[PART_WIDTH / 8]; // 120 byte: una riga piena a 960 px
-  _pSPIx->beginTransaction(_spi_settings);
+  bus.spi->beginTransaction(bus.settings);
   digitalWrite(_cs, LOW);
   for (int16_t i = 0; i < h1; i++)
   {
@@ -1273,47 +1212,40 @@ inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeImagePart(uint8_t comman
       int32_t idx = mirror_y
           ? x_part / 8 + sj + dx / 8 + ((h_bitmap - 1 - (y_part + si + dy))) * wb_bitmap
           : x_part / 8 + sj + dx / 8 + (y_part + si + dy) * wb_bitmap;
-      if (pgm)
-      {
-#if defined(__AVR) || defined(ESP8266) || defined(ESP32)
-        data = pgm_read_byte(&bitmap[idx]);
-#else
-        data = bitmap[idx];
-#endif
-      }
-      else data = bitmap[idx];
+      if (pgm) data = pgm_read_byte(&bitmap[idx]);
+      else     data = bitmap[idx];
       if (invert) data = ~data;
       if (_mirror_x) data = _reverseBits(data);
       rowBuf[j] = data;
     }
-    _pSPIx->writeBytes(rowBuf, rowBytes);
+    bus.spi->writeBytes(rowBuf, rowBytes);
   }
   digitalWrite(_cs, HIGH);
-  _pSPIx->endTransaction();
+  bus.spi->endTransaction();
 }
 
-inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeCommand(uint8_t c)
+inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeCommand(const Bus& bus, uint8_t c)
 {
   if (_cs < 0) return;
-  _pSPIx->beginTransaction(_spi_settings);
+  bus.spi->beginTransaction(bus.settings);
   if (_dc >= 0) digitalWrite(_dc, LOW);
   digitalWrite(_cs, LOW);
   // In cascade l'opcode porta l'offset dello slave; i comandi comuni li manda
   // la classe outer con _writeCommandAll, senza offset.
-  _pSPIx->transfer(uint8_t(c | _cmd_offset));
+  bus.spi->transfer(uint8_t(c | _cmd_offset));
   digitalWrite(_cs, HIGH);
   if (_dc >= 0) digitalWrite(_dc, HIGH);
-  _pSPIx->endTransaction();
+  bus.spi->endTransaction();
 }
 
-inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeData(uint8_t d)
+inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeData(const Bus& bus, uint8_t d)
 {
   if (_cs < 0) return;
-  _pSPIx->beginTransaction(_spi_settings);
+  bus.spi->beginTransaction(bus.settings);
   digitalWrite(_cs, LOW);
-  _pSPIx->transfer(d);
+  bus.spi->transfer(d);
   digitalWrite(_cs, HIGH);
-  _pSPIx->endTransaction();
+  bus.spi->endTransaction();
 }
 
 /** Imposta la finestra RAM del controller: 0x44/0x45 per gli estremi,
@@ -1323,7 +1255,7 @@ inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::writeData(uint8_t d)
  *  Se la banda è specchiata, i dati arrivano già ribaltati dal data path e la
  *  finestra va riposizionata in modo simmetrico, altrimenti l'immagine
  *  risulterebbe ribaltata ma nel posto sbagliato. */
-inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::_setPartialRamArea(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
+inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::_setPartialRamArea(const Bus& bus, uint16_t x, uint16_t y, uint16_t w, uint16_t h)
 {
   /**
    * Riposizionamento simmetrico della finestra sulla banda specchiata:
@@ -1337,22 +1269,22 @@ inline void GxEPD2_SOLUM_122c_960x768::ScreenPart::_setPartialRamArea(uint16_t x
    */
   if (_mirror_x) x = (x + w <= WIDTH)  ? (uint16_t)(WIDTH  - w - x) : 0;
   if (_mirror_y) y = (y + h <= HEIGHT) ? (uint16_t)(HEIGHT - h - y) : 0;
-  writeCommand(0x44);
-  writeData(x % 256);
-  writeData(x / 256);
-  writeData((x + w - 1) % 256);
-  writeData((x + w - 1) / 256);
-  writeCommand(0x45);
-  writeData(y % 256);
-  writeData(y / 256);
-  writeData((y + h - 1) % 256);
-  writeData((y + h - 1) / 256);
-  writeCommand(0x4E);
-  writeData(x % 256);
-  writeData(x / 256);
-  writeCommand(0x4F);
-  writeData(y % 256);
-  writeData(y / 256);
+  writeCommand(bus, 0x44);
+  writeData(bus, x % 256);
+  writeData(bus, x / 256);
+  writeData(bus, (x + w - 1) % 256);
+  writeData(bus, (x + w - 1) / 256);
+  writeCommand(bus, 0x45);
+  writeData(bus, y % 256);
+  writeData(bus, y / 256);
+  writeData(bus, (y + h - 1) % 256);
+  writeData(bus, (y + h - 1) / 256);
+  writeCommand(bus, 0x4E);
+  writeData(bus, x % 256);
+  writeData(bus, x / 256);
+  writeCommand(bus, 0x4F);
+  writeData(bus, y % 256);
+  writeData(bus, y / 256);
 }
 
 // Inversione dell'ordine dei bit dentro il byte, per la banda specchiata su X.

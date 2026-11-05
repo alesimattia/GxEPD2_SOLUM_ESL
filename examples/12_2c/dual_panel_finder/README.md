@@ -107,7 +107,7 @@ parentesi è il **minimo**, cioè quello che la sonda spende con l'esaustivo spe
 | `3` | costo del push ai tre clock | il clock di `selectSPI` |
 | `4` | **impronta della coda, e confronto** | il modello di indirizzamento, con la tabella sopra |
 | `5` | **SPI a 3 fili: BS1 flottante** | niente nel driver: il **cablaggio** |
-| `6` | **reset a ritentativi** | `_resetDual` e l'attesa dopo lo SWRESET |
+| `6` | **reset a ritentativi** | `reset_duration` di `init()`, cioè l'impulso di `_reset()` della base, e l'attesa dopo lo SWRESET |
 
 ### Il pannello intero e la specchiatura
 

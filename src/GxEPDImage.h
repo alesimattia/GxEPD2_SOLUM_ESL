@@ -127,23 +127,27 @@ namespace GxEPDImage
     const int16_t  h      = static_cast<int16_t>(d.height);
     const uint16_t stride = static_cast<uint16_t>((w + 7) / 8);
 
-    // Bounds della page corrente nel frame OUTPUT. Per rotation 0 e 2 (nessuno
-    // scambio assi) le righe sorgente con y output fuori dalla page possono
-    // essere skippate prima del loop -> 1/8 delle iterazioni complessive.
-    // Per rotation 1 e 3 (90 deg) le righe sorgente mappano sull'asse x
-    // dell'output, quindi la skip-by-row non si applica: fallback al loop
-    // completo (parità funzionale con la versione originale).
-    const int16_t pageH    = static_cast<int16_t>(display.pageHeight());
-    const int16_t pageY    = static_cast<int16_t>(display.epd2.showImagePageHint()) * pageH;
-    const uint8_t rot      = display.getRotation();
-    const bool    can_skip = (rot == 0 || rot == 2);
+    // Righe sorgente da saltare prima del loop. La page k del template copre
+    // le righe fisiche da _pw_y + k * pageH in giù, con _pw_y = 0 a schermo
+    // pieno; _pw_y è privato e il driver lo vede solo dopo la prima page, ma
+    // non è mai negativo. Quindi si salta un solo lato, quello che nessuna
+    // finestra può anticipare, e il resto lo taglia drawPixel():
+    //   rotation 0: le righe sopra la page, cioè prima di pageY;
+    //   rotation 2: drawPixel() ribalta y su HEIGHT, quindi le righe logiche
+    //               dopo HEIGHT - pageY;
+    //   rotation 1 e 3: le righe sorgente cadono sull'asse x, loop completo.
+    // A schermo pieno il wallpaper del firmware itera circa il doppio delle
+    // righe del taglio esatto, una ventina di ms su un refresh da 24 s.
+    const int16_t pageH = static_cast<int16_t>(display.pageHeight());
+    const int16_t pageY = static_cast<int16_t>(display.epd2.showImagePageHint()) * pageH;
+    const uint8_t rot   = display.getRotation();
 
-    const int16_t pyStart = can_skip
-        ? static_cast<int16_t>(max(static_cast<int16_t>(0), static_cast<int16_t>(pageY - y)))
-        : static_cast<int16_t>(0);
-    const int16_t pyEnd = can_skip
-        ? static_cast<int16_t>(min(h, static_cast<int16_t>(pageY + pageH - y)))
-        : h;
+    int16_t pyStart = 0;
+    int16_t pyEnd   = h;
+    if (rot == 0)
+      pyStart = static_cast<int16_t>(max(static_cast<int16_t>(0), static_cast<int16_t>(pageY - y)));
+    else if (rot == 2)
+      pyEnd = static_cast<int16_t>(min(h, static_cast<int16_t>(display.height() - pageY - y)));
 
     for (int16_t py = pyStart; py < pyEnd; ++py)
     {
