@@ -746,8 +746,10 @@ un contatore parallelo: azzerato in `setPaged()`, avanzato in
 
 ### 3.1 Il partial in bianco e nero: 640 ms, e come ci si scrive dentro
 
-Il partial è una **API opt-in del driver**, non un percorso del template, e i
-640 ms misurati contro i 24 s del refresh pieno stanno nella tabella di
+Il partial ha due porte: le **API opt-in** di questo paragrafo, che non sono un
+percorso del template, e il refresh differenziale di [§3.2](#32-il-refresh-differenziale-il-partial-dentro-il-loop-paged),
+che lo usa dentro il loop paged. I 640 ms misurati contro i 24 s del refresh
+pieno stanno nella tabella di
 [§0.8](#08-tempi-di-refresh). Sotto la LUT custom la RAM `0x26` non è l'accent
 ma il **frame precedente** in polarità B/N: è tutto il contratto, e da lì
 discende che un frame aggiornato in partial è **senza rosso**.
@@ -827,6 +829,75 @@ chiamata in poi non serve nessuna preparazione.
 | `writeScreenBufferPrevious(value)` | allinea `0x26` a un valore costante col pattern hardware, 9 ms |
 | `writeImageToPrevious(bmp, x, y, w, h, invert, mirror_y, pgm)` | allinea `0x26` da una bitmap; è il virtuale nativo di `GxEPD2_EPD`, quindi `pgm` vale `false` per default |
 | `setPartialLut(lut110)` | sostituisce la waveform: 110 byte nel layout del waveform setting |
+
+### 3.2 Il refresh differenziale: il partial dentro il loop paged
+
+Le API di §3.1 lavorano fuori dal template e chi le usa deve sapere quali zone
+sono in bianco e nero. Il **refresh differenziale** risolve il caso opposto: lo
+sketch disegna il frame intero nel solito loop `firstPage()`/`nextPage()` e il
+driver decide da sè se basta un partial. Il template gli passa i due piani una
+pagina alla volta con `writeImage(black, color)`: il driver calcola il CRC32 del
+piano colore di ogni pagina e lo confronta con quello dell'**ultimo frame
+pieno**. Se tutte le pagine combaciano il rosso sul vetro è già quello giusto, e
+il B/N nuovo va nella RAM che non contiene il B/N del vetro prima di una passata
+da ~0,64 s. Se una pagina differisce il pannello **non viene toccato** e il
+chiamante rifà il frame in pieno: un rendering in più, mai un frame sbagliato.
+
+Non c'è un frame store, perchè senza PSRAM non c'è dove tenerlo: il controller
+tiene il riferimento. I ruoli di `0x24` e `0x26` si **scambiano a ogni passata**
+e la LUT sceglie la transizione dal valore dei bit (Tables 6-4 e 6-5 del
+datasheet), quindi con il nuovo in `0x26` le righe VS di LUT1 e LUT2 si mandano
+scambiate. Stato e regole stanno in `GxEPD2_SOLUM_Differential.h`, una struct
+senza I/O che si prova su host.
+
+```cpp
+display.epd2.setDifferentialRefresh(true);          // una volta
+
+// a ogni frame:
+bool fired = false;
+if (display.epd2.beginDifferentialFrame()) {         // PRIMA di firstPage()
+  display.firstPage();
+  do { /* disegno */ } while (display.nextPage());
+  fired = display.epd2.endDifferentialFrame();       // false = rosso cambiato
+}
+if (!fired) {                                        // pieno, anche dopo un rifiuto
+  display.firstPage();
+  do { /* disegno */ } while (display.nextPage());
+}
+```
+
+| API del differenziale | cosa fa |
+|---|---|
+| `hasDifferentialRefresh` | costante `true`: lo sketch rileva così che il driver lo supporta |
+| `setDifferentialRefresh(on)` | attiva o spegne; spento il driver non calcola nessun CRC |
+| `beginDifferentialFrame()` | arma il frame; da chiamare **prima** di `firstPage()`. `false` senza un riferimento valido: il frame sarà pieno |
+| `endDifferentialFrame()` | `true` se il partial è partito |
+| `differentialChain()` | partial consecutivi dall'ultimo refresh pieno |
+| `differentialRefusedPages()` | pagine con il rosso cambiato nell'ultimo frame armato, un bit per pagina |
+
+**Invarianti**, da non rompere:
+
+- un partial non segue mai un reset senza un refresh pieno in mezzo: un SWRESET
+  riporta VCOM e VGH ai POR e solo `0xF7` li ricarica dall'OTP. Per questo ogni
+  frame pieno riparte da reset e init, e `_InitDisplay()` fuori da un frame
+  spegne il riferimento;
+- finchè esiste un riferimento valido `hibernate()` non manda il deep sleep (che
+  perde la RAM) ma lascia il controller in Sleep, 25-40 µA con la RAM accessibile
+  (datasheet SSD1677, p. 42);
+- qualunque scrittura della RAM che non venga dal frame in corso spegne il
+  riferimento, e un refresh che finisce con il BUSY ancora alto non lo convalida;
+- dopo un partial `0x26` contiene B/N e non un accent: una pulizia lo riporta
+  allo stato giusto prima di un refresh pieno.
+
+**Cosa è misurato e cosa no.** Il partial con `0x26` = precedente e la LUT
+originale è misurato (§0.8 e il log di `panel_diagnostic`). Non sono mai stati
+misurati sul vetro l'orientamento scambiato delle RAM, il power off `0xC3` fra due
+passate e un sonno di minuti in Sleep: li prova l'esempio
+[`examples/097c/differential_check`](examples/097c/differential_check/differential_check.ino)
+con questo stesso codice. La dipendenza dalla board è che il pannello resti
+alimentato fra un frame e l'altro: sulla Waveshare ESP32 Driver V3 lo schema
+mostra una rete `EPD_3.3V` che sembra commutata da IO4, e il firmware non la
+pilota.
 
 ### `drawPixel(x, y, GxEPD_YELLOW)` finisce sul rosso, ed è corretto
 
@@ -991,9 +1062,11 @@ paged full-window (`writeImagePart` solo con `setPartialWindow`).
 
 Fuori da quella lista stanno le due famiglie **opt-in** del driver 9.7", che lo
 sketch chiama direttamente e che il template non conosce: le siblings
-single-channel di [§2](#2-due-api-siblings-single-channel-uniformi) e le sei API
+single-channel di [§2](#2-due-api-siblings-single-channel-uniformi), le sei API
 del partial in bianco e nero, tabellate in fondo a
-[§3.1](#31-il-partial-in-bianco-e-nero-640-ms-e-come-ci-si-scrive-dentro).
+[§3.1](#31-il-partial-in-bianco-e-nero-640-ms-e-come-ci-si-scrive-dentro), e le
+chiamate del refresh differenziale di
+[§3.2](#32-il-refresh-differenziale-il-partial-dentro-il-loop-paged).
 
 ---
 
