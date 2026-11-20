@@ -261,6 +261,24 @@
 //   schema mostra una rete EPD_3.3V che sembra commutata da IO4: il firmware non
 //   la pilota, e chi lo facesse deve spegnere il riferimento.
 //
+// SALTO DEL REFRESH A FRAME INVARIATO, CON O SENZA DIFFERENZIALE.
+//   In refresh(false), prima di scegliere fra partial e pieno, il driver
+//   confronta un CRC32 concatenato dei due piani, nero e colore, con quello
+//   dell'ultimo frame mandato al vetro (stato in GxEPD2_SOLUM_FrameCrc.h, senza
+//   I/O e provato su host, condiviso con il driver 12.2"). Se coincidono non
+//   lancia niente e alza frameSkipped(). Il confronto è sull'uscita del disegno,
+//   nello stesso passaggio paged: nessun rendering in più.
+//   Stato dopo un frame saltato. Armato: le pagine sono già nella RAM libera e i
+//   ruoli non si scambiano senza refresh, quindi le due RAM hanno lo stesso B/N e
+//   il riferimento resta valido. Non armato: il frame ha fatto reset e init e
+//   riscritto entrambi i piani, il riferimento è già spento perchè solo
+//   commitFull() lo rimette, e hibernate() manda il controller in deep sleep come
+//   dopo un pieno; il frame dopo, se cambia, è pieno.
+//   Invariante: ogni cambio del vetro passa da _Update_Full() o _Update_Part(), e
+//   lì il frame mostrato si butta; solo un refresh del frame finito con il BUSY
+//   basso lo rimette. Una scrittura che non ha la forma del template, larghezza
+//   piena e due piani senza inversione, rende il frame non confrontabile.
+//
 // TRE COLORI, MISURATI: NESSUN CANALE GIALLO.
 //   Il driver pilota due piani, 0x24 (BW) e 0x26 (accent), e non ne esiste un
 //   terzo. La questione è stata chiusa da examples/097c/panel_diagnostic, che
@@ -378,6 +396,7 @@
 
 // Stato e regole del refresh differenziale, senza I/O: vedi quel file.
 #include "GxEPD2_SOLUM_Differential.h"
+#include "GxEPD2_SOLUM_FrameCrc.h"
 
 // Sistema di descrittori immagine e showImage(): condivisi con gli altri driver
 // della libreria, vedi src/GxEPDImage.h.
@@ -752,6 +771,23 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
     /** Pagine in cui il rosso è cambiato nell'ultimo frame armato, un bit per pagina. */
     uint16_t differentialRefusedPages() const { return _diff.refusedMask(); }
 
+    // ------------------------------------------------------------------
+    // Salto del refresh a frame invariato, valido con o senza differenziale.
+    //
+    // Il driver confronta i due piani che il template gli passa, un CRC32
+    // concatenato per piano, con quelli dell'ultimo frame mandato al vetro. Se
+    // coincidono refresh(false) non lancia niente: il pannello resta com'è e
+    // frameSkipped() lo dice. Ogni refresh che cambia il vetro, anche fuori dal
+    // loop paged, butta il frame mostrato, e solo un frame completo andato a
+    // buon fine lo rimette. Spento non calcola niente.
+    // ------------------------------------------------------------------
+
+    /** Attiva o spegne il salto. Spento il driver manda sempre il frame al vetro. */
+    void setSkipUnchanged(bool enabled) { _frame.setEnabled(enabled); }
+
+    /** Vero se l'ultimo frame del loop paged è stato saltato perchè invariato. */
+    bool frameSkipped() const { return _frameSkipped; }
+
     // L'entry-point pubblico di stampa immagine è la free function template
     // GxEPDImage::showImage(display, desc) definita nel namespace sopra.
     // Va chiamata dentro un loop firstPage()/nextPage() del template GFX.
@@ -900,6 +936,12 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
 
     /** Vero se l'ultimo refresh del frame armato è stato un partial. */
     bool _differentialFired = false;
+
+    /** Confronto del frame in corso con quello sul vetro, per il salto del refresh. */
+    GxEPD2_SOLUM_FrameCrc _frame{esp_rom_crc32_le};
+
+    /** Vero se l'ultimo frame del loop paged è stato saltato perchè invariato. */
+    bool _frameSkipped = false;
 
     /** Orientamento della LUT che il controller ha in questo momento. */
     bool _lutSwappedLoaded = false;
@@ -1193,6 +1235,14 @@ inline bool GxEPD2_SOLUM_097c_960x672::_writeImagePart(uint8_t command, const ui
 // si ripulisce prima. Nel loop paged costa un confronto.
 inline void GxEPD2_SOLUM_097c_960x672::writeImage(const uint8_t* black, const uint8_t* color, int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
+  // Il confronto con il frame sul vetro conosce solo la forma che il template
+  // usa a ogni pagina, larghezza piena e due piani senza inversione: qualunque
+  // altra scrittura rende il frame in corso non confrontabile.
+  if (black && color && x == 0 && w == int16_t(WIDTH) && !invert && !mirror_y && !pgm)
+    _frame.addPage(black, color, y, h, uint16_t(WIDTH / 8));
+  else
+    _frame.invalidateRun();
+
   // Con il differenziale attivo la forma che il template usa a ogni pagina
   // (larghezza piena, entrambi i piani, nessuna inversione) passa dalla macchina
   // a stati; qualunque altra forma scrive come prima e le primitive spengono il
@@ -1291,11 +1341,27 @@ inline void GxEPD2_SOLUM_097c_960x672::drawNative(const uint8_t* data1, const ui
 // pieno e ne registra i CRC come nuovo riferimento. In entrambi i casi, se il
 // BUSY è ancora alto dopo l'attesa il refresh non è finito e il riferimento si
 // butta. Un frame armato si disarma sempre qui.
+//
+// Prima di tutto questo, un frame identico a quello già sul vetro non lancia
+// niente: né partial né pieno, con o senza differenziale. Le pagine sono già
+// state scritte nelle RAM, e con un frame armato i ruoli delle RAM non si
+// scambiano senza refresh, quindi lo stato resta coerente; con un frame non
+// armato il riferimento del differenziale è già spento dalle pagine, e il
+// frame dopo, se cambia, sarà pieno.
 inline void GxEPD2_SOLUM_097c_960x672::refresh(bool /*partial_update_mode*/)
 {
+  if (_frame.unchanged(int16_t(HEIGHT)))
+  {
+    _frameSkipped = true;
+    _frame.endFrame();
+    _diff.disarm();
+    _show_image_page_hint = 0;   // simmetrico al ciclo di rendering, come _Update_*
+    return;
+  }
   if (!_diff.enabled())
   {
     _Update_Full(); // always uses full window refresh
+    if (!_busyStillActive()) _frame.commit(int16_t(HEIGHT));
     return;
   }
   if (_diff.armed())
@@ -1314,6 +1380,7 @@ inline void GxEPD2_SOLUM_097c_960x672::refresh(bool /*partial_update_mode*/)
         // loop paged lo rileggerebbe come rosso.
         _markPreviousInColorRam();
         _differentialFired = true;
+        _frame.commit(int16_t(HEIGHT));
       }
     }
     _diff.disarm();
@@ -1324,8 +1391,15 @@ inline void GxEPD2_SOLUM_097c_960x672::refresh(bool /*partial_update_mode*/)
     _InternalWriteGuard guard(_diffInternalWrite);
     _Update_Full();
   }
-  if (_busyStillActive()) _diff.invalidate();
-  else _diff.commitFull(int16_t(HEIGHT));
+  if (_busyStillActive())
+  {
+    _diff.invalidate();
+  }
+  else
+  {
+    _diff.commitFull(int16_t(HEIGHT));
+    _frame.commit(int16_t(HEIGHT));
+  }
 }
 
 // Un refresh d'area fuori dal loop paged: il differenziale non lo conosce, quindi
@@ -1375,6 +1449,8 @@ inline bool GxEPD2_SOLUM_097c_960x672::endDifferentialFrame()
 inline void GxEPD2_SOLUM_097c_960x672::setPaged()
 {
   _diff.beginFrame();
+  _frame.beginFrame();
+  _frameSkipped = false;
   if (_diff.enabled() && !_diff.armed())
   {
     _init_display_done = false;
@@ -1652,6 +1728,9 @@ inline void GxEPD2_SOLUM_097c_960x672::_InitDisplay()
 // del loop paged — e costa 250 us su 24 s.
 inline void GxEPD2_SOLUM_097c_960x672::_Update_Full()
 {
+  // Il vetro sta per cambiare: il frame che si credeva mostrato non lo è più.
+  // Lo rimette refresh(false) a refresh finito bene.
+  _frame.invalidateShown();
   // Se in 0x26 c'è un frame precedente del partial, questo refresh lo
   // rileggerebbe come accent e dipingerebbe di rosso tutto quello che sul vetro
   // è bianco. Costa 9 ms e solo in quel caso.
@@ -1843,6 +1922,7 @@ inline void GxEPD2_SOLUM_097c_960x672::setPartialLut(const uint8_t* lut)
  *  spento da chi chiama, con powerOff() o hibernate(). */
 inline void GxEPD2_SOLUM_097c_960x672::_Update_Part(bool swapped)
 {
+  _frame.invalidateShown();   // come _Update_Full(): il vetro sta per cambiare
   if (!_using_partial_mode || _lutSwappedLoaded != swapped) _Init_Part(swapped);
   _PowerOn();
   _setPartialRamArea(0, 0, WIDTH, HEIGHT);

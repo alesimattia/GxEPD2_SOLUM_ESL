@@ -160,6 +160,9 @@
 
 #include <GxEPD2_EPD.h>
 
+// CRC32 della ROM dell'ESP32, per il confronto del frame con quello sul vetro.
+#include <esp_rom_crc.h>
+
 // Sistema di descrittori immagine e showImage(): condivisi con gli altri driver
 // della libreria, vedi src/GxEPDImage.h. showImage() compone i piani black e
 // red, quindi un descrittore a tre piani su questo pannello mostra i primi due.
@@ -167,6 +170,9 @@
 
 // Pinout uniforme fra i driver della libreria.
 #include "GxEPD2_SOLUM_Pins.h"
+
+// Confronto del frame con quello già sul vetro, condiviso con gli altri driver.
+#include "GxEPD2_SOLUM_FrameCrc.h"
 
 // ===========================================================================
 // Classe driver.
@@ -333,8 +339,27 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
 
     // Hook virtual chiamato da GxEPD2_3C::firstPage() all'inizio di ogni
     // loop paged. Reset del page-hint per allinearlo a _current_page del
-    // template (privato senza getter pubblico).
-    void setPaged() override { _show_image_page_hint = 0; }
+    // template (privato senza getter pubblico), e riparte il confronto del
+    // frame con quello sul vetro.
+    void setPaged() override
+    {
+      _show_image_page_hint = 0;
+      _frame.beginFrame();
+      _frameSkipped = false;
+    }
+
+    // Salto del refresh a frame invariato, come nel driver 9.7": il driver
+    // confronta i due piani che il template gli passa con quelli dell'ultimo
+    // frame mandato al vetro e, se coincidono, refresh(false) non lancia il
+    // refresh pieno. Qui ogni frame riscrive entrambe le RAM per intero, quindi
+    // saltare non lascia nessuno stato da riparare. Il refresh non ha un
+    // controllo di BUSY: un refresh finito male non viene riconosciuto.
+
+    /** Attiva o spegne il salto. Spento il driver manda sempre il frame al vetro. */
+    void setSkipUnchanged(bool enabled) { _frame.setEnabled(enabled); }
+
+    /** Vero se l'ultimo frame del loop paged è stato saltato perchè invariato. */
+    bool frameSkipped() const { return _frameSkipped; }
 
     // Getter del page-hint usato da GxEPDImage::showImage come surrogato
     // di _current_page del template GxEPD2_3C: permette a showImage di
@@ -515,6 +540,10 @@ class GxEPD2_SOLUM_122c_960x768 : public GxEPD2_EPD
     // quindi nessun chiamante che non lo imposti cambia comportamento.
     ScreenAdvanceHook _advance_hook = nullptr;
     void*             _advance_ctx = nullptr;
+
+    // Confronto del frame in corso con quello sul vetro, per il salto del refresh.
+    GxEPD2_SOLUM_FrameCrc _frame{esp_rom_crc32_le};
+    bool _frameSkipped = false;
 };
 
 // =============================================================================
@@ -694,6 +723,14 @@ inline void GxEPD2_SOLUM_122c_960x768::_writeImagePart(uint8_t command, const ui
 // nella prossima iterazione skippa le righe già scritte.
 inline void GxEPD2_SOLUM_122c_960x768::writeImage(const uint8_t* black, const uint8_t* color, int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
+  // Il confronto con il frame sul vetro conosce solo la forma che il template
+  // usa a ogni pagina, larghezza piena e due piani senza inversione: qualunque
+  // altra scrittura rende il frame in corso non confrontabile.
+  if (black && color && x == 0 && w == int16_t(WIDTH) && !invert && !mirror_y && !pgm)
+    _frame.addPage(black, color, y, h, uint16_t(WIDTH / 8));
+  else
+    _frame.invalidateRun();
+
   if (black) _writeImage(0x24, black, x, y, w, h, invert, mirror_y, pgm);
   if (color)
   {
@@ -753,7 +790,18 @@ inline void GxEPD2_SOLUM_122c_960x768::drawNative(const uint8_t* data1, const ui
 
 inline void GxEPD2_SOLUM_122c_960x768::refresh(bool /*partial_update_mode*/)
 {
+  // Frame identico a quello già sul vetro: niente refresh pieno. Le RAM sono già
+  // state riscritte per intero e il frame dopo riparte comunque da una
+  // riscrittura completa, quindi non c'è stato da riparare.
+  if (_frame.unchanged(int16_t(HEIGHT)))
+  {
+    _frameSkipped = true;
+    _frame.endFrame();
+    _show_image_page_hint = 0;   // simmetrico al ciclo di rendering, come _Update_Full()
+    return;
+  }
   _Update_Full(); // sempre full window
+  _frame.commit(int16_t(HEIGHT));
 }
 
 inline void GxEPD2_SOLUM_122c_960x768::refresh(int16_t /*x*/, int16_t /*y*/, int16_t /*w*/, int16_t /*h*/)
@@ -1026,6 +1074,9 @@ inline void GxEPD2_SOLUM_122c_960x768::_InitDisplay()
  *  Vedi setScreenAdvanceHook(). */
 inline void GxEPD2_SOLUM_122c_960x768::_Update_Full()
 {
+  // Il vetro sta per cambiare: il frame che si credeva mostrato non lo è più.
+  // Lo rimette refresh(false) dopo il refresh.
+  _frame.invalidateShown();
   if (_advance_hook) _advance_hook(_advance_ctx, "refresh pieno del driver");
   _writeCommandAll(0x22);
   _writeDataAll(0xF7);

@@ -889,6 +889,43 @@ if (!fired) {                                        // pieno, anche dopo un rif
 - dopo un partial `0x26` contiene B/N e non un accent: una pulizia lo riporta
   allo stato giusto prima di un refresh pieno.
 
+#### Salto del refresh a frame invariato
+
+Indipendente dal differenziale e condiviso con il driver 12.2": in
+`refresh(false)`, prima di scegliere fra partial e pieno, il driver confronta un
+CRC32 **concatenato dei due piani**, nero e colore, con quello dell'ultimo frame
+mandato al vetro. Se coincidono non lancia niente e `frameSkipped()` vale `true`.
+Il confronto è sull'uscita del disegno, nello stesso passaggio paged che manda i
+piani al controller: non costa un rendering in più e nessun ingresso del disegno
+si può dimenticare. Stato e regole stanno in `GxEPD2_SOLUM_FrameCrc.h`, senza I/O
+e provato su host (`test/test_framecrc.cpp`).
+
+| API del salto | cosa fa |
+|---|---|
+| `setSkipUnchanged(on)` | attiva o spegne; spento il driver non calcola nessun CRC |
+| `frameSkipped()` | `true` se l'ultimo frame del loop paged è stato saltato perchè invariato |
+
+Stato dopo un frame saltato:
+
+- **frame armato** (9.7", con riferimento): le pagine sono già nella RAM libera e i
+  ruoli di `0x24` e `0x26` non si scambiano senza refresh, quindi le due RAM
+  contengono lo stesso B/N e il riferimento resta valido;
+- **frame non armato** (9.7", pieno per politica): il frame ha già fatto reset e
+  init e riscritto entrambi i piani. Il riferimento è già spento, perchè solo
+  `commitFull()` lo rimette, e `hibernate()` manda il controller in deep sleep come
+  dopo un pieno. Il frame dopo, se cambia, è pieno: a `ChainLimit` è un pieno
+  rimandato fino a quando serve;
+- **12.2"**: ogni frame riscrive tutto, quindi non resta nessuno stato da riparare.
+
+Invarianti:
+
+- ogni cambio del vetro passa da `_Update_Full()` o `_Update_Part()`, e lì il
+  frame mostrato si butta; solo un refresh del frame finito con il BUSY basso lo
+  rimette (sul 12.2" non c'è un controllo di BUSY equivalente);
+- una scrittura che non ha la forma che il template usa a ogni pagina, larghezza
+  piena e due piani senza inversione, rende il frame non confrontabile e va al
+  vetro come sempre.
+
 **Cosa è misurato e cosa no.** Il partial con `0x26` = precedente e la LUT
 originale è misurato (§0.8 e il log di `panel_diagnostic`). Non sono mai stati
 misurati sul vetro l'orientamento scambiato delle RAM, il power off `0xC3` fra due
