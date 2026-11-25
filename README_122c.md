@@ -1,29 +1,34 @@
 # GxEPD2_SOLUM_122c_960x768 — driver custom
 
 > **Stato: una banda validata, le due bande insieme no.** Il command set del
-> driver è **SSD16xx** e lo split è per righe, 960×384 per controller — entrambi
-> misurati e già nel codice. Con una sola coda cablata si stampa correttamente
-> una banda 960×384, ed è la metà che il firmware di produzione già disegna.
+> driver è della famiglia **SSD16xx**, con un die che non coincide con nessun
+> datasheet noto, e lo split è per righe, 960×384 per controller: entrambi
+> misurati e già nel codice. Con la sola coda lunga cablata si stampa
+> correttamente la banda dal suo lato, che il driver mappa sulle righe
+> 384..767.
 >
-> **Quello che resta non verificato è il modello a due chip select** su cui è
-> costruito il dispatch di questo file. Le evidenze raccolte dicono che i due
-> controller sono con ogni probabilità una coppia in **cascade**: un solo CS, lo
-> slave indirizzato sommando `0x80` all'opcode, e soprattutto lo slave **senza
-> oscillatore nè booster**, che riceve clock e tensioni dal master. Se
-> `examples/12_2c/dual_panel_finder` lo conferma, di questo driver cambiano il
-> dispatch e il modo di parlare al secondo controller. Fino ad allora il codice
-> resta com'è. Evidenze in
-> [docs/fonti_esterne.md §4](docs/fonti_esterne.md) e
-> [docs/122c/identificazione_pannello.md](docs/122c/identificazione_pannello.md),
-> stato punto per punto in
-> [§5](#5-punti-todoverify-da-validare-al-bring-up).
+> **Quello che resta aperto è la topologia del secondo controller.** La coda
+> corta, muta anche nel connettore della Waveshare con BS1 a massa e il booster
+> presente, esclude un controller indipendente con la piedinatura standard;
+> restano uno slave in **cascade** (un solo CS, opcode `| 0x80`, clock e rail dal
+> master), una piedinatura diversa con un CS o un enable proprio, o un chip
+> guasto. Il driver supporta entrambi i modelli di indirizzamento a runtime e la
+> scelta la decide la misura della fase 0 di
+> [docs/122c/cable_linking.html](docs/122c/cable_linking.html). Evidenze in
+> [docs/fonti_esterne.md §4](docs/fonti_esterne.md),
+> [docs/122c/panel_identification.md](docs/122c/panel_identification.md) e
+> [docs/122c/web_sources](docs/122c/web_sources/README.md), stato punto per
+> punto in [§5](#5-punti-todoverify-da-validare-al-bring-up).
 
-Il codice modello si legge come `EL <taglia> <generazione> <colore scocca>
-<colore display> <tipo tag>`, quindi `EL122H6W4A` = 12.2", generazione H6,
-scocca bianca, campo colore `4`, tag con pulsante. Il `4` **non** va letto come
-"questa unità è BWRY": è costante su tutta la linea PRO, e la serigrafia sul
-vetro della stessa unità dice `Newton PRO 12.2" BWR normal`. Il colore lo decide
-il vetro; dettaglio in [docs/fonti_esterne.md §2](docs/fonti_esterne.md).
+L'esemplare del progetto è un **`EL122R2CRN`** (piattaforma R2, MCU del tag
+RTL8762ESL, campo colore `R` = BWR). Lo stesso vetro è documentato nelle pratiche
+FCC delle linee Newton PRO (`EL122H6W4A`, tag nRF52811) e Core / M3
+(`EL122H5CRC`), da cui vengono le foto e le serigrafie citate qui. Il codice
+modello si legge come `EL <taglia> <generazione> <colore scocca> <colore
+display> <tipo tag>`: il `4` di `EL122H6W4A` **non** va letto come "BWRY", perchè
+è costante su tutta la linea PRO e la serigrafia di quel vetro dice `Newton PRO
+12.2" BWR normal`. Il colore lo decide il vetro; dettaglio in
+[docs/fonti_esterne.md §2](docs/fonti_esterne.md).
 
 Driver header-only per pannello e-paper **SOLUM 12.2"** (linee Newton PRO e
 Newton Core / M3, stesso pannello)
@@ -64,10 +69,21 @@ driver è un secondo header dello stesso pacchetto. Nello sketch:
 #include <GxEPD2_3C.h>
 #include <GxEPD2_SOLUM.h>
 
-// Pinout: cs, dc, rst, busy, cs2, busy2, sck, miso, mosi
+// Globale, non locale a setup(): selectSPI() conserva il puntatore a hspi
+SPIClass hspi(HSPI);
+
+// Pinout: cs, dc, rst, busy, cs2, busy2
 GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS, SOLUM_MAX_HEIGHT(GxEPD2_SOLUM_DRIVER_CLASS)>
     display(GxEPD2_SOLUM_DRIVER_CLASS(
-        GxEPD2_SOLUM_Pins{ 15, 27, 26, 25, 32, 35, 13, 12, 14 }));
+        GxEPD2_SOLUM_Pins{ 15, 27, 26, 25, 32, 22 }));
+
+void setup()
+{
+  // Il bus lo apre lo sketch sui pin della propria board, prima di init().
+  hspi.begin(13, 12, 14, 15);                                  // SCK, MISO, MOSI, SS
+  display.epd2.selectSPI(hspi, SPISettings(10000000, MSBFIRST, SPI_MODE0));
+  display.init(115200, true, 10, false);
+}
 ```
 
 Sketch di esempio nella libreria:
@@ -148,7 +164,7 @@ La scelta è stata giusta per lo **scheletro** e sbagliata per il **command
 set**: il pannello è a controller SSD16xx, quindi il 1248c resta il modello
 della struttura a `ScreenPart` mentre le sequenze di init, power e refresh
 vanno prese dal 9.7". Il perchè in
-[docs/122c/identificazione_pannello.md §4](docs/122c/identificazione_pannello.md#4-controller-perchè-è-ssd16xx-e-non-uc8179):
+[docs/122c/panel_identification.md §4](docs/122c/panel_identification.md#4-controller-perchè-è-ssd16xx-e-non-uc8179):
 l'SSD1677 ha 960 source × 680 gate, e con 768 gate da coprire in due chip
 nessuna spartizione sta dentro i 800×600 dell'UC8179.
 
@@ -317,17 +333,18 @@ l'ESP32 su una sola coda FFC.
 ```
                        WIDTH = 960
    ┌───────────────────────────────────────────────────┐
-   │   MASTER (cs_m)   960 × 384   righe 0..383        │  FFC #1
+   │   SLAVE  (coda corta)    960 × 384   righe 0..383     │
    ├───────────────────────────────────────────────────┤  HEIGHT = 768
-   │   SLAVE  (cs_s)   960 × 384   righe 384..767      │  FFC #2
+   │   MASTER (coda lunga)    960 × 384   righe 384..767   │
    └───────────────────────────────────────────────────┘
 ```
 
 I 960 px sono l'asse **source** (le due code si attaccano al centro dei bordi
 lunghi, che sono i bordi dei source), i 768 px sono l'asse **gate**, spartito
-384 + 384. Quale delle due bande stia su quale coda è ancora da annotare, e
-una delle due va probabilmente ribaltata perchè le bande risultino contigue e
-con lo stesso verso.
+384 + 384. La coda lunga dipinge la metà dal proprio lato, dritta, con il gate 0
+alla giunzione: è la banda bassa del layout. La banda dello slave è ribaltata di
+default in X e in Y (COF gemello ruotato di 180°), deduzione che si verifica con
+i tile ad angolo marcato della fase `r` di `dual_panel_finder`.
 
 ### Dispatch outer-class
 
@@ -336,14 +353,14 @@ L'outer class `GxEPD2_SOLUM_122c_960x768` espone un'API GxEPD2 standard
 le 2 ScreenPart:
 
 ```cpp
-M.writeImagePart(command, bitmap, ..., x, y, ...);
-S.writeImagePart(command, bitmap, ..., x, y - M.HEIGHT, ...);
+S.writeImagePart(command, bitmap, ..., x, y, ...);
+M.writeImagePart(command, bitmap, ..., x, y - S.HEIGHT, ...);
 ```
 
-Le coordinate `y` per lo slave sono traslate di `-M.HEIGHT` per
-riallinearle al sistema di coordinate locale dello slave (righe 0..383 della
-sua banda). Il clipping lo fa la `ScreenPart`, quindi la `y` negativa che il
-master riceve per le righe basse, e viceversa, non produce scritture.
+Le coordinate `y` per il master sono traslate di `-S.HEIGHT` per
+riallinearle al sistema di coordinate locale della sua banda (righe 0..383
+della RAM). Il clipping lo fa la `ScreenPart`, quindi la `y` negativa che il
+master riceve per le righe alte, e viceversa, non produce scritture.
 
 Per i comandi globali (init, power, refresh) il driver fornisce 2
 helper `_writeCommandAll(uint8_t)` / `_writeDataAll(uint8_t)` che
@@ -417,19 +434,19 @@ I datasheet di prodotto sono materiale marketing e **non dichiarano** nè il
 controller IC, nè come i 2 FFC si dividano i pixel, nè la sequenza di init.
 Quello che si sa lo si sa dalle etichette di fabbrica, dalle foto del teardown
 di certificazione e dalle misure di bring-up: tutto raccolto in
-[docs/122c/identificazione_pannello.md](docs/122c/identificazione_pannello.md).
+[docs/122c/panel_identification.md](docs/122c/panel_identification.md).
 
 Stato punto per punto, con il valore che il codice usa oggi:
 
 | Punto | Nel codice oggi | Stato | Cosa fare |
 |---|---|---|---|
 | Controller IC | sequenza SSD16xx presa dal 9.7" | **chiuso** | — |
-| Split master/slave | righe 0..383 / 384..767, `y - M.HEIGHT` | **chiuso** | — |
+| Split master/slave | slave righe 0..383, master (coda lunga) righe 384..767, `y - S.HEIGHT` al master | **chiuso** | — |
 | Geometria per controller | `0x01` MUX da `PART_HEIGHT` = 384, finestre `0x44`/`0x45` in pixel | **chiuso** | — |
-| Come si indirizza il secondo controller | due CS, `_writeCommandAll` li abbassa insieme | **aperto, ed è il punto critico** | Le evidenze puntano alla cascade: un solo CS e `opcode \| 0x80`, più `0x21` B[4] = 1 sul master. Lo prova `dual_panel_finder`; se conferma, dispatch da rifare sul modello `GxEPD2_579c_GDEY0579Z93` |
-| Perchè la seconda coda non risponde | n/a | **aperto, spiegazione probabile: è lo slave** | In cascade lo slave non ha oscillatore nè booster: servono CL e i rail portati dal connettore master, vedi [docs/fonti_esterne.md §4](docs/fonti_esterne.md) |
+| Come si indirizza il secondo controller | runtime: `ADDRESSING_DUAL_CS` (default) o `ADDRESSING_CASCADE` (un CS, slave a `opcode \| 0x80`, init a una passata nuda più `0x91 = 03` e `0x21 = 00 10`) | **aperto, ed è il punto critico** | Lo decide la fase 0 di [cable_linking.html](docs/122c/cable_linking.html); nel firmware si sceglie con `SECOND_CONTROLLER_CASCADE` in `Layout_122c.h` |
+| Perchè la seconda coda non risponde | n/a | **aperto** | Esclusa la piedinatura standard con controller indipendente; restano slave in cascade, piedinatura diversa o enable, chip guasto, vedi [docs/fonti_esterne.md §4](docs/fonti_esterne.md) |
 | Perchè i controller sono due, e divisi per righe | `PART_HEIGHT` = 384 | **chiuso, per conto** | L'SSD1677 ha 960 source e **680 gate**. Nativi: 9.7" = 672 gate, 11.6" = 640, 12.2" = **768**. Il 12.2" sfora il limite di un chip solo, quindi due controller sono obbligati e lo split **deve** stare sull'asse gate: su quello source un chip solo basterebbe. Non è più un'osservazione, è una derivazione |
-| Quale coda è quale banda | M = prima metà | aperto | Annotare al bring-up del secondo controller, eventualmente swap M↔S via cablaggio |
+| Quale coda è quale banda | coda lunga = banda bassa | **chiuso** | Osservato: con la sola coda lunga l'immagine compare nella metà dal suo lato |
 | Ribaltamento della banda | data path (righe, byte, bit) con `setSlaveMirror(true, true)` di default | aperto quale combinazione serva | Provare le quattro combinazioni dallo sketch. Alternativa da valutare: entry mode `0x11` con decremento, come fa GxEPD2 sul GDEY0579Z93 |
 | Refresh time | `full_refresh_time = 25000` ms | da misurare | Allineare al tempo reale misurato sulla banda che stampa |
 | Clock SPI | default 10 MHz nel driver, come il 9.7" | da verificare | Su alcuni pannelli SSD1677 il controller non tollera clock alti: 10 MHz è il valore prudente, e la sonda a 20 MHz di `dual_panel_finder` dice se il pannello regge di più |
@@ -457,10 +474,9 @@ La scelta del pannello si fa a monte, con il define di selezione che
 [`src/GxEPD2_SOLUM.h`](src/GxEPD2_SOLUM.h) traduce in include e nome della
 classe — vedi [Selezione del driver](README.md#selezione-del-driver). Anche
 l'arità del costruttore è uniforme: entrambi i driver accettano la struct
-`GxEPD2_SOLUM_Pins`, e questo legge `cs2` / `busy2` per il secondo controller
-e `sck` / `miso` / `mosi` per il bus, campi che sul 9.7" restano a -1. Uno
-sketch che cambia pannello non riscrive nè l'include nè la riga di costruzione
-del display.
+`GxEPD2_SOLUM_Pins`, e questo legge `cs2` / `busy2` per il secondo controller,
+campi che sul 9.7" restano a -1. Uno sketch che cambia pannello non riscrive nè
+l'include nè la riga di costruzione del display.
 
 **Bus SPI**: come il 9.7", questo driver passa da `_pSPIx` / `_spi_settings`
 della base `GxEPD2_EPD`. Le ScreenPart non ne tengono copie nè riferimenti: il
@@ -472,8 +488,10 @@ default impostato dai costruttori è l'oggetto `SPI` globale a 10 MHz; un
 **Init e pin dalla base**: il driver non tiene copie dei pin del master, usa
 `_cs`, `_dc`, `_rst` e `_busy` di `GxEPD2_EPD`. `init()` configura CS e BUSY
 dello slave, chiama `GxEPD2_EPD::init()` per flag, diagnostica, pin del master
-e impulso di reset, e riapre il bus sui pin `sck` / `miso` / `mosi` ricevuti
-dal costruttore. Il default di `reset_duration` è quello della base, 10 ms.
+e impulso di reset. Il bus non lo tocca: lo sketch lo apre sui pin della propria
+board e lo passa con `selectSPI()` prima di `init()`, e il `begin()` della base
+su un bus già aperto non ne cambia i pin. Il default di `reset_duration` è quello
+della base, 10 ms.
 
 ---
 
@@ -517,14 +535,10 @@ Differenze API rispetto al 9.7":
 
 ## 8. Cablaggio hardware (Waveshare board / ESP32 Dev Board generica)
 
-> Questa sezione è la versione Markdown della pagina HTML interattiva
-> [connessioni.html](docs/122c/connessioni.html). I diagrammi sono file SVG
-> separati ([cablaggio_waveshare.svg](docs/122c/cablaggio_waveshare.svg) e
-> [cablaggio_devboard.svg](docs/122c/cablaggio_devboard.svg)) per garantire il
-> rendering corretto sia in VS Code Markdown preview sia su GitHub. La
-> pagina HTML standalone offre stile più ricco (dark theme, code
-> highlighting, anchor links) ed è consigliata per la consultazione
-> offline; il contenuto tecnico è lo stesso di questa sezione.
+> Il riferimento per il cablaggio della coda corta, con schema, misure da fare
+> prima di saldare, fasi e varianti, è la pagina
+> [docs/122c/cable_linking.html](docs/122c/cable_linking.html). Questa sezione
+> ne riassume i pin; dove le due fonti divergessero vale la pagina HTML.
 
 ### Concetti chiave
 
@@ -550,33 +564,36 @@ hardware-cablata. Il FFC interno pilota il **master**; per lo
 **slave** servono 2 GPIO liberi presi dai pin header laterali e un
 secondo connettore FFC esterno cablato a mano.
 
-![Schema cablaggio Waveshare E-Paper ESP32 Driver Board](docs/122c/cablaggio_waveshare.svg)
-
 | Segnale | GPIO ESP32 | Sorgente | Destinazione | Tipo |
 |---|---|---|---|---|
 | SCK | 13 | FFC interno + jumper | FFC #1 + FFC #2 | 🟧 condiviso |
 | MOSI (DIN) | 14 | FFC interno + jumper | FFC #1 + FFC #2 | 🟧 condiviso |
 | DC | 27 | FFC interno + jumper | FFC #1 + FFC #2 | 🟧 condiviso |
 | RST | 26 | FFC interno + jumper | FFC #1 + FFC #2 | 🟧 condiviso |
-| 3V3 / GND | — | FFC interno + jumper | FFC #1 + FFC #2 | 🟧 condiviso |
+| VCI / VDDIO | — | EPD_3.3V (piazzola di C5/C6/C20), non il 3V3 di J3-1 | FFC #2 | 🟧 condiviso |
+| GND | — | GND di J3-14 | FFC #2 | 🟧 condiviso |
 | **CS_M** | 15 | FFC interno della board | FFC #1 | 🟦 master |
 | **BUSY_M** | 25 | FFC interno della board | FFC #1 | 🟦 master |
-| **CS_S** | 32 | Pin header espansione | FFC #2 esterno | 🟪 slave |
-| **BUSY_S** | 35 | Pin header espansione | FFC #2 esterno | 🟪 slave |
+| **CS_S** | 32 | Pin header J3-7 | FFC #2 esterno | 🟪 slave |
+| **BUSY_S** | 22 | Pin header J4-3, pull-down interno | FFC #2 esterno | 🟪 slave |
 
-> ⚠️ **GPIO33 non è portato fuori su questa board.** Nelle net dello schematico
-> compaiono 32, 34 e 35 su pin consecutivi dell'header e il 33 non c'è: `CS_S`
-> sta quindi su **GPIO32**, output-capable, sull'header e non usato da
-> nient'altro. È il valore degli snippet e del firmware (`PIN_CS_S` in
-> `Layout_122c.h`). Sulla dev board generica del Setup B il 33 resta valido.
+> ⚠️ **BUSY_S sta su GPIO22 e non su GPIO35** perchè i GPIO 34..39 non hanno
+> pull interni: un BUSY scollegato o lasciato aperto (come vuole la cascade)
+> si leggerebbe a caso e manderebbe ogni attesa al timeout. `CS_S` sta su
+> **GPIO32**, output-capable e non usato da nient'altro; il 33, che la netlist
+> dello schematico mette su J3-8, è un'alternativa da confermare sulla
+> serigrafia. Sono i valori del firmware (`PIN_CS_S`, `PIN_BUSY_S` in
+> `Layout_122c.h`).
 >
-> ⚠️ E prima ancora: se i due controller sono una coppia in **cascade**, un
-> secondo chip select non serve affatto — serve invece un ponte passivo che
-> porti CL e i rail dal connettore master a quello slave. Vedi
-> [docs/fonti_esterne.md §4](docs/fonti_esterne.md). I due pin della cascade
-> stanno nel pin table dell'SSD1677 stesso, solo dichiarati riservati: `M/S#`
-> *"reserved pin, should be connected to VDDIO"* e `CL` **I/O**, *"left open in
-> application"* ma presente sia fra i VIH d'ingresso sia fra i VOH d'uscita.
+> ⚠️ Se i due controller sono una coppia in **cascade**, un secondo chip select
+> non serve: lo slave sta sul CS 15 del master, e al suo posto serve un ponte
+> che porti CL e i rail dal connettore master a quello slave. Nel firmware lo
+> sceglie `SECOND_CONTROLLER_CASCADE` in `Layout_122c.h`. Vedi
+> [docs/fonti_esterne.md §4](docs/fonti_esterne.md) e la variante cascade di
+> [cable_linking.html](docs/122c/cable_linking.html). Il controller non
+> coincide con nessun datasheet noto: nel pin table dell'SSD1677, usato come
+> analogia, `M/S#` è *"reserved pin, should be connected to VDDIO"* e `CL` è
+> **I/O**, *"left open in application"*.
 
 Costruttore corrispondente:
 
@@ -592,11 +609,11 @@ GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS,
         /*dc   */ 27,
         /*rst  */ 26,
         /*busy */ 25,
-        /*cs2  */ 33,    // FFC esterno cablato a mano
-        /*busy2*/ 35,
-        /*sck  */ 13,
-        /*miso */ 12,    // -1 se non si legge dal controller
-        /*mosi */ 14 }));
+        /*cs2  */ 32,    // FFC esterno cablato a mano, J3-7
+        /*busy2*/ 22 })); // J4-3, pull-down interno
+
+// Il bus HSPI della board (SCK 13, MISO 12, MOSI 14) lo apre lo sketch in setup(),
+// come nella sezione Installazione: hspi.begin(13, 12, 14, 15) e selectSPI(hspi, ...).
 ```
 
 > ⚠️ **Caveat board Waveshare.** Il connettore FFC interno è 24-pin
@@ -613,7 +630,6 @@ AliExpress / Amazon, ~5 € la coppia). Più flessibile della Waveshare board:
 pinout SPI scegliibile, FFC simmetrici (no adattatore), tutti i 9 GPIO
 accessibili sui pin header DIP.
 
-![Schema cablaggio ESP32 Dev Board generica con 2 FFC breakout 0.5 mm](docs/122c/cablaggio_devboard.svg)
 
 | Segnale | GPIO ESP32 | Cablaggio | Tipo |
 |---|---|---|---|
@@ -626,17 +642,18 @@ accessibili sui pin header DIP.
 | **CS_M** | 15 | jumper al breakout #1 | 🟦 master |
 | **BUSY_M** | 25 | jumper al breakout #1 | 🟦 master |
 | **CS_S** | 33 | jumper al breakout #2 | 🟪 slave |
-| **BUSY_S** | 35 | jumper al breakout #2 | 🟪 slave |
+| **BUSY_S** | 22 | jumper al breakout #2, pull-down interno | 🟪 slave |
 
 Costruttore corrispondente (SPI default VSPI):
 
 ```cpp
-// I tre campi del bus restano a -1: "quelli di default della board".
+// Bus VSPI di default: senza selectSPI() il driver usa l'oggetto SPI globale,
+// e il begin() della base lo apre sui pin standard 18/19/23.
 GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS,
           SOLUM_MAX_HEIGHT(GxEPD2_SOLUM_DRIVER_CLASS)>
     display(GxEPD2_SOLUM_DRIVER_CLASS(GxEPD2_SOLUM_Pins{
         /*cs  */ 15, /*dc   */ 27, /*rst  */ 26, /*busy */ 25,
-        /*cs2 */ 33, /*busy2*/ 35 }));
+        /*cs2 */ 33, /*busy2*/ 22 }));
 ```
 
 > ✅ **Setup consigliato per il bring-up.** Tutti i segnali sono fisicamente
@@ -672,7 +689,7 @@ GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS,
    l'elettronica analogica attorno a un solo connettore e l'altro nudo.
 
    Dettaglio delle ipotesi e come distinguerle in
-   [docs/122c/identificazione_pannello.md §5-§6](docs/122c/identificazione_pannello.md#6-perchè-la-seconda-coda-resta-muta)
+   [docs/122c/panel_identification.md §5-§6](docs/122c/panel_identification.md#6-perchè-la-seconda-coda-resta-muta)
    e [docs/fonti_esterne.md §4](docs/fonti_esterne.md).
 
 ### Approvigionamento breakout FFC: usare 22 / 24 pin con 1 pin libero
@@ -769,5 +786,5 @@ pannelli moderni ma capita su ESL vecchi).
 | **Tensione** | Pannello NON 5V tolerant. VCC + tutte le data line a 3.3V. |
 | **Lunghezza jumper** | < 10 cm consigliato. > 15 cm → ringing visibile a 20 MHz. Se i byte SPI sono corrotti, abbassa il clock SPI. |
 | **Alimentazione** | Pacco da 6× CR2450 da datasheet → assorbimento non banale. Se la 3V3 cala sotto 3.0V durante refresh, alimenta il pannello da fonte esterna 3.3V. |
-| **GPIO 35 input-only** | OK per BUSY_S, NON usabile per CS_S. Per CS_S serve un GPIO output-capable: sulla board Waveshare **32**, in alternativa 4 (21 e 22 sono il cablaggio consigliato del BME680 della dashboard). Il **33 non è portato fuori** su quella board. |
+| **BUSY_S su GPIO22** | Serve un pin con pull-down interno: un BUSY scollegato o aperto si legge libero invece di mandare le attese al timeout. I GPIO 34..39 sono input-only e senza pull. Per CS_S serve un GPIO output-capable: sulla board Waveshare **32**, in alternativa 4 o il 33, che la netlist mette su J3-8 (da confermare sulla serigrafia). 21 e 16 restano al sensore ambientale della dashboard. |
 | **Strapping pins** | GPIO 0, 2, 5, 12, 15 sono strapping. GPIO 15 (CS_M) è OK perchè parte HIGH. Evita di mettere il pannello su GPIO 0, 2, 12. |

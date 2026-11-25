@@ -333,7 +333,8 @@
 //   7 qui sopra.
 //
 // Requisiti build:
-//   - HW SPI (HSPI su ESP32 tramite la Waveshare E-Paper ESP32 Driver Board).
+//   - SPI hardware dell'ESP32, aperto dallo sketch sui pin della propria board
+//     e passato con selectSPI() prima di init().
 //   - Target ESP32 (Arduino core): i delay(1) di yield WDT ESP8266 sono
 //     stati rimossi dai hot path; il firmware deve girare solo su ESP32.
 //   - Adafruit_GFX opzionale: se ENABLE_GxEPD2_GFX=0 la libreria compila

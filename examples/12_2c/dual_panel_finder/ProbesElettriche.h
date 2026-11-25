@@ -17,6 +17,19 @@
 #include "Report.h"
 #include "Graphics.h"
 #include "Controller.h"
+/**
+ * Descrive a parole l'esito negativo di waitBusy(), per le righe che altrimenti
+ * stamperebbero "alto per N ms" con un numero che non è una durata.
+ */
+static const char* busyFailureText(int32_t ms, uint32_t timeoutMs, char* buf, uint8_t size)
+{
+  if (ms == BUSY_NEVER_ROSE)
+    snprintf(buf, size, "BUSY mai salito: il comando non ha avuto risposta");
+  else
+    snprintf(buf, size, "BUSY ancora alto a %lu ms", (unsigned long)timeoutMs);
+  return buf;
+}
+
 static void probeLifeAndHighVoltage(bool readRegisters)
 {
   Serial.println(F("  prova di vita e alte tensioni:"));
@@ -24,19 +37,37 @@ static void probeLifeAndHighVoltage(bool readRegisters)
   patternMs47 = patternFill(0x47, 0xF7, "B/N   ");
   patternMs46 = patternFill(0x46, 0xF7, "accent");
 
+  /**
+   * In sola logica restano i pattern hardware e il CRC, che esercita l'OTP: power
+   * on, HV Ready e VCI Detection vogliono clock e blocco analogico accesi, cioè un
+   * 0x22 con bit analogici seguito da 0x20, che con i regolatori dello slave senza
+   * condensatori non va mandato.
+   */
+  if (logicOnly())
+  {
+    logLine("modalità sola logica: power on, HV Ready 0x14, VCI 0x15 e power off non eseguiti");
+    writeCommand(0x34);
+    const int32_t crc = waitBusy(5000);
+    measure("CRC 0x34", 0, crc);
+    return;
+  }
+
+  char testo[64];
   writeCommand(0x22);
   writeData(0xC0);        // solo power on: abilita clock e blocco analogico
   writeCommand(0x20);
   powerOnMs = waitBusy(5000);
   if (powerOnMs < 0)
-    Serial.println(F("  power on 0xC0       BUSY ancora alto a 5000 ms"));
+    Serial.printf("  power on 0xC0       %s\n", busyFailureText(powerOnMs, 5000, testo, sizeof(testo)));
   else
     logLine("power on 0xC0       BUSY alto per %ld ms", (long)powerOnMs);
 
   writeCommand(0x14);
   writeData(0x77);        // cool down 80 ms x 7 cicli -> massimo 560 ms
   hvDetectMs = waitBusy(3000);
-  if (hvDetectMs < 0)
+  if (hvDetectMs == BUSY_NEVER_ROSE)
+    Serial.println(F("  HV detect 0x14      BUSY mai salito: il comando non ha avuto risposta"));
+  else if (hvDetectMs < 0)
     Serial.println(F("  HV detect 0x14      BUSY ancora alto a 3000 ms: HV non pronta"));
   else
     Serial.printf("  HV detect 0x14      BUSY alto per %ld ms (massimo programmato 560)\n",
@@ -46,7 +77,7 @@ static void probeLifeAndHighVoltage(bool readRegisters)
   writeData(0x04);        // livello POR, 2.3 V
   vciDetectMs = waitBusy(3000);
   if (vciDetectMs < 0)
-    Serial.println(F("  VCI detect 0x15     BUSY ancora alto a 3000 ms"));
+    Serial.printf("  VCI detect 0x15     %s\n", busyFailureText(vciDetectMs, 3000, testo, sizeof(testo)));
   else
     logLine("VCI detect 0x15     BUSY alto per %ld ms", (long)vciDetectMs);
 
@@ -65,7 +96,7 @@ static void probeLifeAndHighVoltage(bool readRegisters)
   writeCommand(0x20);
   powerOffMs = waitBusy(5000);
   if (powerOffMs < 0)
-    Serial.println(F("  power off 0xC3      BUSY ancora alto a 5000 ms"));
+    Serial.printf("  power off 0xC3      %s\n", busyFailureText(powerOffMs, 5000, testo, sizeof(testo)));
   else
     logLine("power off 0xC3      BUSY alto per %ld ms", (long)powerOffMs);
 }
@@ -121,16 +152,23 @@ static void sweepInitCandidates()
     Serial.printf("\n-- candidata %u/%u: %s\n", c + 1, CAND_COUNT, CAND_LABEL[c]);
     // MUX al conteggio reale per tutte, tranne MINIMAL che di suo non lo scrive
     const int32_t sw = initPanel(c, (c == CAND_MINIMAL) ? MUX_NOT_WRITTEN : cfg.gate);
+    /**
+     * In sola logica i tempi analogici e i pattern misurati qui sono del secondo
+     * connettore e non devono sovrascrivere quelli che la scheda per il driver
+     * attribuisce a J1: si salvano e si rimettono dopo la prova.
+     */
+    const int32_t salva47 = patternMs47, salva46 = patternMs46;
     probeLifeAndHighVoltage(c == CAND_COUNT - 1);
 
     CandProbe& p = candProbe[c];
     p.swresetMs   = sw;
     p.pattern47Ms = patternMs47;
     p.pattern46Ms = patternMs46;
-    p.powerOnMs   = powerOnMs;
-    p.powerOffMs  = powerOffMs;
-    p.hvMs        = hvDetectMs;
-    p.vciMs       = vciDetectMs;
+    p.powerOnMs   = logicOnly() ? BUSY_NEVER_ROSE : powerOnMs;
+    p.powerOffMs  = logicOnly() ? BUSY_NEVER_ROSE : powerOffMs;
+    p.hvMs        = logicOnly() ? BUSY_NEVER_ROSE : hvDetectMs;
+    p.vciMs       = logicOnly() ? BUSY_NEVER_ROSE : vciDetectMs;
+    if (logicOnly()) { patternMs47 = salva47; patternMs46 = salva46; }
     /**
      * "Vivo" non vuol dire che stampa: vuol dire che ha eseguito almeno un
      * comando la cui esecuzione dura un tempo misurabile. Il power on è il
@@ -149,19 +187,22 @@ static void sweepInitCandidates()
  *
  * Con un solo FFC cablato lo slave non è sul bus, perchè le sue linee SPI
  * passano dal suo connettore: un frame non potrebbe rispondere. Qui si misura
- * quello che il BUSY dice da solo, ed è la cosa che serve al driver — se il
+ * quello che il BUSY dice da solo, ed è la cosa che serve al driver: se il
  * controller CHE RISPONDE esegue gli opcode con il bit 7 alto. Si prendono i
  * comandi che alzano il BUSY per una durata misurabile, si manda prima
  * l'opcode nudo e poi lo stesso con |0x80, e si confrontano le due reazioni.
  *
- *   entrambi alzano il BUSY -> questo controller esegue anche l'opcode offset,
- *        quindi il bit 7 non seleziona niente su questo silicio e l'ipotesi
- *        cascade perde il proprio meccanismo di indirizzamento: in
- *        GxEPD2_SOLUM_122c_960x768.h ADDRESSING_CASCADE non avrebbe modo di
- *        funzionare, e il default a due chip select resta l'unica strada
+ *   entrambi alzano il BUSY -> questo controller esegue anche l'opcode offset
+ *        come se fosse nudo: il bit 7 non lo distingue, e in una coppia in
+ *        cascade questo chip non si comporterebbe da master che ignora gli
+ *        opcode destinati allo slave; la cascade non è esclusa ma perde questo
+ *        indizio, e la prova vera è la sonda b a ponte fatto
  *   solo l'opcode nudo -> il controller RIFIUTA gli opcode offset: sono uno
- *        spazio di indirizzamento distinto, ed è la prima evidenza a favore
- *        della cascade
+ *        spazio di indirizzamento distinto, compatibile con il modello a
+ *        cascade (slave a opcode|0x80) senza provarlo
+ *
+ * Esegue 0x22 = 0xC0 con 0x20, cioè accende l'analogico: in sola logica non si
+ * lancia.
  *
  * I due gruppi sono separati da un reset: se un opcode offset viene ignorato il
  * suo parametro finisce in un registro che non abbiamo scelto, e non deve poter
@@ -169,6 +210,11 @@ static void sweepInitCandidates()
  */
 static void sweepOpcodeBit7()
 {
+  if (logicOnly())
+  {
+    logLine("modalità sola logica: la sonda manda 0x22 = 0xC0 + 0x20 (analogico), non si esegue");
+    return;
+  }
   struct Op { uint8_t code; uint8_t param; bool hasParam; const char* nome; };
   static const Op OPS[] = {
     { 0x47, 0xF7, true,  "pattern B/N   0x47" },
@@ -199,13 +245,14 @@ static void sweepOpcodeBit7()
       bool rose = false;
       while ((millis() - t0) < 300)
       {
-        if (digitalRead(PIN_BUSY) == BUSY_ACTIVE) { rose = true; break; }
+        if (digitalRead(busyPin()) == BUSY_ACTIVE) { rose = true; break; }
       }
-      const int32_t ms = rose ? waitBusy(3000) : -1;
+      const int32_t ms = rose ? waitBusyFall(3000) : BUSY_NEVER_ROSE;
       (pass ? offset : nudo)[k] = ms;
       Serial.printf("   0x%02X %-22s %s\n", uint8_t(OPS[k].code | off), OPS[k].nome,
                     rose ? "BUSY mosso" : "BUSY fermo");
-      if (rose) Serial.printf("        alto per %ld ms\n", (long)ms);
+      if (rose && ms >= 0) Serial.printf("        alto per %ld ms\n", (long)ms);
+      else if (rose)       Serial.println(F("        ancora alto a 3000 ms"));
     }
   }
 
@@ -222,9 +269,9 @@ static void sweepOpcodeBit7()
   if (confrontabili == 0)
     logLine("nessun opcode nudo ha reagito: la sonda non decide, il controller non sta eseguendo niente e il problema è a monte");
   else if (eseguiti == confrontabili)
-    verdict("il bit 7 NON indirizza: gli opcode offset vengono eseguiti come nudi, e ADDRESSING_CASCADE non ha un meccanismo");
+    verdict("il bit 7 NON indirizza su questo controller: gli opcode offset vengono eseguiti come nudi, la cascade non è esclusa ma la decide la sonda b a ponte fatto");
   else if (eseguiti == 0)
-    verdict("il bit 7 e' uno spazio di indirizzamento distinto: e' il meccanismo della cascade, che pero' su questo pannello estende le sorgenti e non i gate");
+    verdict("il bit 7 è uno spazio di indirizzamento distinto: compatibile con il modello a cascade (slave a opcode|0x80), che la sonda b a ponte fatto può confermare");
   else
     logLine("esito misto: alcuni opcode offset passano e altri no. Va guardato opcode per opcode nella tabella qui sopra prima di concludere");
 }
@@ -324,23 +371,24 @@ static void sweepPushClocks()
  */
 static void reportBusyDrive()
 {
+  const int pin = busyPin();
   /** Sui GPIO 34..39 dell'ESP32 non ci sono pull interni: le due pinMode qui
    *  sotto sarebbero inerti e il confronto darebbe sempre "pilotata bassa",
    *  cioè un verdetto inventato proprio dove serve di più. */
-  if (PIN_BUSY >= 34)
+  if (pin >= 34)
   {
-    logLine("BUSY su GPIO%d: i pin 34..39 non hanno pull interni, la prova pilotato/flottante qui non si fa; per averla portalo su 4, 21 o 22", PIN_BUSY);
+    logLine("BUSY su GPIO%d: i pin 34..39 non hanno pull interni, la prova pilotato/flottante qui non si fa; per averla portalo su 4, 21 o 22", pin);
     return;
   }
-  pinMode(PIN_BUSY, INPUT_PULLDOWN);
+  pinMode(pin, INPUT_PULLDOWN);
   delay(5);
-  const bool withPulldown = (digitalRead(PIN_BUSY) == HIGH);
+  const bool withPulldown = (digitalRead(pin) == HIGH);
 
-  pinMode(PIN_BUSY, INPUT_PULLUP);
+  pinMode(pin, INPUT_PULLUP);
   delay(5);
-  const bool withPullup = (digitalRead(PIN_BUSY) == HIGH);
+  const bool withPullup = (digitalRead(pin) == HIGH);
 
-  pinMode(PIN_BUSY, INPUT);
+  pinMode(pin, busyRestMode(pin));
 
   Serial.printf("BUSY con pull interni: pulldown -> %s, pullup -> %s\n",
                 withPulldown ? "alto" : "basso",
@@ -409,6 +457,11 @@ static void preparaBanco()
   pinMode(PIN_CS, OUTPUT);
   digitalWrite(PIN_CS, HIGH);
   pinMode(PIN_BUSY, INPUT);
+  Serial.printf("bersaglio del bus: %s\n",
+                cfg.busTarget == TARGET_SECOND ? "secondo connettore (CS 32, BUSY 22)"
+                                               : "primo connettore J1 (CS 15, BUSY 25)");
+  if (logicOnly())
+    Serial.println(F("modalità sola logica: niente 0x22 con bit analogici seguito da 0x20"));
 
   /**
    * Prima di leggere il BUSY "a riposo" bisogna dare al controller il tempo di
@@ -421,21 +474,24 @@ static void preparaBanco()
   delay(50);
 
   /**
-   * L'altra coda: CS tenuto alto per tutto il test, così quel controller non
-   * ascolta il bus; BUSY letto come testimone. RST, SCK, MOSI e DC sono in
-   * parallelo per costruzione del cablaggio, quindi l'altro controller subisce
-   * comunque il reset: è voluto, parte da uno stato noto.
+   * L'altro connettore: CS tenuto alto per tutto il test, così quel controller non
+   * ascolta il bus; BUSY letto come testimone. Il BUSY del secondo connettore sta
+   * in INPUT_PULLDOWN, quindi un pad scollegato si legge "basso" e non manda in
+   * timeout ogni attesa. RST, SCK, MOSI e DC sono in parallelo per costruzione del
+   * cablaggio, quindi l'altro controller subisce comunque il reset: è voluto,
+   * parte da uno stato noto.
    */
-  if (cfg.secondFfc)
+  if (cfg.secondFfc || cfg.busTarget == TARGET_SECOND)
   {
     pinMode(PIN_CS_OTHER, OUTPUT);
     digitalWrite(PIN_CS_OTHER, HIGH);
-    pinMode(PIN_BUSY_OTHER, INPUT);
-    Serial.printf("altra coda a riposo: BUSY = %s\n",
-                  digitalRead(PIN_BUSY_OTHER) == BUSY_ACTIVE ? "ALTO (busy)" : "basso (idle)");
+    pinMode(PIN_BUSY_OTHER, INPUT_PULLDOWN);
+    delay(5);
+    Serial.printf("altro connettore a riposo: BUSY = %s\n",
+                  digitalRead(otherBusyPin()) == BUSY_ACTIVE ? "ALTO (busy)" : "basso (idle)");
   }
   else
-    Serial.println(F("altra coda: secondo connettore FFC non cablato, nessun testimone"));
+    Serial.println(F("altro connettore: secondo FFC non cablato, nessun testimone"));
 
   hspi.begin(PIN_SCK, PIN_MISO, PIN_MOSI, PIN_CS);
 
@@ -445,7 +501,7 @@ static void preparaBanco()
    * occupato danno lo stesso livello, e a distinguerli è reportBusyDrive()
    * subito dopo, che rilegge la linea contro i due pull interni.
    */
-  busyStuckAtRest = (digitalRead(PIN_BUSY) == BUSY_ACTIVE);
+  busyStuckAtRest = (digitalRead(busyPin()) == BUSY_ACTIVE);
   Serial.printf("BUSY a riposo: %s\n",
                 busyStuckAtRest ? "ALTO -> occupato o flottante: decide la riga dopo"
                                 : "basso -> livello di riposo corretto");
@@ -453,29 +509,34 @@ static void preparaBanco()
 }
 
 // =====================================================================
-// LE TRE SONDE DELLA CODA MUTA
+// LE SONDE DELLA CODA MUTA
 //
 // Rispondono al sintomo che blocca il bring-up: la coda lunga stampa
 // correttamente su metà pannello, la corta infilata nello stesso connettore non
-// stampa niente. Nessuna delle tre costa un refresh — se il chip non prende il
-// comando il refresh aborta subito su "BUSY mai salito" — e insieme
-// discriminano fra le tre spiegazioni compatibili col sintomo:
+// stampa niente. Nessuna delle tre costa un refresh (se il chip non prende il
+// comando il refresh aborta subito su "BUSY mai salito") e, puntate sul
+// connettore giusto, discriminano fra le spiegazioni compatibili col sintomo.
+// Il controller del 12.2" è sconosciuto: ciò che segue su cascade, strap e rail
+// è per analogia con i datasheet SSD1677 e SSD1683, e nessuna misura dimostra
+// che il die sia uno di quei chip.
 //
-//   1. il secondo chip è alimentato ma senza i RAIL di pilotaggio, che il
-//      datasheet dà per alimentabili dall'esterno (Features p.5, Table 5-4:
-//      "VGH, VGL, VSH1, VSH2, VSL can be connected to external power supply").
-//      Ha oscillatore proprio, quindi RISPONDE ai comandi e non dipinge;
-//   2. BS1 flotta alto e il chip è in SPI a 3 fili, quindi ignora tutto il
-//      traffico a 4 fili. È una spiegazione completa e non ha niente a che
-//      vedere con la topologia;
-//   3. il reset non lo ingaggia, perchè un impulso solo da 10 ms non basta.
+// La coda corta muta in J1 con BS1 basso (fisso a GND via R11 sulla board)
+// esclude soltanto un controller indipendente con la piedinatura standard, che
+// avrebbe risposto come la lunga. Restano:
 //
-// L'ipotesi che il secondo chip sia uno SLAVE IN CASCADE è invece esclusa dal
-// datasheet, non da queste misure: la cascade dell'SSD1683 (§6.12) porta a
-// "800 (sources) x 300 (gates)", cioè raddoppia le sorgenti e lascia i gate. Un
-// pannello che divide 768 gate fra due chip non può essere una coppia in
-// cascade, e la banda larga 960 px che la coda lunga dipinge lo conferma: in
-// cascade il master coprirebbe metà delle sorgenti, cioè 480 px.
+//   1. uno slave in cascade: sincronizzato al master (clock CL e rail comuni),
+//      e il modo in cui gate e sorgenti si dividono fra i due lo decide il
+//      cablaggio del vetro, non la cascade. Senza il master non ha oscillatore
+//      e il BUSY resta fermo su tutto;
+//   2. una piedinatura diversa, o un pin di enable o di M/S# su un pad che in
+//      J1 non ha una net: il chip esiste ma non è abilitato;
+//   3. un chip danneggiato.
+//
+// Le decide la fase 0 di cable_linking.html e, sulla breakout con la sola
+// logica, il criterio "il BUSY sale dopo SWRESET sul CS dello slave", che la
+// candidata per-CS e la procedura guidata (tasto t) misurano. Il reset
+// ritentato e la prova a 3 fili restano per escludere i casi di tempi e di
+// modo bus, il secondo solo sulla breakout dove BS1 è un pad libero.
 // =====================================================================
 
 /** L'impronta elettrica di una coda: le colonne che il confronto affianca. */
@@ -499,15 +560,17 @@ static ImprontaCoda impronte[3];   // indicizzate da cfg.coda: 1 lunga, 2 corta
 
 /**
  * Livello del BUSY a riposo con la modalità di pull indicata. Su GPIO 34..39
- * la direttiva è inerte — quei pin non hanno pull interni — e per questo la
- * prova vale sul BUSY della coda sotto test, che sta su GPIO25.
+ * la direttiva è inerte, perchè quei pin non hanno pull interni: la prova vale
+ * sul BUSY del bersaglio, che sta su GPIO25 (J1) o GPIO22 (secondo connettore).
+ * Al ritorno il pin torna al suo modo di riposo.
  */
 static int8_t livelloBusy(uint8_t modo)
 {
-  pinMode(PIN_BUSY, modo);
+  const int pin = busyPin();
+  pinMode(pin, modo);
   delay(5);
-  const int8_t v = (int8_t)digitalRead(PIN_BUSY);
-  pinMode(PIN_BUSY, INPUT);
+  const int8_t v = (int8_t)digitalRead(pin);
+  pinMode(pin, busyRestMode(pin));
   return v;
 }
 
@@ -525,18 +588,28 @@ static int8_t livelloBusy(uint8_t modo)
  */
 static void probeImprontaCoda()
 {
-  ImprontaCoda& imp = impronte[cfg.coda];
+  ImprontaCoda& imp = impronte[activeTail()];
   imp.presa = true;
 
+  /**
+   * "Pilotato o flottante" si decide con i due pull: una linea che nessuno
+   * pilota segue il pull (alta col pull-up, bassa col pull-down), una linea
+   * pilotata no. La lettura nuda non decide, perchè a pin senza pull un
+   * flottante e un pilotato danno lo stesso livello.
+   */
   imp.busyRiposo   = livelloBusy(INPUT);
   imp.busyPullDown = livelloBusy(INPUT_PULLDOWN);
   imp.busyPullUp   = livelloBusy(INPUT_PULLUP);
   logLine("BUSY a riposo: nudo %d, pull-down %d, pull-up %d",
           imp.busyRiposo, imp.busyPullDown, imp.busyPullUp);
-  if (imp.busyRiposo == 1 && imp.busyPullDown == 1)
-    verdict("BUSY alto anche col pull-down: e' PILOTATO alto, non flottante");
-  else if (imp.busyRiposo == 1)
-    verdict("BUSY alto a vuoto ma basso col pull-down: e' FLOTTANTE, il chip non lo pilota");
+  if (imp.busyPullUp == 1 && imp.busyPullDown == 0)
+    verdict("BUSY segue il pull (alto col pull-up, basso col pull-down): è FLOTTANTE, nessuno lo pilota");
+  else if (imp.busyPullUp == 1 && imp.busyPullDown == 1)
+    verdict("BUSY alto anche col pull-down: è PILOTATO alto, non flottante");
+  else if (imp.busyPullUp == 0 && imp.busyPullDown == 0)
+    verdict("BUSY basso anche col pull-up: è PILOTATO basso, il chip a riposo o un pull esterno forte");
+  else
+    verdict("BUSY incoerente (basso col pull-up, alto col pull-down): rumore sulla linea, ripeti la misura");
 
   imp.resetTentativo = resetPanelTentativi(cfg.resetTentativi, cfg.resetLowMs);
   imp.swresetMs = initPanel(CAND_MINIMAL, MUX_NOT_WRITTEN);
@@ -544,50 +617,73 @@ static void probeImprontaCoda()
   imp.pattern47Ms = patternFill(0x47, bwPatternFor(true), "PATTERN 0x47 B/W");
   imp.pattern46Ms = patternFill(0x46, 0x00,               "PATTERN 0x46 ACCENT");
 
-  imp.powerOnMs = powerOnExplicit();
-  measure("POWER ON 0x22=C0", 0xC0, imp.powerOnMs);
+  /**
+   * Power on, HV Ready e VCI Detection vogliono clock e analogico accesi, cioè un
+   * 0x22 con bit analogici seguito da 0x20. In sola logica non si mandano, e le
+   * tre colonne restano a -1, non misurato.
+   */
+  if (logicOnly())
+  {
+    logLine("modalità sola logica: power on, HV Ready 0x14, VCI 0x15 e power off non eseguiti");
+    imp.powerOnMs = BUSY_NEVER_ROSE;
+    imp.hvMs      = BUSY_NEVER_ROSE;
+    imp.vciMs     = BUSY_NEVER_ROSE;
+  }
+  else
+  {
+    imp.powerOnMs = powerOnExplicit();
+    measure("POWER ON 0x22=C0", 0xC0, imp.powerOnMs);
 
-  writeCommand(0x14);            // HV Ready Detection, A = 0x77
-  writeData(0x77);               //   cool down 10 ms x 8, 7 cicli: max 560 ms
-  imp.hvMs = waitBusy(2000);
-  measure("HV READY 0x14", 0, imp.hvMs);
-  if (imp.hvMs >= 540)
-    verdict("HV Ready al massimo dei 560 ms: le alte tensioni non sono mai arrivate");
-  else if (imp.hvMs > 0)
-    verdict("HV Ready conclusa in %ld ms su 560: le alte tensioni sono salite", (long)imp.hvMs);
+    writeCommand(0x14);            // HV Ready Detection, A = 0x77
+    writeData(0x77);               //   cool down 10 ms x 8, 7 cicli: max 560 ms
+    imp.hvMs = waitBusy(2000);
+    measure("HV READY 0x14", 0, imp.hvMs);
+    if (imp.hvMs == BUSY_NEVER_ROSE)
+      verdict("HV Ready: il BUSY non è mai salito, il comando non ha avuto risposta");
+    else if (imp.hvMs == BUSY_STILL_HIGH || imp.hvMs >= 540)
+      verdict("HV Ready al massimo dei 560 ms: le alte tensioni non sono mai arrivate");
+    else
+      verdict("HV Ready conclusa in %ld ms su 560: le alte tensioni sono salite", (long)imp.hvMs);
 
-  writeCommand(0x15);            // VCI Detection al POR, 2.3 V
-  writeData(0x04);
-  imp.vciMs = waitBusy(2000);
-  measure("VCI 0x15", 0, imp.vciMs);
+    writeCommand(0x15);            // VCI Detection al POR, 2.3 V
+    writeData(0x04);
+    imp.vciMs = waitBusy(2000);
+    measure("VCI 0x15", 0, imp.vciMs);
+  }
 
   writeCommand(0x34);            // CRC calculation: alza il BUSY, esercita la OTP
   imp.crcMs = waitBusy(5000);
   measure("CRC 0x34", 0, imp.crcMs);
-  if (imp.crcMs > 0)
-    verdict("il CRC ha alzato il BUSY: il chip e' vivo e la sua OTP e' raggiungibile");
+  if (imp.crcMs >= 0)
+    verdict("il CRC ha alzato il BUSY: il chip è vivo e la sua OTP è raggiungibile");
 
-  measure("POWER OFF 0x22=C3", 0xC3, powerOffExplicit());
-  logLine("colonna della %s riempita: il confronto e' nel riepilogo (tasto s)",
-          cfg.coda == TAIL_LUNGA ? "coda LUNGA" : "coda CORTA");
+  if (!logicOnly())
+    measure("POWER OFF 0x22=C3", 0xC3, powerOffExplicit());
+  logLine("colonna della %s riempita: il confronto è nel riepilogo (tasto s)",
+          activeTail() == TAIL_LUNGA ? "coda LUNGA" : "coda CORTA");
 }
 
 /**
- * SPI a 3 fili. È l'unica sonda che DISCRIMINA fra un chip senza rail e un chip
- * in modalità bus sbagliata, e la differenza è tutta nel cablaggio.
+ * SPI a 3 fili. Distingue un chip senza rail da un chip in modalità bus
+ * sbagliata solo dove BS1 può cambiare.
  *
- * Il datasheet dà BS1 come ingresso: basso = 4 fili, alto = 3 fili a 9 bit
- * (Table 5-2 e §6.1.1). Sul FFC della board Waveshare quel pin non è cablato,
- * quindi può flottare, e in 3 fili il chip ignora tutto il traffico a 4 fili —
- * che è esattamente il sintomo. In 3 fili il D/C# va tenuto BASSO e diventa il
- * primo dei nove bit del frame; l'ESP32 li manda in hardware con transferBits.
+ * Il datasheet SSD1677, per analogia, dà BS1 come ingresso: basso = 4 fili, alto
+ * = 3 fili a 9 bit (Table 5-2 e §6.1.1). Sulla board Waveshare V3 BS1 è a GND via
+ * R11 da 0 ohm, quindi il chip in J1 resta a 4 fili qualunque cosa mandi l'ESP32
+ * e questa prova è INCONCLUDENTE: un silenzio in 3 fili non dice niente. Sulla
+ * breakout della coda corta invece BS1 è un pad libero, che può flottare alto, e
+ * in 3 fili il chip ignora tutto il traffico a 4 fili: lì la prova ha senso. In 3
+ * fili il D/C# va tenuto BASSO e diventa il primo dei nove bit del frame; l'ESP32
+ * li manda in hardware con transferBits.
  *
- * Se in 3 fili il chip risponde, non serve nessun ponte di rail: serve un
- * pull-down su BS1.
+ * Se in 3 fili il chip risponde su una breakout, non serve nessun ponte di rail:
+ * serve un pull-down su BS1.
  */
 static void probeTreFili()
 {
   const uint8_t salva = cfg.busMode;
+  if (cfg.busTarget == TARGET_J1)
+    logLine("BS1 è a GND via R11 sulla board: il chip in J1 resta a 4 fili qualunque cosa si mandi, la prova non discrimina");
 
   for (uint8_t giro = 0; giro < 2; ++giro)
   {
@@ -603,10 +699,10 @@ static void probeTreFili()
 
     const int32_t pat = patternFill(0x47, 0xF7,
                                     giro ? "PATTERN A 3 FILI" : "PATTERN A 4 FILI");
-    if (giro && pat > 0)
-      verdict("in 3 fili il chip RISPONDE: BS1 flotta alto, e il rimedio e' un pull-down su BS1");
+    if (giro && pat >= 0)
+      verdict("in 3 fili il chip RISPONDE: su una breakout con BS1 libero il rimedio è un pull-down su BS1, in J1 (BS1 a GND) l'esito è anomalo");
     else if (giro)
-      verdict("in 3 fili non risponde: il modo bus non spiega il silenzio");
+      verdict("in 3 fili non risponde: non conclude con BS1 a GND, il chip resta a 4 fili comunque");
   }
 
   cfg.busMode = salva;
@@ -629,8 +725,14 @@ static void probeResetRitentativi()
   for (uint8_t k = 0; k < sizeof(DURATE) / sizeof(DURATE[0]); ++k)
   {
     const uint8_t t = resetPanelTentativi(4, DURATE[k]);
-    logLine("impulso da %u ms: BUSY mosso al tentativo %u su 4",
-            (unsigned)DURATE[k], (unsigned)t);
+    if (t == 0 && resetSawBusyStuckHigh)
+      logLine("impulso da %u ms: BUSY salito e mai sceso (fisso alto), non conta come risposta al reset",
+              (unsigned)DURATE[k]);
+    else if (t == 0)
+      logLine("impulso da %u ms: BUSY mai mosso in 4 tentativi", (unsigned)DURATE[k]);
+    else
+      logLine("impulso da %u ms: BUSY mosso al tentativo %u su 4",
+              (unsigned)DURATE[k], (unsigned)t);
     if (t == 1)
     {
       verdict("un impulso da %u ms basta al primo colpo: il reset del driver va bene",
@@ -647,6 +749,10 @@ static void probeResetRitentativi()
   measure("SWRESET DOPO IL RESET", 0, sw);
   if (sw >= 0)
     verdict("SWRESET: BUSY alto per %ld ms, contro i 200 che il driver aspetta", (long)sw);
+  else if (sw == BUSY_NEVER_ROSE)
+    verdict("SWRESET: il BUSY non è mai salito, nessuna risposta");
+  else
+    verdict("SWRESET: BUSY ancora alto a 1000 ms, fisso alto e non una risposta");
 }
 
 #endif // DUAL_PANEL_FINDER_PROBES_ELETTRICHE_H

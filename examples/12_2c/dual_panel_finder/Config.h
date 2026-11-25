@@ -8,12 +8,15 @@
 // #define costerebbe un riflash a metà sessione, ed è esattamente ciò che
 // questo file esiste per evitare.
 //
-// Niente NVS: un example non lascia stato nella flash della board. La
-// configurazione vive quanto la sessione, e quello che si sa già dalle sessioni
-// precedenti si ridichiara dalla voce "caratteristiche note" del menu, che vale
-// come una misura ai fini dei prerequisiti ed è marcata come dichiarata nel log.
+// Persistenza in NVS (namespace "dpf122", byte di versione in testa ai blob): la
+// configurazione e gli esiti delle caratteristiche si salvano a ogni cambio e si
+// rileggono al boot, così un riavvio a metà di un cablaggio non fa perdere il
+// filo. Gli esiti riletti restano marcati come dichiarati e non come misurati,
+// perchè non li ha prodotti questa esecuzione, e valgono come una misura ai fini
+// dei prerequisiti. Il tasto z azzera anche la NVS; la voce "caratteristiche
+// note" del menu resta il modo di ridichiarare a mano quello che si sa già.
 //
-// L'unica cosa che resta fisica è quale coda del pannello è infilata nel
+// L'unica cosa che resta fisica è quale coda del pannello è infilata in quale
 // connettore: quella si cambia con le dita, non col compilatore.
 //
 // I LIMITI SONO DEL SILICIO, non preferenze. Stanno qui accanto ai parametri
@@ -29,11 +32,32 @@
 #define DUAL_PANEL_FINDER_CONFIG_H
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include <SPI.h>
 #include <stdarg.h>
 
 static const uint8_t TAIL_LUNGA = 1;
 static const uint8_t TAIL_CORTA = 2;
+
+/**
+ * Connettore su cui parlano le primitive di bus: il primo (J1, CS 15 e BUSY 25) o
+ * il secondo (CS 32 e BUSY 22). È una coppia (CS, BUSY) letta da csAssert(),
+ * waitBusy() e da ogni sonda, così le stesse misure valgono per la coda lunga in
+ * J1 e per la corta sulla breakout con la lunga ferma.
+ */
+static const uint8_t TARGET_J1     = 0;
+static const uint8_t TARGET_SECOND = 1;
+
+/**
+ * Stato del cablaggio che la procedura guidata (tasto t) chiede all'operatore e
+ * che il menu mostra: decide quali sonde hanno senso e se il secondo connettore
+ * lavora in sola logica.
+ */
+static const uint8_t WIRING_UNKNOWN      = 0;   // non dichiarato
+static const uint8_t WIRING_J1_ONLY      = 1;   // sola coda lunga in J1
+static const uint8_t WIRING_SECOND_LOGIC = 2;   // coda corta sulla breakout, sola logica
+static const uint8_t WIRING_CASCADE      = 3;   // ponte cascade fatto, CS unico
+static const uint8_t WIRING_DUAL_CS      = 4;   // ponte a due CS fatto
 
 /** Polarità del piano 0x24: la misura probeBwPolarity(), non si deduce. */
 static const int8_t BW_UNKNOWN   = -1;   // non ancora osservata
@@ -42,11 +66,12 @@ static const int8_t BW_INVERSE   =  1;   // bit = 1 -> pixel NERO
 
 /**
  * Modo del bus MCU, scelto dal pin BS1 del controller (Table 5-2 del datasheet
- * SSD1677): BS1 basso = 4 fili, BS1 alto = 3 fili a 9 bit. Il pin è un INGRESSO
- * e sul FFC della board Waveshare non è cablato, quindi sulla coda che non
- * risponde può flottare: in 3 fili il chip ignora tutto il traffico a 4 fili, e
- * quella è una spiegazione completa del silenzio che non ha niente a che vedere
- * con la cascade. Da qui il modo come parametro invece che come assunzione.
+ * SSD1677, per analogia: il die è sconosciuto): BS1 basso = 4 fili, BS1 alto = 3
+ * fili a 9 bit. Sulla board Waveshare V3 BS1 è fisso a GND tramite R11 da 0 ohm,
+ * quindi il chip in J1 resta a 4 fili qualunque cosa mandi l'ESP32 e la prova a 3
+ * fili non discrimina niente; su una breakout invece BS1 è un pad libero che può
+ * flottare, ed è lì che il modo bus torna a essere una variabile. Da qui il modo
+ * come parametro invece che come assunzione.
  *
  * In 3 fili (§6.1.3) il D/C# "is not used and it must be tied to LOW" e il
  * frame è di 9 bit, con sequenza D/C# bit, D7, D6 ... D0: il primo bit dice se
@@ -82,7 +107,7 @@ enum SondaBit : uint32_t
   S_SLEEP      = 1UL << 14,   // deep sleep
   S_DRIVER     = 1UL << 15,   // fase driver
   S_IMPRONTA   = 1UL << 16,   // impronta elettrica della coda, e confronto
-  S_TREFILI    = 1UL << 17,   // SPI a 3 fili: BS1 flottante
+  S_TREFILI    = 1UL << 17,   // SPI a 3 fili, inconcludente con BS1 a GND
   S_RESET      = 1UL << 18,   // reset a ritentativi
   S_DIE        = 1UL << 19,   // identità del die: MUX e finestra fuori specifica
   S_TB         = 1UL << 20,   // TB = 1, reverse scan gate in hardware
@@ -105,8 +130,9 @@ static const uint8_t MUX_PASSES = 4;
 
 // ===== Limiti del silicio, dal datasheet ==============================
 //
-// SSD1677 Rev 1.0. Ogni riga è un vincolo del chip, non una preferenza, e il
-// menu li applica come clamp.
+// SSD1677 Rev 1.0, usato per analogia: il controller del 12.2" è sconosciuto e
+// non è dimostrato che sia quel chip. Ogni riga è un vincolo del datasheet, non
+// una preferenza, e il menu li applica come clamp.
 
 /**
  * MUX, §8.1: "Multiplex ratio (MUX ratio) from 300 MUX to 680 MUX", A[9:0]+1
@@ -157,7 +183,7 @@ static const uint32_t SPI_HZ_MAX = 20000000;
 
 struct Config
 {
-  uint8_t  coda;        // TAIL_LUNGA o TAIL_CORTA
+  uint8_t  coda;        // TAIL_LUNGA o TAIL_CORTA, la coda infilata in J1
   bool     secondFfc;   // il secondo connettore FFC è cablato
   bool     esaustivo;   // nessuna passata condizionale viene saltata
   bool     verbose;     // righe di dettaglio sul seriale
@@ -197,6 +223,13 @@ struct Config
   uint8_t  lutVsh1;       // tensioni della LUT, clampate ai POR da waveformGuard
   uint8_t  lutVsh2;
   uint8_t  lutVsl;
+
+  /**
+   * Cablaggio e bersaglio del bus, in coda alla struct perchè il default
+   * posizionale sotto li elenca nello stesso ordine.
+   */
+  uint8_t  wiring;        // WIRING_*, lo stato dichiarato dalla procedura guidata
+  uint8_t  busTarget;     // TARGET_J1 o TARGET_SECOND
 };
 
 /**
@@ -232,9 +265,22 @@ static const Config CFG_DEFAULT =
   true,           // manda 0x04 coi POR dopo la LUT
   false,          // senza passare da uno SWRESET
   VSH1_POR, VSH2_POR, VSL_POR,
+  WIRING_UNKNOWN, // cablaggio non dichiarato
+  TARGET_J1,      // le primitive di bus parlano al connettore J1
 };
 
 static Config cfg = CFG_DEFAULT;
+
+/**
+ * Modo "sola logica": vale quando le primitive parlano al secondo connettore e il
+ * cablaggio dichiarato è la coda corta con la sola logica. Con i rail ad alta
+ * tensione non ponticellati i regolatori dello slave non hanno condensatori, quindi
+ * niente 0x22 con bit analogici seguito da 0x20: restano SWRESET, 0x34 e 0x47/0x46.
+ */
+static inline bool logicOnly()
+{
+  return (cfg.wiring == WIRING_SECOND_LOGIC) && (cfg.busTarget == TARGET_SECOND);
+}
 
 /**
  * Riporta a un valore sicuro qualunque tensione oltre il POR. Chiamata prima di
@@ -250,6 +296,84 @@ static bool waveformGuard()
   if (cfg.lutVsh2 > VSH2_POR) { cfg.lutVsh2 = VSH2_POR; ok = false; }
   if (cfg.lutVsl  > VSL_POR)  { cfg.lutVsl  = VSL_POR;  ok = false; }
   return ok;
+}
+
+// ---------------------------------------------------------------------------
+// PERSISTENZA IN NVS
+//
+// Un solo namespace e due blob, uno per la configurazione (qui) e uno per gli
+// esiti delle caratteristiche (Report.h). Il byte di versione in testa serve a
+// scartare un profilo scritto da una build con una struct diversa invece di
+// rileggerlo come se fosse compatibile: va incrementato ogni volta che cambia
+// Config, Esito o l'enum Caratteristica.
+// ---------------------------------------------------------------------------
+static const char*   NVS_NAMESPACE    = "dpf122";
+static const uint8_t NVS_BLOB_VERSION = 1;
+
+static Preferences prefs;
+
+/**
+ * Controlla che un profilo riletto dalla NVS abbia valori nei range che il resto
+ * dello sketch assume, perchè un indice di enum fuori tabella finirebbe in un
+ * accesso fuori array. Ritorna false se anche un solo campo è fuori range.
+ */
+static bool configLooksValid(const Config& c)
+{
+  return (c.coda == TAIL_LUNGA || c.coda == TAIL_CORTA)
+         && c.wiring <= WIRING_DUAL_CS
+         && c.busTarget <= TARGET_SECOND
+         && c.busMode <= BUS_3WIRE
+         && c.gate >= 8 && c.gate <= MUX_REG_MAX
+         && c.reg21Dove <= 2
+         && c.resetTentativi >= 1 && c.resetLowMs >= 1
+         && c.spiBase >= SPI_HZ_MIN && c.spiBase <= SPI_HZ_MAX
+         && c.spiFast >= SPI_HZ_MIN && c.spiFast <= SPI_HZ_MAX
+         && c.spiDriver >= SPI_HZ_MIN && c.spiDriver <= SPI_HZ_MAX;
+}
+
+/**
+ * Rilegge la configurazione salvata. Un profilo assente, di un'altra versione, di
+ * un'altra taglia o fuori range lascia i valori di fabbrica già in cfg.
+ */
+static void loadConfig()
+{
+  uint8_t blob[1 + sizeof(Config)];
+  prefs.begin(NVS_NAMESPACE, false);
+  const size_t n = prefs.getBytes("cfg", blob, sizeof(blob));
+  prefs.end();
+  if (n != sizeof(blob) || blob[0] != NVS_BLOB_VERSION) return;
+
+  Config letta;
+  memcpy(&letta, blob + 1, sizeof(Config));
+  if (configLooksValid(letta)) cfg = letta;
+}
+
+/**
+ * Salva la configurazione corrente, e solo se è cambiata: si chiama dopo ogni
+ * tasto del menu, e riscrivere a ogni pressione consumerebbe cicli di scrittura
+ * della flash per niente.
+ */
+static void saveConfig()
+{
+  uint8_t blob[1 + sizeof(Config)];
+  blob[0] = NVS_BLOB_VERSION;
+  memcpy(blob + 1, &cfg, sizeof(Config));
+
+  uint8_t salvato[sizeof(blob)];
+  prefs.begin(NVS_NAMESPACE, false);
+  const size_t n = prefs.getBytes("cfg", salvato, sizeof(salvato));
+  if (n != sizeof(blob) || memcmp(salvato, blob, sizeof(blob)) != 0)
+    prefs.putBytes("cfg", blob, sizeof(blob));
+  prefs.end();
+}
+
+/** Cancella tutto il namespace, esiti compresi, e riporta cfg ai valori di fabbrica. */
+static void resetConfig()
+{
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.clear();
+  prefs.end();
+  cfg = CFG_DEFAULT;
 }
 
 // ---------------------------------------------------------------------------
@@ -384,7 +508,7 @@ static long chiediNumero(const char* domanda, long minimo, long massimo,
 // ---------------------------------------------------------------------
 // PIN — Waveshare E-Paper ESP32 Driver Board V3
 //   Sono il cablaggio, non impostazioni: si cambiano solo se il tuo è
-//   diverso da quello di docs/122c/connessioni.html.
+//   diverso da quello di docs/122c/cable_linking.html.
 // ---------------------------------------------------------------------
 // Segnali condivisi. La board usa i pin HSPI con SCK e MOSI scambiati, da cui
 // il remap obbligatorio in hspi.begin(). MISO è un dummy: il FPC del
@@ -395,24 +519,58 @@ static const int PIN_SCK  = 13;
 static const int PIN_MISO = 12;
 static const int PIN_MOSI = 14;
 
-// Il connettore FFC della board.
+// Il primo connettore FFC della board, J1.
 static const int PIN_CS   = 15;
 static const int PIN_BUSY = 25;
 
 /**
- * Il secondo connettore, usato quando cfg.secondFfc è vero.
+ * Il secondo connettore, sulla breakout della coda corta, usato quando
+ * cfg.secondFfc è vero.
  *
- * CS su GPIO32 e non 33: il 33 non è portato fuori su questa board, quindi un
- * digitalWrite su quel pin non arriva da nessuna parte.
- *
- * BUSY su 35 vale solo come lettura grezza: i GPIO 34..39 dell'ESP32 non hanno
- * pull interni, quindi su quel pin la prova "pilotato o flottante" non può
- * funzionare — ed è proprio la prova che servirebbe sulla coda che non
- * risponde, per questo il secondo connettore si dichiara dal menu e non si
- * autorileva. Per averla, portalo su 4, 21 o 22.
+ * CS su GPIO32 e non 33: la netlist dello schematico mette GPIO33 sull'header
+ * J3-8 (da confermare sulla serigrafia), quindi non è assente ma sta su un pin
+ * dell'header che il cablaggio di questo test non usa. BUSY su GPIO22, che ha il
+ * pull interno: configurato INPUT_PULLDOWN, un BUSY scollegato o aperto si legge
+ * "libero" e non manda ogni attesa in timeout, e la prova "pilotato o flottante"
+ * con entrambi i pull funziona anche su questo pin (sui GPIO 34..39 no).
  */
 static const int PIN_CS_OTHER   = 32;
-static const int PIN_BUSY_OTHER = 35;
+static const int PIN_BUSY_OTHER = 22;
+
+/** Chip select del connettore bersaglio delle primitive di bus. */
+static inline int csPin()
+{
+  return (cfg.busTarget == TARGET_SECOND) ? PIN_CS_OTHER : PIN_CS;
+}
+
+/** BUSY del connettore bersaglio delle primitive di bus. */
+static inline int busyPin()
+{
+  return (cfg.busTarget == TARGET_SECOND) ? PIN_BUSY_OTHER : PIN_BUSY;
+}
+
+/** Chip select dell'altro connettore, quello che il bersaglio non seleziona. */
+static inline int otherCsPin()
+{
+  return (cfg.busTarget == TARGET_SECOND) ? PIN_CS : PIN_CS_OTHER;
+}
+
+/** BUSY dell'altro connettore, letto come testimone durante un refresh. */
+static inline int otherBusyPin()
+{
+  return (cfg.busTarget == TARGET_SECOND) ? PIN_BUSY : PIN_BUSY_OTHER;
+}
+
+/**
+ * Modo di riposo di un pin BUSY: nudo su J1, con il pull-down interno sul secondo
+ * connettore. Ogni punto che configura il BUSY del secondo connettore passa da
+ * qui, così non resta mai in ingresso senza pull dopo una lettura con i due pull.
+ */
+static inline uint8_t busyRestMode(int pin)
+{
+  return (pin == PIN_BUSY_OTHER) ? INPUT_PULLDOWN : INPUT;
+}
+
 /** true se il piano BW è invertito rispetto alla convenzione del datasheet. */
 static inline bool bwIsInverse()
 {
@@ -452,6 +610,19 @@ static const uint16_t PART_ROW_MAX = ROW_BYTES;  // buffer di riga più grande p
 // driver, ed è il discriminante che esclude la famiglia UC8179.
 static const int BUSY_ACTIVE = HIGH;
 
+/**
+ * Esiti negativi di waitBusy(). Sono distinti perchè dicono cose opposte: un BUSY
+ * che non è mai salito è un controller che non ha preso il comando, un BUSY che
+ * non è sceso al timeout è un controller che sta lavorando o un pin fisso alto.
+ * Nessuno dei due è una durata: chi stampa "alto per N ms" o legge un valore
+ * >= 0 come "ha risposto" deve escluderli.
+ */
+static const int32_t BUSY_NEVER_ROSE  = -1;
+static const int32_t BUSY_STILL_HIGH  = -3;
+
+/** Finestra in cui il BUSY deve salire dopo un comando, prima di dichiararlo muto. */
+static const uint32_t BUSY_RISE_WINDOW_MS = 20;
+
 // ===== Le candidate di init, come dato e non come #define ============
 /**
  * Erano tre ricompilazioni, ora sono un array su cui il test itera. Quello che
@@ -479,9 +650,11 @@ static const int BUSY_ACTIVE = HIGH;
  *                 dall'OTP PRIMA del primo frame, ed è anche l'unico con un
  *                 _Init_Part.
  *   CAND_PERCS    init a controller indipendenti: nessun broadcast, ogni chip
- *                 inizializzato sul PROPRIO chip select. È la topologia che il
- *                 datasheet sostiene per uno split sull'asse gate, contro
- *                 quella in cascade — che estende le sorgenti, non i gate.
+ *                 inizializzato sul PROPRIO chip select. Il secondo giro
+ *                 seleziona il solo secondo connettore, manda il proprio
+ *                 SWRESET e misura la salita del BUSY su GPIO22: è la misura
+ *                 con cui si distingue un controller che risponde da solo da
+ *                 uno slave in cascade o da un chip muto.
  */
 enum InitCand : uint8_t
 {
@@ -522,12 +695,37 @@ static const char* muxEtichetta(uint8_t k)
   return buf[k];
 }
 
+/**
+ * Coda sotto test: sul secondo connettore è per definizione la corta, su J1 quella
+ * che l'operatore ha dichiarato con il tasto c. È anche la colonna dell'impronta
+ * in cui la sonda 4 scrive.
+ */
+static inline uint8_t activeTail()
+{
+  return (cfg.busTarget == TARGET_SECOND) ? TAIL_CORTA : cfg.coda;
+}
+
 /** Etichetta della coda per il report. */
 static const char* tailLabel()
 {
+  if (cfg.busTarget == TARGET_SECOND)
+    return "coda CORTA sul secondo connettore (CS=32, BUSY=22)";
   return (cfg.coda == TAIL_LUNGA)
-         ? "coda LUNGA nel connettore della board (CS=15, BUSY=25)"
-         : "coda CORTA nel connettore della board (CS=15, BUSY=25)";
+         ? "coda LUNGA nel connettore J1 della board (CS=15, BUSY=25)"
+         : "coda CORTA nel connettore J1 della board (CS=15, BUSY=25)";
+}
+
+/** Etichetta del cablaggio dichiarato, per il menu e per il log. */
+static const char* wiringLabel()
+{
+  switch (cfg.wiring)
+  {
+    case WIRING_J1_ONLY:      return "sola lunga in J1";
+    case WIRING_SECOND_LOGIC: return "corta su breakout, sola logica";
+    case WIRING_CASCADE:      return "ponte cascade";
+    case WIRING_DUAL_CS:      return "ponte due CS";
+    default:                  return "non dichiarato";
+  }
 }
 
 

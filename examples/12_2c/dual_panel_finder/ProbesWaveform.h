@@ -468,10 +468,10 @@ static void probeTemperatureBanks()
      * discesa e si stampa la durata vera, che è il dato interessante proprio
      * perchè esce dal quadro delle altre.
      */
-    if (tempSweepMs[t] < 0 && digitalRead(PIN_BUSY) == BUSY_ACTIVE)
+    if (tempSweepMs[t] < 0 && digitalRead(busyPin()) == BUSY_ACTIVE)
     {
       const uint32_t scaduto = tempTimeoutMs();
-      const int32_t  coda    = waitBusy(scaduto);
+      const int32_t  coda    = waitBusyFall(scaduto);
       if (coda >= 0)
         logLine("BUSY sceso altri %ld ms dopo il timeout: il banco di questo range dura %ld ms, cioè più di quello a temperatura ambiente",
                       (long)coda, (long)((int32_t)scaduto + coda));
@@ -631,7 +631,7 @@ static void probePingPong()
  */
 static bool deepSleepIgnoresCommands(uint32_t window_ms)
 {
-  const bool busyAlto = (digitalRead(PIN_BUSY) == BUSY_ACTIVE);
+  const bool busyAlto = (digitalRead(busyPin()) == BUSY_ACTIVE);
   Serial.printf("   prova di sordità: BUSY %s, si manda pattern nero + refresh\n",
                 busyAlto ? "alto" : "basso");
 
@@ -643,7 +643,7 @@ static bool deepSleepIgnoresCommands(uint32_t window_ms)
 
   if (busyAlto)
   {
-    const int32_t ms = waitBusy(window_ms);
+    const int32_t ms = waitBusyFall(window_ms);
     if (ms < 0)
     {
       Serial.printf("   BUSY mai sceso in %lu ms: il comando non è stato eseguito, dorme\n",
@@ -658,10 +658,10 @@ static bool deepSleepIgnoresCommands(uint32_t window_ms)
   const uint32_t t0 = millis();
   while ((millis() - t0) < 2000)
   {
-    if (digitalRead(PIN_BUSY) == BUSY_ACTIVE)
+    if (digitalRead(busyPin()) == BUSY_ACTIVE)
     {
       // ha preso il comando: si attende la fine per non lasciare il pannello a metà
-      const int32_t ms = waitBusy(window_ms);
+      const int32_t ms = waitBusyFall(window_ms);
       logLine("BUSY salito e refresh durato %ld ms: NON dorme", (long)ms);
       return false;
     }
@@ -727,7 +727,7 @@ static void probeDeepSleep()
     writeData(PARAM[k]);
     delay(50);
 
-    const bool busyAlto = (digitalRead(PIN_BUSY) == BUSY_ACTIVE);
+    const bool busyAlto = (digitalRead(busyPin()) == BUSY_ACTIVE);
     if (PARAM[k] == 0x03)
       sleepBusy03 = busyAlto;
     else
@@ -765,12 +765,12 @@ static void probeDeepSleep()
     bool reagisce = false;
     while ((millis() - t0) < 300)
     {
-      if (digitalRead(PIN_BUSY) == BUSY_ACTIVE) { reagisce = true; break; }
+      if (digitalRead(busyPin()) == BUSY_ACTIVE) { reagisce = true; break; }
       delay(1);
     }
     if (reagisce)
     {
-      const int32_t ms = waitBusy(5000);
+      const int32_t ms = waitBusyFall(5000);
       verdict("il pattern ha alzato il BUSY per %ld ms: il controller esegue ancora, NON dorme", (long)ms);
     }
     else
@@ -868,7 +868,7 @@ static void probeDeepSleep()
   delay(50);
   Serial.printf("\ncontroller riaddormentato con 0x10 = 0x%02X, BUSY %s\n",
                 sleepParamOk,
-                digitalRead(PIN_BUSY) == BUSY_ACTIVE ? "alto" : "basso");
+                digitalRead(busyPin()) == BUSY_ACTIVE ? "alto" : "basso");
 }
 
 /**
@@ -876,16 +876,17 @@ static void probeDeepSleep()
  * sommando CMD_OFFSET a ogni opcode indirizzato. È la trascrizione
  * dell'idioma di docs/openepaperlink/nrf52811_tag_fw/dualssd.cpp, dove un
  * pannello a due controller SSD sta su un solo CS e il secondo si distingue
- * solo per il bit 7 dell'opcode.
+ * solo per il bit 7 dell'opcode. È la prova della cascade a ponte fatto, e
+ * richiede il secondo connettore cablato: lo slave sta sul CS 15 come il master.
  *
  * Cosa aspettarsi, e come leggerlo:
  *   - si accende la banda che questa coda NON serve  -> ipotesi confermata: il
- *     driver va rifatto su un solo CS con gli opcode offset, e la coda muta non
- *     era rotta;
+ *     driver va usato su un solo CS con gli opcode offset
+ *     (SECOND_CONTROLLER_CASCADE = true), e la coda muta non era rotta;
  *   - si accende la stessa banda di sempre           -> il controller di questa
  *     coda risponde a entrambe le forme, quindi l'offset non seleziona niente;
  *   - non si accende niente                          -> nessuna conferma, e
- *     restano in piedi le tre ipotesi di cablaggio.
+ *     restano in piedi piedinatura diversa, enable mancante e chip danneggiato.
  *
  * Il BUSY non è un testimone affidabile qui: appartiene al controller che
  * risponde ai comandi normali, e quello non viene attivato. Per questo il
@@ -902,32 +903,41 @@ static const uint8_t CMD_OFFSET = 0x80;
 static void probeSlaveByOpcodeOffset()
 {
   /**
-   * Il bit 7 dell'opcode è il meccanismo con cui una coppia in CASCADE
-   * distingue i due chip sullo stesso chip select. Su questo pannello la
-   * cascade è esclusa — SSD1683 §6.12 la dà per "800 (sources) x 300 (gates)",
-   * cioè raddoppia le sorgenti e lascia i gate, e 680 < 768 — quindi un esito
-   * NEGATIVO qui è atteso e conferma il quadro, invece di lasciare la domanda
-   * aperta. Un esito positivo lo smentirebbe, e sarebbe la notizia.
-   *
-   * Vale la pena spendere il refresh perchè l'alternativa è che il PANNELLO
-   * ponticelli internamente i rail fra le due COF: in quel caso il secondo chip
-   * sarebbe alimentato e indirizzabile, e i 960x768 si raggiungerebbero da un
-   * connettore solo. È la sola strada che lo renderebbe possibile.
+   * Con il cablaggio a sola logica lo slave non ha i rail: il master, in
+   * cascade, passerebbe lo 0x20 anche a lui, e un refresh con i regolatori senza
+   * condensatori è proprio quello che la fase logica evita.
    */
-  logLine("bit 7 = meccanismo della cascade, che su questo pannello e' esclusa:");
-  logLine("un esito negativo e' atteso; uno positivo sarebbe la notizia");
+  if (cfg.wiring == WIRING_SECOND_LOGIC)
+  {
+    logLine("cablaggio a sola logica: la sonda manda un refresh che in cascade attiva anche lo slave, non si esegue prima del ponte");
+    return;
+  }
+
+  /**
+   * Il bit 7 dell'opcode è il meccanismo con cui una coppia in CASCADE
+   * distingue i due chip sullo stesso chip select. Che questo pannello sia una
+   * cascade non è escluso: la cascade sincronizza due chip (clock CL e rail
+   * comuni) e come gate e sorgenti si dividano lo decide il cablaggio del
+   * vetro, non la cascade. Un esito positivo qui è la prova a favore, uno
+   * negativo a ponte fatto lascia aperti piedinatura diversa, enable e chip
+   * danneggiato.
+   *
+   * Vale la pena spendere il refresh perchè è la sola prova che i 960x768 si
+   * raggiungano da un connettore solo, con lo slave sul CS del master.
+   */
+  logLine("bit 7 = meccanismo della cascade a ponte fatto: un esito positivo la conferma, uno negativo non la esclude");
+
+  // la cascade sta sul CS di J1: il bersaglio passa lì per tutta la sonda
+  const uint8_t salvaTarget = cfg.busTarget;
+  cfg.busTarget = TARGET_J1;
 
   // comandi comuni in broadcast: senza offset, come fa dualssd.cpp
   const uint8_t comune = 0x00;
 
-  // i due chip select bassi insieme riproducono il cablaggio di fabbrica
-  csBoth = true;
-
   /**
-   * Reset e SWRESET senza offset. Attenzione al significato: con i due
-   * controller su un solo chip select "senza offset" vuol dire "al master", non
-   * "a entrambi". Il broadcast vero esiste solo finchè i due CS sono separati e
-   * si tengono bassi insieme, cioè con SLAVE_OPCODE_BOTH_CS a 1.
+   * Reset e SWRESET senza offset. Con i due controller su un solo chip select
+   * "senza offset" vuol dire "al master" oppure "a entrambi" a seconda della
+   * semantica dei comandi di sistema in cascade, e non è dato a priori.
    */
   cmdOffset = 0x00;
   resetPanel();
@@ -949,9 +959,10 @@ static void probeSlaveByOpcodeOffset()
   writeCommand(0x18);                     // sensore di temperatura interno
   writeData(0x80);
   /**
-   * Cascade selection: senza questo bit il master non emette CL e lo slave resta
-   * senza clock, quindi non esegue niente per quanto bene lo si indirizzi.
-   * A = 0x00 lascia entrambi i piani in Normal, B[4] = 1 accende la cascade.
+   * Cascade selection, per analogia con il SSD1683 (B[4] ckouten): senza questo
+   * bit il master non emette CL e lo slave resta senza clock, quindi non esegue
+   * niente per quanto bene lo si indirizzi. A = 0x00 lascia entrambi i piani in
+   * Normal, B[4] = 1 accende la cascade.
    *
    * Va sempre al MASTER, quindi senza offset anche quando i comandi comuni sono
    * offsettati: è una proprietà del chip che genera il clock, non dello slave.
@@ -963,8 +974,8 @@ static void probeSlaveByOpcodeOffset()
   cmdOffset = comune;
 
   /**
-   * Configurazione dello SLAVE, con l'offset. I due riferimenti — dualssd.cpp di
-   * OEPL e GxEPD2_579c_GDEY0579Z93 di GxEPD2 — allo slave mandano soltanto entry
+   * Configurazione dello SLAVE, con l'offset. I due riferimenti, dualssd.cpp di
+   * OEPL e GxEPD2_579c_GDEY0579Z93 di GxEPD2, allo slave mandano soltanto entry
    * mode, finestra RAM e dati: in cascade l'analogico è disabilitato, quindi
    * soft start e sensore di temperatura non avrebbero destinatario.
    *
@@ -989,6 +1000,17 @@ static void probeSlaveByOpcodeOffset()
                 (unsigned)(0x24 | CMD_OFFSET), (unsigned)(0x26 | CMD_OFFSET),
                 (unsigned long)msBW, (unsigned long)msRED);
 
+  /**
+   * La RAM del master si porta a bianco con i nudi 0x24 e 0x26: senza, la master
+   * activation ridipingerebbe quello che la RAM del master ancora contiene (un
+   * frame precedente o il POR) e la sua banda non sarebbe attribuibile. Con il
+   * master bianco quello che compare sulla banda dello slave viene dallo slave.
+   * I comandi nudi con finestra e piani arrivano al solo master.
+   */
+  cmdOffset = 0x00;
+  writeBoxConst(0x24, 0, 0, SRC, cfg.gate, bwByteFor(true));
+  writeBoxConst(0x26, 0, 0, SRC, cfg.gate, 0x00);
+
   cmdOffset = comune;
   /**
    * Il riquadro va scritto a opcode|0x80, cioè allo SLAVE: scritto con gli
@@ -1003,9 +1025,7 @@ static void probeSlaveByOpcodeOffset()
                                 "una ventina di secondi, se il secondo controller ha preso i comandi",
                                 0, &fSlave);
   cmdOffset = 0x00;
-  csBoth = false;
-  if (cfg.secondFfc)
-    digitalWrite(PIN_CS_OTHER, HIGH);
+  cfg.busTarget = salvaTarget;
 
   if (ms < 0)
   {

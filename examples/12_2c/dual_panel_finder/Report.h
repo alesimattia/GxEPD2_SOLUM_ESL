@@ -80,10 +80,12 @@ enum Caratteristica : uint8_t
 {
   C_POLARITA,   // 0x24 bit = 1 è bianco o nero
   C_META,       // quale metà del pannello dipinge la coda infilata
-  C_MIRROR,     // specchiature della banda, -> setMasterMirror / setSlaveMirror
+  C_MIRROR,     // specchiatura della banda master, -> setMasterMirror
   C_QUARTO,     // esiste un quarto stato sul film
   C_PARTIAL,    // una leva accorcia il refresh e dipinge
   C_SLAVE,      // il secondo controller esegue gli opcode offset
+  C_MIRROR_SLAVE,   // specchiatura della banda slave, -> setSlaveMirror
+  C_TOPOLOGY,       // cascade o due CS, -> SECOND_CONTROLLER_CASCADE
   C_COUNT
 };
 
@@ -209,6 +211,8 @@ static int32_t  powerOnMs = -1;       // BUSY del power on 0xC0
 static int32_t  powerOffMs = -1;      // BUSY del power off 0xC3
 static bool     busyStuckAtRest = false;  // BUSY già alto prima di ogni comando
 static int32_t  slaveOpcodeMs = -1;   // refresh della sonda a video a opcode|0x80
+static int8_t   secondSwresetState = 0;   // 0 non misurato, 1 il secondo connettore risponde a SWRESET, -1 no
+static int32_t  secondSwresetRiseMs = BUSY_NEVER_ROSE;   // ms alla salita del BUSY del secondo connettore
 static bool     sleepBusy03 = false;  // BUSY dopo 0x10 = 0x03
 static bool     sleepBusy11 = false;  // BUSY dopo 0x10 = 0x11
 static uint8_t  sleepParamOk = 0x00;  // parametro di 0x10 che addormenta, 0 se nessuno
@@ -255,27 +259,31 @@ static uint8_t framePrenotato  = 0;            // indice+1 del frame scritto e n
 static uint8_t numeroPrenotato = 0;            // suo numero, anche col registro pieno
 
 /**
- * Stato noto della sessione: una voce per caratteristica, riempita dalla
- * risposta dell'operatore a un frame o dichiarata dal menu. Niente NVS, quindi
- * dura quanto la sessione; la voce "caratteristiche note" del menu è il modo di
- * ridichiarare quello che si sa già.
+ * Stato noto: una voce per caratteristica, riempita dalla risposta dell'operatore
+ * a un frame o dichiarata dal menu. Si salva in NVS a ogni cambio e si rilegge al
+ * boot, dove ogni voce torna marcata come dichiarata e non come misurata; la voce
+ * "caratteristiche note" del menu resta il modo di ridichiarare a mano quello che
+ * si sa già.
  */
 static Esito esiti[C_COUNT] =
 {
   { -1, 0, false }, { -1, 0, false }, { -1, 0, false },
   { -1, 0, false }, { -1, 0, false }, { -1, 0, false },
+  { -1, 0, false }, { -1, 0, false },
 };
-static_assert(C_COUNT == 6, "esiti[] va esteso insieme a enum Caratteristica");
+static_assert(C_COUNT == 8, "esiti[] va esteso insieme a enum Caratteristica");
 
 /** Nome di ogni caratteristica, per il menu, il banner e la scheda. */
 static const char* const NOME_CARATTERISTICA[C_COUNT] =
 {
   "polarità del piano BW",
   "metà pilotata dalla coda infilata",
-  "specchiature della banda",
+  "specchiatura della banda master",
   "quarto colore sul film",
   "partial: una leva accorcia il refresh",
   "secondo controller a opcode|0x80",
+  "specchiatura della banda slave",
+  "topologia del secondo controller",
 };
 
 /** Una risposta possibile e la conseguenza che ha sul driver custom. */
@@ -292,23 +300,53 @@ static const VoceEsito VOCI_POLARITA[] =
   { "bit = 1 NERO, piano invertito",
     "ogni writeImage del driver va invertita, oppure l'init deve scrivere 0x21" },
 };
+/**
+ * Il driver assegna al master, cioè al controller in J1 con la coda lunga, le
+ * righe 384..767 e allo slave le righe 0..383: lo scambio delle bande sta già nel
+ * driver. Le conseguenze sono scritte a partire da lì.
+ */
 static const VoceEsito VOCI_META[] =
 {
   { "la metà ALTA, righe 0..383",
-    "la coda infilata è il master: PART_HEIGHT e l'offset delle righe sono giusti" },
+    "il master del driver ha le righe 384..767: con la coda lunga in J1 il montaggio è capovolto e vale ROTATION = 2 nel Layout" },
   { "la metà BASSA, righe 384..767",
-    "la coda infilata è lo slave: il driver deve scambiare le due bande" },
+    "la coda infilata è il master e pilota le righe 384..767: lo scambio delle bande è già nel driver, niente da cambiare" },
   { "tutto il pannello",
-    "un controller solo pilota 768 gate, e lo split per righe non esiste" },
+    "entrambe le bande dipinte: atteso con due controller attivi, con uno solo vorrebbe dire 768 gate pilotati e nessuno split" },
   { "niente, non ha dipinto",
     "questa candidata di init non fa rispondere il pannello: provane un'altra" },
 };
+/**
+ * Specchiature della banda master, rispetto al driver con i default
+ * setMasterMirror(false, false): quello che si vede è quello che il driver deve
+ * correggere.
+ */
 static const VoceEsito VOCI_MIRROR[] =
 {
   { "nessuna, origine in alto a sinistra", "setMasterMirror(false, false)" },
   { "specchiata in X",                     "setMasterMirror(true, false)" },
   { "specchiata in Y",                     "setMasterMirror(false, true)" },
   { "specchiata in X e in Y",              "setMasterMirror(true, true)" },
+};
+/**
+ * Specchiature della banda slave, rispetto al driver con i default
+ * setSlaveMirror(true, true): il valore da impostare è il default con il verso
+ * visto invertito, perchè un die ruotato di 180° si compensa già in partenza.
+ */
+static const VoceEsito OUTCOME_MIRROR_SLAVE[] =
+{
+  { "nessuna, origine in alto a sinistra", "setSlaveMirror(true, true), il default del driver" },
+  { "specchiata in X",                     "setSlaveMirror(false, true)" },
+  { "specchiata in Y",                     "setSlaveMirror(true, false)" },
+  { "specchiata in X e in Y",              "setSlaveMirror(false, false)" },
+};
+/** Topologia del secondo controller: il valore di SECOND_CONTROLLER_CASCADE. */
+static const VoceEsito OUTCOME_TOPOLOGY[] =
+{
+  { "cascade: un solo CS, slave a opcode|0x80",
+    "SECOND_CONTROLLER_CASCADE = true in Layout_122c.h: ADDRESSING_CASCADE, un solo CS" },
+  { "due CS: controller con CS e BUSY propri",
+    "SECOND_CONTROLLER_CASCADE = false in Layout_122c.h: CS 32 e BUSY 22" },
 };
 static const VoceEsito VOCI_QUARTO[] =
 {
@@ -335,9 +373,10 @@ static const VoceEsito VOCI_SLAVE[] =
 /** Voci di risposta di ogni caratteristica, per il menu e per la scheda. */
 static const VoceEsito* const VOCI_DI[C_COUNT] =
 {
-  VOCI_POLARITA, VOCI_META, VOCI_MIRROR, VOCI_QUARTO, VOCI_PARTIAL, VOCI_SLAVE
+  VOCI_POLARITA, VOCI_META, VOCI_MIRROR, VOCI_QUARTO, VOCI_PARTIAL, VOCI_SLAVE,
+  OUTCOME_MIRROR_SLAVE, OUTCOME_TOPOLOGY
 };
-static const uint8_t QUANTE_DI[C_COUNT] = { 2, 4, 4, 2, 2, 2 };
+static const uint8_t QUANTE_DI[C_COUNT] = { 2, 4, 4, 2, 2, 2, 4, 2 };
 
 /** Risposte della domanda che non alimenta una caratteristica. */
 static const VoceEsito VOCI_DIPINTO[] =
@@ -605,10 +644,68 @@ static void durataFrame(int32_t ms)
 
 
 /**
+ * Salva gli esiti in NVS, e solo se sono cambiati. Si chiama a ogni modifica di
+ * esiti[], quindi chi li invalida a mano (il tasto c per la metà pilotata, il
+ * tasto w per la polarità) deve chiamarla a sua volta.
+ */
+static void saveOutcomes()
+{
+  uint8_t blob[1 + sizeof(esiti)];
+  blob[0] = NVS_BLOB_VERSION;
+  memcpy(blob + 1, esiti, sizeof(esiti));
+
+  uint8_t salvato[sizeof(blob)];
+  prefs.begin(NVS_NAMESPACE, false);
+  const size_t n = prefs.getBytes("esiti", salvato, sizeof(salvato));
+  if (n != sizeof(blob) || memcmp(salvato, blob, sizeof(blob)) != 0)
+    prefs.putBytes("esiti", blob, sizeof(blob));
+  prefs.end();
+}
+
+/**
+ * Rilegge gli esiti salvati. Ogni voce valida torna marcata come DICHIARATA, con
+ * frame a zero: non l'ha prodotta questa esecuzione, quindi non vale come
+ * misurata. Una voce con l'indice fuori tabella, o un profilo di un'altra
+ * versione o taglia, si scarta. La polarità riletta viene riportata anche in cfg,
+ * che le primitive di scrittura dei piani leggono.
+ */
+static void loadOutcomes()
+{
+  uint8_t blob[1 + sizeof(esiti)];
+  prefs.begin(NVS_NAMESPACE, false);
+  const size_t n = prefs.getBytes("esiti", blob, sizeof(blob));
+  prefs.end();
+  if (n != sizeof(blob) || blob[0] != NVS_BLOB_VERSION) return;
+
+  Esito letti[C_COUNT];
+  memcpy(letti, blob + 1, sizeof(letti));
+  for (uint8_t c = 0; c < C_COUNT; ++c)
+  {
+    if (letti[c].risposta < 0 || letti[c].risposta >= (int8_t)QUANTE_DI[c]) continue;
+    esiti[c].risposta   = letti[c].risposta;
+    esiti[c].frame      = 0;
+    esiti[c].dichiarata = true;
+  }
+  if (esiti[C_POLARITA].risposta >= 0)
+    cfg.bwPolarity = (esiti[C_POLARITA].risposta == 0) ? BW_DATASHEET : BW_INVERSE;
+}
+
+/** Riporta tutti gli esiti a "da determinare", in memoria: la NVS la azzera resetConfig(). */
+static void resetOutcomes()
+{
+  for (uint8_t c = 0; c < C_COUNT; ++c)
+  {
+    esiti[c].risposta   = -1;
+    esiti[c].frame      = 0;
+    esiti[c].dichiarata = false;
+  }
+}
+
+/**
  * Registra l'esito di una caratteristica e stampa la conseguenza che ha sul
  * driver: è il punto in cui una schermata guardata diventa una riga da cambiare
- * in GxEPD2_SOLUM_122c_960x768.h. Con frame = 0 la chiamata viene dal menu e
- * non da una schermata, quindi la riga esce senza prefisso.
+ * in GxEPD2_SOLUM_122c_960x768.h. Un esito dichiarato dal menu non viene da una
+ * schermata, quindi la riga esce senza prefisso e senza il tag di verdetto.
  */
 static void registraEsito(uint8_t car, int8_t risposta, uint8_t frame, bool dichiarata)
 {
@@ -616,13 +713,14 @@ static void registraEsito(uint8_t car, int8_t risposta, uint8_t frame, bool dich
   esiti[car].risposta   = risposta;
   esiti[car].frame      = frame;
   esiti[car].dichiarata = dichiarata;
-  if (frame)
+  if (!dichiarata)
     verdict("%s -> %s", VOCI_DI[car][risposta].risposta,
             VOCI_DI[car][risposta].conseguenza);
   else
     Serial.printf("  dichiarato: %s -> %s\n",
                   VOCI_DI[car][risposta].risposta,
                   VOCI_DI[car][risposta].conseguenza);
+  saveOutcomes();
 }
 
 /**
@@ -662,6 +760,46 @@ static void chiediEsitoFrame(uint8_t idx)
     registraEsito(d.caratteristica, f.risposta, f.numero, false);
   else
     verdict("%s", d.voci[f.risposta].risposta);
+}
+
+/**
+ * Risposta data all'operatore sul frame con quel numero, -1 se il frame non è nel
+ * registro o la domanda non è stata posta o è stata lasciata senza risposta. Serve
+ * a chi deve decidere un passo successivo da quello che l'operatore ha visto.
+ */
+static int8_t rispostaFrame(uint8_t numero)
+{
+  for (uint8_t i = 0; i < registroFrameN; ++i)
+    if (registroFrame[i].numero == numero) return registroFrame[i].risposta;
+  return -1;
+}
+
+/**
+ * Pone la domanda di una caratteristica fuori dal gate e ne registra l'esito
+ * attribuendolo al frame indicato. Le voci si numerano da 1 e lo zero, o un INVIO
+ * a vuoto, valgono "non l'ho guardata" e non annotano niente, come nelle domande
+ * del gate. Ritorna l'indice scelto, -1 se la risposta manca.
+ */
+static int8_t chiediEsitoCaratteristica(uint8_t car, const char* testo, uint8_t frame)
+{
+  if (car >= C_COUNT) return -1;
+  scartaInputPendente();
+  look(testo);
+  for (uint8_t i = 0; i < QUANTE_DI[car]; ++i)
+    logLine("  %u) %s", i + 1, VOCI_DI[car][i].risposta);
+  logLine("  0) non l'ho guardata     [1-%u, invio = 0]", (unsigned)QUANTE_DI[car]);
+
+  char buf[8];
+  const int n = leggiRiga(buf, sizeof(buf));
+  const int scelta = (n > 0) ? atoi(buf) : 0;
+  if (scelta < 1 || scelta > QUANTE_DI[car])
+  {
+    logLine("SEEN  -");
+    return -1;
+  }
+  logLine("SEEN  %d", scelta);
+  registraEsito(car, (int8_t)(scelta - 1), frame, false);
+  return (int8_t)(scelta - 1);
 }
 
 /**

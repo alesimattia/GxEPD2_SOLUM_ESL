@@ -17,18 +17,20 @@
 // COF, quindi sono due driver IC: i 960 px stanno sull'asse delle source, e
 // l'asse da 768 si divide in due bande di 384 gate, una per controller.
 //
-// LA CASCADE È ESCLUSA, e non da un'ipotesi: SSD1683 §6.12 dà la cascade per
-// "800 (sources) x 300 (gates)", cioè raddoppia le SORGENTI e lascia i gate. Una
-// coppia in cascade non copre 768 gate line per nessun cablaggio, e la banda
-// larga 960 px che la coda lunga dipinge lo conferma — in cascade il master
-// coprirebbe metà delle sorgenti, cioè 480 px. Quello che resta è due
-// controller INDIPENDENTI, ciascuno col proprio oscillatore, che condividono i
-// rail di pilotaggio: il datasheet li dà per alimentabili dall'esterno
-// (Features p.5, Table 5-4), ed è la spiegazione del secondo connettore nudo.
+// LA TOPOLOGIA DEL SECONDO CONTROLLER È APERTA. Il controller del 12.2" è
+// sconosciuto: SSD1677 e SSD1683 sono analogie, e nessuna misura dimostra che il
+// die sia uno dei due. La cascade NON è esclusa: sincronizza due chip (clock CL e
+// rail comuni), mentre come gate e sorgenti si dividano fra loro lo decide il
+// cablaggio del vetro. La coda corta muta in J1, con BS1 basso (fisso a GND via
+// R11 sulla board), esclude soltanto un controller indipendente con la
+// piedinatura standard, che avrebbe risposto come la lunga. Restano uno slave in
+// cascade, una piedinatura diversa o una linea di enable, e un chip danneggiato:
+// le separano la fase 0 di docs/122c/cable_linking.html e il tasto t.
 //
 // UNA SOLA COMPILAZIONE PER SESSIONE. Nessun #define cambia il comportamento.
-// Dal menu si scelgono: la candidata di init (tasto i, sei varianti), la coda,
-// il secondo FFC, l'esaustivo, la polarita' e i dettagli (tasti c f x w v); e
+// Dal menu si scelgono: la candidata di init (tasto i, sei varianti), la coda, il
+// secondo FFC, il connettore su cui parla il bus (J1 o il secondo), l'esaustivo,
+// la polarità e i dettagli (tasti c f B x w v); e
 // dalla voce p le temperature, i quattro valori di MUX, le gate line per
 // controller, i tre clock, il timeout, la finestra del multimetro, il livello
 // del soft start, l'entry mode, TB, i tre campi di 0x21 con la sua posizione,
@@ -39,6 +41,15 @@
 // delle tensioni della LUT, gli stadi di 0x22 e i due modi del bus li sceglie
 // la sonda, perche' il confronto fra loro E' la misura. Rilanciare una sonda o
 // cambiare un parametro non costa ne' un reset ne' un riflash.
+//
+// PROCEDURA GUIDATA E NVS. Il tasto t chiede in che stato è il cablaggio (sola
+// coda lunga in J1, corta sulla breakout con la sola logica, ponte cascade, ponte
+// a due CS) ed esegue solo le sonde utili, nell'ordine delle fasi di
+// cable_linking.html; chiude con la scheda DRV, che nomina il valore di
+// SECOND_CONTROLLER_CASCADE in Layout_122c.h e le chiamate setMasterMirror() e
+// setSlaveMirror(). Configurazione ed esiti stanno in NVS (namespace dpf122): un
+// riavvio a metà cablaggio non li perde, e gli esiti riletti restano dichiarati e
+// non misurati. Il tasto z azzera anche la NVS. La suite intera sta su T.
 //
 // COME SI LEGGE IL LOG. Una riga per fatto, tag in colonna fissa, e fra
 // parentesi quadre il numero del riquadro in alto a destra dell'area appena
@@ -67,7 +78,9 @@
 //
 // Hardware: Waveshare E-Paper ESP32 Driver Board V3 (CS 15, DC 27, RST 26,
 // BUSY 25, SCK 13, MOSI 14, MISO 12 fittizio; secondo connettore CS 32,
-// BUSY 35). Lo switch n.1 sceglie la resistenza di sense del booster.
+// BUSY 22 con pull-down interno). Lo switch n.1 sceglie la resistenza di sense
+// del booster, e lo schematico e il wiki della board si contraddicono su quale
+// posizione sia quale: decide la serigrafia.
 //
 // Author: Mattia Alesi
 // =============================================================================
@@ -125,9 +138,9 @@ static constexpr Sonda SONDE[] =
   { '2', S_BIT7,      SCH_COUNT,     "bit 7 dell'opcode (elettrico)",       0, P_BANCO,                       sweepOpcodeBit7 },
   { '3', S_CLOCK,     SCH_COUNT,     "costo del push ai tre clock",         0, P_BANCO | P_INIT,              sweepPushClocks },
   { '4', S_IMPRONTA,  SCH_COUNT,     "impronta della coda, e confronto",    0, P_BANCO,                       probeImprontaCoda },
-  { '5', S_TREFILI,   SCH_COUNT,     "SPI a 3 fili: BS1 flottante",         0, P_BANCO,                       probeTreFili },
+  { '5', S_TREFILI,   SCH_COUNT,     "SPI a 3 fili (inconcludente, BS1 a GND)", 0, P_BANCO,                   probeTreFili },
   { '6', S_RESET,     SCH_COUNT,     "reset a ritentativi",                 0, P_BANCO,                       probeResetRitentativi },
-  { 'b', S_SLAVE,     SCH_SLAVE,     "secondo controller a opcode|0x80",    1, P_BANCO | P_INIT,              probeSlaveByOpcodeOffset },
+  { 'b', S_SLAVE,     SCH_SLAVE,     "secondo controller a opcode|0x80",    1, P_BANCO | P_INIT | P_FFC2,    probeSlaveByOpcodeOffset },
   { '0', S_DIE,       SCH_COUNT,     "identita' del die: MUX fuori spec",   2, P_BANCO | P_INIT,              probeIdentitaDie },
   { 'j', S_TB,        SCH_COUNT,     "TB = 1, reverse scan gate",           1, P_BANCO | P_INIT,              probeTBReverse },
   { 'e', S_ENTRY,     SCH_COUNT,     "specchiatura via entry mode 0x11",    1, P_BANCO | P_INIT,              probeEntryMode },
@@ -376,9 +389,9 @@ static void menuParametri()
 }
 
 /**
- * Sottomenu delle caratteristiche note. Senza NVS gli esiti durano quanto la
- * sessione, e questa è la via per ridichiarare quello che una sessione
- * precedente ha già determinato: una caratteristica dichiarata vale come
+ * Sottomenu delle caratteristiche note. Gli esiti stanno in NVS e tornano al
+ * boot marcati come dichiarati; questa è la via per ridichiarare a mano quello
+ * che si sa già per altre strade: una caratteristica dichiarata vale come
  * misurata ai fini dei prerequisiti, ed è marcata come dichiarata dappertutto,
  * perchè un esito detto a memoria non è un esito misurato.
  */
@@ -448,7 +461,7 @@ static bool prerequisitiOk(const Sonda& s)
   {
     Serial.println(F("   serve il secondo connettore FFC cablato, e non lo è: con un solo"));
     Serial.println(F("   connettore lo slave non è sul bus e un frame non direbbe niente."));
-    Serial.println(F("   Dichiaralo dal menu (voce c) se invece lo hai cablato."));
+    Serial.println(F("   Dichiaralo dal menu (voce f) se invece lo hai cablato."));
     return false;
   }
   if ((s.prereq & P_BANCO) && !bancoPronto)
@@ -568,8 +581,9 @@ static void statoCaratteristiche()
       Serial.printf("  %-34s %s   [schermata %u]\n", NOME_CARATTERISTICA[c],
                     VOCI_DI[c][e.risposta].risposta, (unsigned)e.frame);
     else
-      Serial.printf("  %-34s %s   (dichiarata)\n", NOME_CARATTERISTICA[c],
-                    VOCI_DI[c][e.risposta].risposta);
+      Serial.printf("  %-34s %s   (%s)\n", NOME_CARATTERISTICA[c],
+                    VOCI_DI[c][e.risposta].risposta,
+                    e.dichiarata ? "dichiarata" : "misurata");
     Serial.printf("  %-34s -> %s\n", "", VOCI_DI[c][e.risposta].conseguenza);
   }
   if (aperte)
@@ -658,16 +672,28 @@ static void printSchedaDriver()
   }
 
   // ---- indirizzamento e specchiatura ----
-  drvLine("ADDRESSING_CASCADE",
-          "la cascade estende le SORGENTI, non i gate", nullptr);
-  if (slaveOpcodeMs >= 0)
+  drvLine("ADDRESSING_CASCADE", "decisa dalla sonda b a ponte fatto", nullptr);
+  // le righe del bit 7 compaiono solo se l'operatore ha visto il secondo chip dipingere
+  if (esiti[C_SLAVE].risposta == 1)
   {
-    snprintf(v, sizeof(v), "opcode|0x80 eseguiti, %ld ms", (long)slaveOpcodeMs);
+    if (slaveOpcodeMs >= 0)
+      snprintf(v, sizeof(v), "opcode|0x80 eseguiti, %ld ms", (long)slaveOpcodeMs);
+    else
+      snprintf(v, sizeof(v), "opcode|0x80 eseguiti");
     drvLine("bit 7 dell'opcode", v, nullptr);
   }
   for (uint8_t c = 0; c < C_COUNT; ++c)
     if (esiti[c].risposta >= 0)
       drvLine(NOME_CARATTERISTICA[c], VOCI_DI[c][esiti[c].risposta].conseguenza, nullptr);
+  /**
+   * Le tre voci che la procedura guidata deve chiudere compaiono comunque: una
+   * riga "da determinare" dice cosa manca alla scheda, mentre l'assenza della
+   * riga si leggerebbe come un valore di default.
+   */
+  static const uint8_t DA_CHIUDERE[] = { C_TOPOLOGY, C_MIRROR, C_MIRROR_SLAVE };
+  for (uint8_t k = 0; k < sizeof(DA_CHIUDERE); ++k)
+    if (esiti[DA_CHIUDERE[k]].risposta < 0)
+      drvLine(NOME_CARATTERISTICA[DA_CHIUDERE[k]], "da determinare: tasto t, fase driver", nullptr);
 
   // ---- partial ----
   if (areaMsFirst > 0 && refreshMs > 0)
@@ -718,6 +744,7 @@ static void printImpronte()
                   a.presa ? a.campo : -1, b.presa ? b.campo : -1)
   RIGA("BUSY a riposo",        busyRiposo,     "%9d");
   RIGA("BUSY col pull-down",   busyPullDown,   "%9d");
+  RIGA("BUSY col pull-up",     busyPullUp,     "%9d");
   RIGA("SWRESET, ms",          swresetMs,      "%9ld");
   RIGA("pattern 0x47, ms",     pattern47Ms,    "%9ld");
   RIGA("pattern 0x46, ms",     pattern46Ms,    "%9ld");
@@ -726,8 +753,9 @@ static void printImpronte()
   RIGA("VCI 0x15, ms",         vciMs,          "%9ld");
   RIGA("CRC 0x34, ms",         crcMs,          "%9ld");
   #undef RIGA
-  Serial.println(F("  -> BUSY fermo su tutto = oscillatore assente; risponde ai comandi"));
-  Serial.println(F("     ma HV al massimo = rail di pilotaggio mancanti"));
+  Serial.println(F("  -> BUSY fermo su tutto: senza oscillatore (slave in cascade senza clock del"));
+  Serial.println(F("     master), senza abilitazione o chip muto; risponde ai comandi ma HV al"));
+  Serial.println(F("     massimo: rail di pilotaggio mancanti. -1 = non misurato (sola logica)"));
 }
 
 static void printRiepilogo()
@@ -737,6 +765,250 @@ static void printRiepilogo()
   printImpronte();
   statoCaratteristiche();
   printSchedaDriver();
+}
+
+// ---------------------------------------------------------------------------
+// PROCEDURA GUIDATA (tasto t)
+//
+// Chiede in che stato è il cablaggio ed esegue solo le sonde utili, nell'ordine
+// delle fasi di docs/122c/cable_linking.html. Ogni frame passa dal gate e chiede
+// il proprio esito: quale banda ha dipinto, e come sono specchiati i tile
+// dell'angolo marcato. Chiude con la scheda DRV, che nomina il valore di
+// SECOND_CONTROLLER_CASCADE in Layout_122c.h e le chiamate setMasterMirror() e
+// setSlaveMirror(). La coda LUNGA sta sempre in J1: è il riferimento che
+// funziona, e la corta si prova sul secondo connettore.
+// ---------------------------------------------------------------------------
+
+/** Esegue la sonda che sta su quel tasto nella tabella, senza guardare la maschera. */
+static void eseguiSondaPerTasto(char tasto)
+{
+  for (uint8_t i = 0; i < SONDE_N; ++i)
+    if (SONDE[i].tasto == tasto) { eseguiSonda(SONDE[i]); return; }
+}
+
+/**
+ * Dichiara il cablaggio e porta cfg nello stato che quella fase richiede: la
+ * coda lunga in J1, il secondo FFC cablato dalla fase 2 in poi, il bersaglio del
+ * bus sul secondo connettore solo nella fase a sola logica. Il banco va
+ * riconfigurato, perchè bersaglio e pin del secondo connettore sono cambiati.
+ */
+static void applyWiring(uint8_t wiring)
+{
+  cfg.wiring = wiring;
+  cfg.coda   = TAIL_LUNGA;
+  switch (wiring)
+  {
+    case WIRING_J1_ONLY:
+      cfg.secondFfc = false;
+      cfg.busTarget = TARGET_J1;
+      break;
+    case WIRING_SECOND_LOGIC:
+      cfg.secondFfc = true;
+      cfg.busTarget = TARGET_SECOND;
+      break;
+    default:   // ponte cascade e ponte a due CS: il bus parla a J1
+      cfg.secondFfc = true;
+      cfg.busTarget = TARGET_J1;
+      break;
+  }
+  bancoPronto    = false;
+  candidateFatto = false;
+  saveConfig();
+}
+
+/**
+ * Passata della fase driver con le domande della procedura guidata: il gate
+ * chiede quale banda ha dipinto, poi si chiede la specchiatura di ogni banda
+ * dipinta sui tile dell'angolo marcato. Con `bothBands` la passata presume due
+ * controller attivi (ponte fatto): se entrambe le bande compaiono la topologia
+ * provata è quella del modello usato. Ritorna la risposta sulla banda: 0 alta,
+ * 1 bassa, 2 tutto, 3 niente, -1 non guardata.
+ */
+static int8_t guidedDriverStep(bool cascade, bool bothBands)
+{
+  logProbeHeader('r', "fase driver (procedura guidata)", 1);
+  sondaAttivaTasto = 'r';
+  if (!bancoPronto) { preparaBanco(); bancoPronto = true; }
+  iniziaSonda(SCH_DRIVER);
+
+  const uint8_t numero = guidedDriverPass(cascade);
+  chiudiFrame(nullptr);                       // il gate chiede qui quale banda ha dipinto
+  const int8_t banda = rispostaFrame(numero);
+
+  // con un controller solo vale qualunque metà dipinta, con due contano le bande
+  const bool masterDipinto = bothBands ? (banda == 1 || banda == 2) : (banda == 0 || banda == 1);
+  const bool slaveDipinto  = bothBands && (banda == 0 || banda == 2);
+  if (masterDipinto)
+    chiediEsitoCaratteristica(C_MIRROR,
+        "banda MASTER (righe 384..767, i due tile degli angoli bassi): sono dritti o specchiati?",
+        numero);
+  if (slaveDipinto)
+    chiediEsitoCaratteristica(C_MIRROR_SLAVE,
+        "banda SLAVE (righe 0..383, i due tile degli angoli alti): sono dritti o specchiati?",
+        numero);
+
+  if (bothBands)
+  {
+    if (banda == 2)
+      registraEsito(C_TOPOLOGY, cascade ? 0 : 1, numero, false);
+    else if (banda >= 0)
+      logLine("la banda dello slave non è comparsa con %s: nessuna conclusione sulla topologia da questa fase",
+              cascade ? "ADDRESSING_CASCADE" : "ADDRESSING_DUAL_CS");
+  }
+  iniziaSonda(SCH_COUNT);
+  sondaAttivaTasto = '-';
+  return banda;
+}
+
+/**
+ * Fase 1: sola coda lunga in J1. Le sonde elettriche misurano il riferimento che
+ * funziona, e la fase driver verifica che la banda bassa (righe 384..767) esca
+ * dritta. La sonda 5 non si esegue: con BS1 a GND via R11 il chip resta a 4 fili
+ * e il suo esito non decide niente.
+ */
+static void guidedPhaseJ1Only()
+{
+  Serial.println(F("\nfase 1: sola coda lunga in J1. Sonde elettriche su J1, poi la banda bassa dritta."));
+  Serial.println(F("  la corta non è collegata; la sonda 5 (3 fili) non serve, BS1 è a GND via R11."));
+  eseguiSondaPerTasto('4');
+  eseguiSondaPerTasto('1');
+  eseguiSondaPerTasto('2');
+  eseguiSondaPerTasto('6');
+  guidedDriverStep(false, false);
+}
+
+/**
+ * Fase 2: coda corta sulla breakout, sola logica. Impronta, candidate e reset
+ * sul secondo connettore senza mai un 0x22 con bit analogici, poi la domanda
+ * guidata su uno strap debole e il criterio "il BUSY sale dopo SWRESET sul CS
+ * dello slave", ripetuto a ogni cambio di strap finchè risponde o l'operatore
+ * rinuncia. Un esito nullo non conclude: si passa al ponte.
+ */
+static void guidedPhaseSecondLogic()
+{
+  Serial.println(F("\nfase 2: coda corta sulla breakout, SOLA LOGICA (nessun 0x22 con bit analogici)."));
+  Serial.println(F("  VDDIO e VCI da EPD_3.3V, GND comune, CS su GPIO32, BUSY su GPIO22 (pull-down interno),"));
+  Serial.println(F("  SCK, MOSI, DC e RST in parallelo con J1. Nessun rail ad alta tensione ponticellato."));
+  if (!chiediSN("  il cablaggio è fatto così?", true))
+  {
+    Serial.println(F("  fase interrotta: completa il cablaggio e rilancia t"));
+    return;
+  }
+  if (!bancoPronto) { preparaBanco(); bancoPronto = true; }
+
+  eseguiSondaPerTasto('4');
+  eseguiSondaPerTasto('1');
+  eseguiSondaPerTasto('6');
+
+  Serial.println(F("\n-- BUSY del secondo connettore, letto con i due pull --"));
+  reportBusyDrive();
+
+  Serial.println(F("\n-- criterio: il BUSY sale dopo SWRESET sul CS dello slave --"));
+  Serial.println(F("  strap debole: 4,7-10 kohm verso VDDIO o VSS, mai a filo, un pad e un livello alla"));
+  Serial.println(F("  volta; il pad 19 (VPP nella piedinatura standard) non si collega mai."));
+  static const char* const VOCI_STRAP[] =
+  {
+    "nessun pad collegato",
+    "un pad candidato a VDDIO con 4,7-10 kohm",
+    "un pad candidato a VSS con 4,7-10 kohm",
+  };
+  while (true)
+  {
+    const int strap = chiediScelta("  hai collegato debolmente un pad candidato strap o enable?",
+                                   VOCI_STRAP, 3, 0);
+    char contesto[48] = "nessuno strap";
+    if (strap > 0)
+    {
+      const long pad = chiediNumero("  numero del pad (cable_linking.html), 0 se non lo sai", 0, 24, 0);
+      snprintf(contesto, sizeof(contesto), "strap pad %ld a %s", pad, strap == 1 ? "VDDIO" : "VSS");
+    }
+    logLine("stato dichiarato: %s", contesto);
+    resetPanelTentativi(cfg.resetTentativi, cfg.resetLowMs);
+    probeSecondSwreset(contesto);
+    if (secondSwresetState == 1) break;
+    if (!chiediSN("  nessuna risposta: riprovo con un altro stato di strap?", false)) break;
+  }
+
+  if (secondSwresetState == 1)
+    Serial.println(F("\ncriterio soddisfatto: il secondo connettore ha un controller che risponde sul proprio CS."
+                     "\nProsegui con il ponte a due CS (fase 4) o con il ponte cascade (fase 3)."));
+  else
+    Serial.println(F("\ncriterio NON soddisfatto: la fase 1 di cable_linking.html non conclude, e un esito nullo"
+                     "\nnon esclude la cascade. Si passa al ponte (fase 3 o 4)."));
+}
+
+/**
+ * Fase 3: ponte cascade fatto, lo slave sul CS 15 come il master. La sonda b
+ * prova se gli opcode |0x80 accendono la banda dello slave, poi la fase driver in
+ * ADDRESSING_CASCADE con le due bande attese.
+ */
+static void guidedPhaseCascade()
+{
+  Serial.println(F("\nfase 3: ponte CASCADE fatto (CL e rail fra le code, CS unico su GPIO15)."));
+  Serial.println(F("  prima la sonda b (opcode|0x80, 1 refresh), poi la fase driver in ADDRESSING_CASCADE."));
+  if (!chiediSN("  il ponte è fatto e il CS dello slave sta sul CS 15?", true))
+  {
+    Serial.println(F("  fase interrotta: completa il ponte e rilancia t"));
+    return;
+  }
+  eseguiSondaPerTasto('b');
+  chiudiFrame(nullptr);                       // la domanda sulla banda dello slave si pone subito
+  guidedDriverStep(true, true);
+}
+
+/**
+ * Fase 4: ponte a due CS fatto, CS 32 e BUSY 22 per il secondo controller. Il
+ * driver in ADDRESSING_DUAL_CS attiva i due CS insieme in 0x22 e 0x20, come il
+ * cablaggio a rail condivisi richiede.
+ */
+static void guidedPhaseDualCs()
+{
+  Serial.println(F("\nfase 4: ponte a DUE CS fatto (CS 32, BUSY 22, rail condivisi)."));
+  Serial.println(F("  la fase driver in ADDRESSING_DUAL_CS attiva 0x22 e 0x20 con i due CS bassi insieme."));
+  if (!chiediSN("  il ponte è fatto, con i condensatori propri sui rail della coda corta?", true))
+  {
+    Serial.println(F("  fase interrotta: completa il ponte e rilancia t"));
+    return;
+  }
+  guidedDriverStep(false, true);
+}
+
+/**
+ * Procedura guidata: chiede lo stato del cablaggio, esegue le sonde della sua
+ * fase e chiude con la scheda per il driver. Una fase per volta: per passare alla
+ * successiva si ricabla e si rilancia t, e gli esiti già raccolti restano in NVS.
+ */
+static void runGuidedProcedure()
+{
+  Serial.println(F("\n=================================================="));
+  Serial.println(F(" PROCEDURA GUIDATA - le sonde utili per il cablaggio, nell'ordine di cable_linking.html"));
+  Serial.println(F("=================================================="));
+  Serial.println(F("la coda LUNGA sta sempre in J1; la corta si collega sulla breakout (CS 32, BUSY 22)"));
+
+  static const char* const VOCI_STATO[] =
+  {
+    "sola coda LUNGA in J1, la corta non è collegata",
+    "coda CORTA sulla breakout con la sola logica, la lunga in J1 (nessun rail ad alta tensione)",
+    "ponte CASCADE fatto (CL e rail fra le code, CS unico)",
+    "ponte a DUE CS fatto (CS 32 e BUSY 22, rail condivisi)",
+  };
+  const int preimpostato = (cfg.wiring >= WIRING_J1_ONLY) ? (int)cfg.wiring - 1 : 0;
+  const int scelta = chiediScelta("  in che stato è il cablaggio adesso?", VOCI_STATO, 4, preimpostato);
+  applyWiring((uint8_t)(scelta + 1));
+
+  switch (cfg.wiring)
+  {
+    case WIRING_J1_ONLY:      guidedPhaseJ1Only();      break;
+    case WIRING_SECOND_LOGIC: guidedPhaseSecondLogic(); break;
+    case WIRING_CASCADE:      guidedPhaseCascade();     break;
+    default:                  guidedPhaseDualCs();      break;
+  }
+
+  chiudiFrame(nullptr);
+  Serial.println(F("\n-- fine della fase: impronte e scheda per il driver --"));
+  printImpronte();
+  printSchedaDriver();
+  saveConfig();
 }
 
 // ---------------------------------------------------------------------------
@@ -758,11 +1030,15 @@ static void printMenu()
                   (cfg.sonde & s.bit) ? ' ' : '-', s.nome, (unsigned)s.refresh);
     if ((i % 2) == 1 || i == SONDE_N - 1) Serial.println();
   }
-  Serial.printf("-- sessione:  t tutte (%u di %u, %d refresh)   s riepilogo   k caratteristiche\n",
+  Serial.printf("-- sessione:  t guidata   T tutte (%u di %u, %d refresh)   s riepilogo   k caratteristiche\n",
                 (unsigned)__builtin_popcount(cfg.sonde), (unsigned)SONDE_N, refreshPrevisti());
-  Serial.printf("   n selezione   p parametri   c coda=%s   f FFC2=%s   x esaustivo=%s\n",
+  Serial.printf("   n selezione   p parametri   c coda=%s   f FFC2=%s   B bus=%s   x esaustivo=%s\n",
                 cfg.coda == TAIL_LUNGA ? "LUNGA" : "CORTA",
-                cfg.secondFfc ? "si" : "no", cfg.esaustivo ? "si" : "no");
+                cfg.secondFfc ? "si" : "no",
+                cfg.busTarget == TARGET_SECOND ? "2o conn." : "J1",
+                cfg.esaustivo ? "si" : "no");
+  Serial.printf("   cablaggio: %s%s\n", wiringLabel(),
+                logicOnly() ? " (sola logica: niente 0x22 analogico)" : "");
   Serial.printf("   w polarita'=%s   v dettagli=%s   i re-init   z fabbrica   h menu\n",
                 polaritaLabel(), cfg.verbose ? "si" : "no");
   Serial.println(F("   [un tasto per le sonde; i sottomenu leggono una riga, chiusa da INVIO]"));
@@ -771,11 +1047,18 @@ static void printMenu()
 static void handleKey(char c)
 {
   for (uint8_t i = 0; i < SONDE_N; ++i)
-    if (SONDE[i].tasto == c) { eseguiSonda(SONDE[i]); printMenu(); return; }
+    if (SONDE[i].tasto == c)
+    {
+      eseguiSonda(SONDE[i]);
+      saveConfig();           // una sonda può aver cambiato la polarità osservata
+      printMenu();
+      return;
+    }
 
   switch (c)
   {
-    case 't': eseguiTutte(); break;
+    case 't': runGuidedProcedure(); break;
+    case 'T': eseguiTutte(); break;
     case 's': printRiepilogo(); break;
     case 'k': menuCaratteristiche(); break;
     case 'n': menuSonde(); break;
@@ -794,6 +1077,7 @@ static void handleKey(char c)
       if (esiti[C_META].risposta >= 0)
       {
         esiti[C_META].risposta = -1;
+        saveOutcomes();
         Serial.println(F("  la metà pilotata torna da determinare: dipende dalla coda"));
       }
       bancoPronto = false;
@@ -801,8 +1085,21 @@ static void handleKey(char c)
     }
     case 'f':
       cfg.secondFfc = chiediSN("  il secondo connettore FFC è cablato?", cfg.secondFfc);
+      // senza secondo connettore il bus non può puntarlo
+      if (!cfg.secondFfc) cfg.busTarget = TARGET_J1;
       bancoPronto = false;
       break;
+    case 'B':
+    {
+      static const char* const VOCI_TARGET[] = { "J1 (CS 15, BUSY 25)",
+                                                 "secondo connettore (CS 32, BUSY 22)" };
+      cfg.busTarget = (uint8_t)chiediScelta("  su quale connettore parlano le sonde?", VOCI_TARGET, 2,
+                                            cfg.busTarget == TARGET_SECOND ? 1 : 0);
+      // puntare il secondo connettore presume che sia cablato
+      if (cfg.busTarget == TARGET_SECOND) cfg.secondFfc = true;
+      bancoPronto = false;
+      break;
+    }
     case 'x':
       cfg.esaustivo = chiediSN("  eseguire anche le passate condizionali?", cfg.esaustivo);
       break;
@@ -813,8 +1110,13 @@ static void handleKey(char c)
       const int scelta = chiediScelta("  polarità del piano BW", VOCI_POL, 3,
                                       cfg.bwPolarity + 1);
       cfg.bwPolarity = (int8_t)(scelta - 1);
-      if (scelta == 0) esiti[C_POLARITA].risposta = -1;
-      else             registraEsito(C_POLARITA, (int8_t)(scelta - 1), 0, true);
+      if (scelta == 0)
+      {
+        esiti[C_POLARITA].risposta = -1;
+        saveOutcomes();
+      }
+      else
+        registraEsito(C_POLARITA, (int8_t)(scelta - 1), 0, true);
       break;
     }
     case 'v':
@@ -833,13 +1135,19 @@ static void handleKey(char c)
       break;
     }
     case 'z':
-      cfg = CFG_DEFAULT;
+      // la NVS si azzera e non si riscrive: dopo z il prossimo boot parte pulito
+      resetConfig();
+      resetOutcomes();
       aggiornaGeometria();
-      Serial.println(F("  configurazione riportata ai valori di fabbrica"));
-      break;
+      bancoPronto    = false;
+      candidateFatto = false;
+      Serial.println(F("  configurazione ed esiti riportati ai valori di fabbrica, NVS azzerata"));
+      printMenu();
+      return;
     case 'h': break;
     default:  Serial.printf("\ntasto '%c' sconosciuto\n", c); break;
   }
+  saveConfig();
   printMenu();
 }
 
@@ -847,6 +1155,9 @@ void setup()
 {
   Serial.begin(115200);
   delay(1000);
+  // configurazione ed esiti salvati: prima della geometria, che dipende da cfg.gate
+  loadConfig();
+  loadOutcomes();
   aggiornaGeometria();
   spiSettings = SPISettings(cfg.spiBase, MSBFIRST, SPI_MODE0);
 
@@ -857,12 +1168,14 @@ void setup()
   Serial.println(F("il numero fra parentesi quadre e' il riquadro in alto a destra"
                    " dell'area ridipinta"));
 
+  Serial.printf("cablaggio dichiarato: %s, bersaglio del bus %s (da NVS se salvato)\n",
+                wiringLabel(),
+                cfg.busTarget == TARGET_SECOND ? "secondo connettore" : "J1");
   /**
-   * Il gancio va installato una volta sola e resta: la fase driver costruisce
-   * l'oggetto alla prima chiamata, e da lì in poi ogni suo refresh passa dal
-   * gate come i frame a SPI diretta.
+   * Il gancio del gate lo installa driver() a ogni costruzione dell'oggetto, che
+   * si costruisce alla prima passata della fase driver e si ricostruisce quando
+   * cambia il pinout del secondo controller.
    */
-  driverBegin();
   printMenu();
 }
 

@@ -22,15 +22,14 @@
  * gli altri solo quelli che ne hanno bisogno:
  *
  *   - cs2 / busy2: secondo controller. Li usa il 12.2"; sul 9.7" restano -1.
- *   - sck / miso / mosi: pin del bus. Servono ai driver che aprono il bus da
- *     sè (il 12.2"); i driver che si appoggiano a selectSPI() li ignorano,
- *     perchè lì il bus lo apre lo sketch. Lasciarli a -1 significa "bus di
- *     default della board".
+ *
+ * I pin del bus SPI non stanno qui: nessun driver apre il bus, lo apre lo
+ * sketch sui pin della propria board e lo passa con selectSPI() prima di init().
  *
  * L'inizializzazione per lista rispetta l'ordine di dichiarazione dei campi:
  *
- *   GxEPD2_SOLUM_Pins{ 15, 27, 26, 25 }                       // 9.7"
- *   GxEPD2_SOLUM_Pins{ 15, 27, 26, 25, 32, 35, 13, 12, 14 }   // 12.2" dual
+ *   GxEPD2_SOLUM_Pins{ 15, 27, 26, 25 }           // 9.7"
+ *   GxEPD2_SOLUM_Pins{ 15, 27, 26, 25, 32, 22 }   // 12.2" dual
  *
  * Richiede C++14 o superiore per l'inizializzazione per lista con default
  * member initializer: il core ESP32 compila a gnu++17, quindi va.
@@ -43,9 +42,6 @@ struct GxEPD2_SOLUM_Pins
   int16_t busy  = -1;  // -1 = nessun BUSY, il driver usa i tempi nominali
   int16_t cs2   = -1;  // CS del secondo controller, -1 se il pannello ne ha uno
   int16_t busy2 = -1;  // BUSY del secondo controller
-  int16_t sck   = -1;  // pin del bus SPI, per i driver che lo aprono da sè
-  int16_t miso  = -1;
-  int16_t mosi  = -1;
 };
 
 #endif

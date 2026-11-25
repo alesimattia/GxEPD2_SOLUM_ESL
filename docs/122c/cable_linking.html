@@ -51,7 +51,8 @@ table{border-collapse:collapse;width:100%;font-size:.88rem;font-variant-numeric:
 th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);vertical-align:top}
 th{font-family:var(--f-mono);font-size:.74rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500}
 tr:last-child td{border-bottom:0}
-table.rec td.b{width:30%;height:1.9em;border-left:1px solid var(--line)}
+table.rec td.b{min-width:5.2em;height:1.9em;border-left:1px solid var(--line)}
+table.rec th.grp{text-align:center;border-left:1px solid var(--line)}
 table.rec tr.ref td{background:color-mix(in srgb,var(--muted) 14%,transparent);color:var(--muted)}
 table.rec .hint{font-family:var(--f-body);font-size:.78rem;color:var(--muted);margin-left:6px}
 table.rec td.n{width:3em}
@@ -70,22 +71,33 @@ td.n{font-family:var(--f-mono);font-weight:500;width:2.5em}
 .c1{color:var(--spi)} .c2{color:var(--rail)} .c0{color:var(--open)} .cg{color:var(--gnd)} .cp{color:var(--pwr)} .cb{color:var(--busy)} .cc{color:var(--ctl)}
 ol.steps{margin:0;padding-left:2.2em;display:flex;flex-direction:column;gap:14px;max-width:78ch}
 ol.steps li::marker{font-family:var(--f-mono);color:var(--muted)}
+ol.steps.plain{list-style:none;padding-left:0}
+ol.steps li>*+*{margin-top:6px}
+ol.steps li>h3 .tag{font-family:var(--f-mono);font-size:.8rem;font-weight:500;color:var(--muted);margin-right:.5em}
 ul{margin:4px 0 0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px;max-width:76ch}
 .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
 svg text{font-family:var(--f-mono)}
+.overview{display:flex;flex-wrap:wrap;gap:8px}
+.setup{font-size:.92rem;color:var(--muted)} .setup b{color:var(--fg)}
+.read td:first-child{white-space:nowrap}
+ol.act{margin:0;padding-left:1.4em;display:flex;flex-direction:column;gap:4px;max-width:76ch}
+details{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 16px;max-width:78ch}
+details>summary{cursor:pointer;font-family:var(--f-display);font-weight:600}
+details>*+*{margin-top:8px}
 </style>
 
 <div class="wrap">
 <header style="display:flex;flex-direction:column;gap:8px">
   <div class="eyebrow">SOLUM EL122R2CRN · coda corta FPC-7716 · Waveshare ESP32 Driver Board V3</div>
   <h1>Cablaggio coda corta 12.2"</h1>
-  <p class="lead">La coda lunga resta nel connettore J1 della Waveshare, come oggi. La coda corta entra nella breakout FPC-24P 0,5 mm, e dalla breakout partono fili verso l'header J3 della board. Il sensore ambientale (BME680 o BME280) resta sull'header J4, su IO21 e IO16. La breakout non ha componenti: porta fuori i 24 contatti e basta. Il secondo controller non ha quindi un suo booster né i suoi condensatori, e deve ricevere logica dall'ESP32 e tensioni di pilotaggio dal lato della coda lunga.</p>
+  <p class="lead">La coda lunga resta nel connettore J1 della Waveshare, come oggi. La coda corta entra nella breakout FPC-24P 0,5 mm, e dalla breakout partono fili verso gli header J3 e J4 della board. Il sensore ambientale (BME680 o BME280) resta sull'header J4, su IO21 e IO16, e prende il suo 3V3 da J3-1. La breakout non ha componenti: porta fuori i 24 contatti e basta. Il secondo controller non ha quindi un suo booster nè i suoi condensatori: riceve la logica dall'ESP32, la 3,3 V dalla stessa net EPD_3.3V del primo controller (non dal 3V3 dell'header) e, solo nella fase 2, tensioni di pilotaggio dal lato della coda lunga.</p>
 </header>
 
 <div class="callout">
-  <h3>Prima di saldare: il pinout della coda corta non è ancora misurato</h3>
-  <p>Lo schema assume che la coda corta segua la piedinatura standard SSD16xx a 24 pin, la stessa di J1. È un'ipotesi. Infilata direttamente in J1 la coda corta non ha risposto (BUSY flottante), e questo è compatibile sia con uno slave in cascade sia con un pinout diverso. Un rail fino a ±20 V finito su un pin logico distrugge il controller, quindi la fase 0 (mappa col multimetro) viene prima di qualunque filo.</p>
+  <h3>Prima di saldare: del controller della coda corta non si sa quasi niente</h3>
+  <p>Il die del 12.2" non ha un datasheet del produttore. Del controller della coda lunga è misurato solo che parla un set di comandi della famiglia SSD16xx. Tutto ciò che questa pagina dice su cascade, M/S#, CL e pin dei rail viene da datasheet e codice di terzi (SSD1677, SSD1683, firmware OpenEPaperLink e atc1441) ed è un'<b>analogia</b>: non va letto come "il controller è un SSD1683" nè come "è un SSD1677".</p>
+  <p>Lo schema assume che la coda corta segua la piedinatura a 24 pin di J1: è un'ipotesi. Infilata direttamente in J1 la coda corta non ha risposto: il BUSY segue solo il pull. Su questa board BS1 è a GND via R11 e il reset è stato provato da 2 a 50 ms, quindi [inferenza] un controller indipendente con la stessa piedinatura avrebbe risposto come la coda lunga. Restano tre ipotesi: slave in cascade (oscillatore spento), piedinatura diversa (M/S# o un enable su un pad senza net in J1) o chip danneggiato. Un rail fino a ±20 V finito su un pin logico distrugge il controller, quindi la fase 0 (mappa col multimetro) viene prima di qualunque filo.</p>
 </div>
 
 <section>
@@ -97,7 +109,7 @@ svg text{font-family:var(--f-mono)}
   <text x="60" y="108" fill="var(--pcb-ink)" font-size="10" text-anchor="middle">J4</text>
   <text x="270" y="108" fill="var(--pcb-ink)" font-size="10" text-anchor="middle">J3</text>
   <g font-size="9.5">
-    <circle cx="60" cy="120" r="4" fill="var(--pad)" opacity=".55"/><text x="72" y="123.5" fill="var(--pcb-ink)" text-anchor="start" opacity=".6">1 · GND</text><rect x="68" y="129" width="83" height="15" rx="3" fill="none" stroke="var(--resv)"/><circle cx="60" cy="137" r="5" fill="var(--resv)"/><text x="72" y="140.5" fill="var(--pcb-ink)" text-anchor="start">2 · IO23 VSPI</text><rect x="68" y="146" width="54" height="15" rx="3" fill="var(--free)"/><circle cx="60" cy="154" r="5" fill="var(--free)"/><text x="72" y="157.5" fill="var(--free-ink)" text-anchor="start" font-weight="600">3 · IO22</text><circle cx="60" cy="171" r="4" fill="var(--pad)" opacity=".55"/><text x="72" y="174.5" fill="var(--pcb-ink)" text-anchor="start" opacity=".6">4 · TX0</text><circle cx="60" cy="188" r="4" fill="var(--pad)" opacity=".55"/><text x="72" y="191.5" fill="var(--pcb-ink)" text-anchor="start" opacity=".6">5 · RX0</text><circle cx="60" cy="205" r="5" fill="var(--bme)"/><text x="72" y="208.5" fill="var(--pcb-ink)" text-anchor="start">6 · IO21 SDA</text><circle cx="60" cy="222" r="4" fill="var(--pad)" opacity=".55"/><text x="72" y="225.5" fill="var(--pcb-ink)" text-anchor="start" opacity=".6">7 · GND</text><rect x="68" y="231" width="83" height="15" rx="3" fill="none" stroke="var(--resv)"/><circle cx="60" cy="239" r="5" fill="var(--resv)"/><text x="72" y="242.5" fill="var(--pcb-ink)" text-anchor="start">8 · IO19 VSPI</text><rect x="68" y="248" width="83" height="15" rx="3" fill="none" stroke="var(--resv)"/><circle cx="60" cy="256" r="5" fill="var(--resv)"/><text x="72" y="259.5" fill="var(--pcb-ink)" text-anchor="start">9 · IO18 VSPI</text><rect x="68" y="265" width="83" height="15" rx="3" fill="none" stroke="var(--resv)"/><circle cx="60" cy="273" r="5" fill="var(--resv)"/><text x="72" y="276.5" fill="var(--pcb-ink)" text-anchor="start">10 · IO5 VSPI</text><rect x="68" y="282" width="60" height="15" rx="3" fill="var(--free)"/><circle cx="60" cy="290" r="5" fill="var(--free)"/><text x="72" y="293.5" fill="var(--free-ink)" text-anchor="start" font-weight="600">11 · IO17</text><circle cx="60" cy="307" r="5" fill="var(--bme)"/><text x="72" y="310.5" fill="var(--pcb-ink)" text-anchor="start">12 · IO16 SCL</text><rect x="68" y="316" width="54" height="15" rx="3" fill="var(--free)"/><circle cx="60" cy="324" r="5" fill="var(--free)"/><text x="72" y="327.5" fill="var(--free-ink)" text-anchor="start" font-weight="600">13 · IO4</text><circle cx="60" cy="341" r="4" fill="var(--pad)" opacity=".55"/><text x="72" y="344.5" fill="var(--pcb-ink)" text-anchor="start" opacity=".6">14 · IO0 boot</text><circle cx="60" cy="358" r="4" fill="var(--pad)" opacity=".55"/><text x="72" y="361.5" fill="var(--pcb-ink)" text-anchor="start" opacity=".6">15 · IO2 boot</text><circle cx="60" cy="375" r="5" fill="var(--j1)"/><text x="72" y="378.5" fill="var(--pcb-ink)" text-anchor="start">16 · IO15 CS_M</text><circle cx="60" cy="392" r="4" fill="var(--pad)" opacity=".55"/><text x="72" y="395.5" fill="var(--pcb-ink)" text-anchor="start" opacity=".6">17 · SD1</text><circle cx="60" cy="409" r="4" fill="var(--pad)" opacity=".55"/><text x="72" y="412.5" fill="var(--pcb-ink)" text-anchor="start" opacity=".6">18 · SD0</text><circle cx="60" cy="426" r="4" fill="var(--pad)" opacity=".55"/><text x="72" y="429.5" fill="var(--pcb-ink)" text-anchor="start" opacity=".6">19 · CLK</text><circle cx="270" cy="120" r="5" fill="var(--pwr)"/><text x="258" y="123.5" fill="var(--pcb-ink)" text-anchor="end">1 · 3V3</text><circle cx="270" cy="137" r="4" fill="var(--pad)" opacity=".55"/><text x="258" y="140.5" fill="var(--pcb-ink)" text-anchor="end" opacity=".6">2 · EN</text><rect x="208" y="146" width="54" height="15" rx="3" stroke="var(--free)" stroke-dasharray="3 2" fill="none"/><circle cx="270" cy="154" r="5" fill="var(--free)"/><text x="258" y="157.5" fill="var(--pcb-ink)" text-anchor="end" font-weight="600">3 · IO36</text><rect x="208" y="163" width="54" height="15" rx="3" stroke="var(--free)" stroke-dasharray="3 2" fill="none"/><circle cx="270" cy="171" r="5" fill="var(--free)"/><text x="258" y="174.5" fill="var(--pcb-ink)" text-anchor="end" font-weight="600">4 · IO39</text><rect x="208" y="180" width="54" height="15" rx="3" fill="var(--free)"/><circle cx="270" cy="188" r="5" fill="var(--free)"/><text x="258" y="191.5" fill="var(--free-ink)" text-anchor="end" font-weight="600">5 · IO34</text><circle cx="270" cy="205" r="5" fill="var(--busy)"/><text x="258" y="208.5" fill="var(--pcb-ink)" text-anchor="end">6 · IO35 BUSY_S</text><circle cx="270" cy="222" r="5" fill="var(--ctl)"/><text x="258" y="225.5" fill="var(--pcb-ink)" text-anchor="end">7 · IO32 CS_S</text><rect x="208" y="231" width="54" height="15" rx="3" stroke="var(--free)" stroke-dasharray="3 2" fill="none"/><circle cx="270" cy="239" r="5" fill="var(--free)"/><text x="258" y="242.5" fill="var(--pcb-ink)" text-anchor="end" font-weight="600">8 · IO33</text><circle cx="270" cy="256" r="5" fill="var(--j1)"/><text x="258" y="259.5" fill="var(--pcb-ink)" text-anchor="end">9 · IO25 BUSY_M</text><circle cx="270" cy="273" r="5" fill="var(--ctl)"/><text x="258" y="276.5" fill="var(--pcb-ink)" text-anchor="end">10 · IO26 RST</text><circle cx="270" cy="290" r="5" fill="var(--ctl)"/><text x="258" y="293.5" fill="var(--pcb-ink)" text-anchor="end">11 · IO27 D/C</text><circle cx="270" cy="307" r="5" fill="var(--spi)"/><text x="258" y="310.5" fill="var(--pcb-ink)" text-anchor="end">12 · IO14 MOSI</text><circle cx="270" cy="324" r="5" fill="var(--j1)"/><text x="258" y="327.5" fill="var(--pcb-ink)" text-anchor="end">13 · IO12 MISO</text><circle cx="270" cy="341" r="5" fill="var(--gnd)" stroke="var(--pcb-ink)" stroke-width="1"/><text x="258" y="344.5" fill="var(--pcb-ink)" text-anchor="end">14 · GND</text><circle cx="270" cy="358" r="5" fill="var(--spi)"/><text x="258" y="361.5" fill="var(--pcb-ink)" text-anchor="end">15 · IO13 SCK</text><circle cx="270" cy="375" r="4" fill="var(--pad)" opacity=".55"/><text x="258" y="378.5" fill="var(--pcb-ink)" text-anchor="end" opacity=".6">16 · SD2</text><circle cx="270" cy="392" r="4" fill="var(--pad)" opacity=".55"/><text x="258" y="395.5" fill="var(--pcb-ink)" text-anchor="end" opacity=".6">17 · SD3</text><circle cx="270" cy="409" r="4" fill="var(--pad)" opacity=".55"/><text x="258" y="412.5" fill="var(--pcb-ink)" text-anchor="end" opacity=".6">18 · CMD</text><circle cx="270" cy="426" r="4" fill="var(--pad)" opacity=".55"/><text x="258" y="429.5" fill="var(--pcb-ink)" text-anchor="end" opacity=".6">19 · 5V</text>
+    <circle cx="60" cy="120" r="4" fill="var(--pad)" opacity=".55"/><text x="72" y="123.5" fill="var(--pcb-ink)" text-anchor="start" opacity=".6">1 · GND</text><rect x="68" y="129" width="83" height="15" rx="3" fill="none" stroke="var(--resv)"/><circle cx="60" cy="137" r="5" fill="var(--resv)"/><text x="72" y="140.5" fill="var(--pcb-ink)" text-anchor="start">2 · IO23 VSPI</text><circle cx="60" cy="154" r="5" fill="var(--busy)"/><text x="72" y="157.5" fill="var(--pcb-ink)" text-anchor="start">3 · IO22 BUSY_S</text><circle cx="60" cy="171" r="4" fill="var(--pad)" opacity=".55"/><text x="72" y="174.5" fill="var(--pcb-ink)" text-anchor="start" opacity=".6">4 · TX0</text><circle cx="60" cy="188" r="4" fill="var(--pad)" opacity=".55"/><text x="72" y="191.5" fill="var(--pcb-ink)" text-anchor="start" opacity=".6">5 · RX0</text><circle cx="60" cy="205" r="5" fill="var(--bme)"/><text x="72" y="208.5" fill="var(--pcb-ink)" text-anchor="start">6 · IO21 SDA</text><circle cx="60" cy="222" r="4" fill="var(--pad)" opacity=".55"/><text x="72" y="225.5" fill="var(--pcb-ink)" text-anchor="start" opacity=".6">7 · GND</text><rect x="68" y="231" width="83" height="15" rx="3" fill="none" stroke="var(--resv)"/><circle cx="60" cy="239" r="5" fill="var(--resv)"/><text x="72" y="242.5" fill="var(--pcb-ink)" text-anchor="start">8 · IO19 VSPI</text><rect x="68" y="248" width="83" height="15" rx="3" fill="none" stroke="var(--resv)"/><circle cx="60" cy="256" r="5" fill="var(--resv)"/><text x="72" y="259.5" fill="var(--pcb-ink)" text-anchor="start">9 · IO18 VSPI</text><rect x="68" y="265" width="83" height="15" rx="3" fill="none" stroke="var(--resv)"/><circle cx="60" cy="273" r="5" fill="var(--resv)"/><text x="72" y="276.5" fill="var(--pcb-ink)" text-anchor="start">10 · IO5 VSPI</text><rect x="68" y="282" width="60" height="15" rx="3" fill="var(--free)"/><circle cx="60" cy="290" r="5" fill="var(--free)"/><text x="72" y="293.5" fill="var(--free-ink)" text-anchor="start" font-weight="600">11 · IO17</text><circle cx="60" cy="307" r="5" fill="var(--bme)"/><text x="72" y="310.5" fill="var(--pcb-ink)" text-anchor="start">12 · IO16 SCL</text><rect x="68" y="316" width="54" height="15" rx="3" fill="var(--free)"/><circle cx="60" cy="324" r="5" fill="var(--free)"/><text x="72" y="327.5" fill="var(--free-ink)" text-anchor="start" font-weight="600">13 · IO4</text><circle cx="60" cy="341" r="4" fill="var(--pad)" opacity=".55"/><text x="72" y="344.5" fill="var(--pcb-ink)" text-anchor="start" opacity=".6">14 · IO0 boot</text><circle cx="60" cy="358" r="4" fill="var(--pad)" opacity=".55"/><text x="72" y="361.5" fill="var(--pcb-ink)" text-anchor="start" opacity=".6">15 · IO2 boot</text><circle cx="60" cy="375" r="5" fill="var(--j1)"/><text x="72" y="378.5" fill="var(--pcb-ink)" text-anchor="start">16 · IO15 CS_M</text><circle cx="60" cy="392" r="4" fill="var(--pad)" opacity=".55"/><text x="72" y="395.5" fill="var(--pcb-ink)" text-anchor="start" opacity=".6">17 · SD1</text><circle cx="60" cy="409" r="4" fill="var(--pad)" opacity=".55"/><text x="72" y="412.5" fill="var(--pcb-ink)" text-anchor="start" opacity=".6">18 · SD0</text><circle cx="60" cy="426" r="4" fill="var(--pad)" opacity=".55"/><text x="72" y="429.5" fill="var(--pcb-ink)" text-anchor="start" opacity=".6">19 · CLK</text><circle cx="270" cy="120" r="5" fill="var(--pwr)"/><text x="258" y="123.5" fill="var(--pcb-ink)" text-anchor="end">1 · 3V3</text><circle cx="270" cy="137" r="4" fill="var(--pad)" opacity=".55"/><text x="258" y="140.5" fill="var(--pcb-ink)" text-anchor="end" opacity=".6">2 · EN</text><rect x="208" y="146" width="54" height="15" rx="3" stroke="var(--free)" stroke-dasharray="3 2" fill="none"/><circle cx="270" cy="154" r="5" fill="var(--free)"/><text x="258" y="157.5" fill="var(--pcb-ink)" text-anchor="end" font-weight="600">3 · IO36</text><rect x="208" y="163" width="54" height="15" rx="3" stroke="var(--free)" stroke-dasharray="3 2" fill="none"/><circle cx="270" cy="171" r="5" fill="var(--free)"/><text x="258" y="174.5" fill="var(--pcb-ink)" text-anchor="end" font-weight="600">4 · IO39</text><rect x="208" y="180" width="54" height="15" rx="3" fill="var(--free)"/><circle cx="270" cy="188" r="5" fill="var(--free)"/><text x="258" y="191.5" fill="var(--free-ink)" text-anchor="end" font-weight="600">5 · IO34</text><rect x="208" y="197" width="54" height="15" rx="3" fill="var(--free)"/><circle cx="270" cy="205" r="5" fill="var(--free)"/><text x="258" y="208.5" fill="var(--free-ink)" text-anchor="end" font-weight="600">6 · IO35</text><circle cx="270" cy="222" r="5" fill="var(--ctl)"/><text x="258" y="225.5" fill="var(--pcb-ink)" text-anchor="end">7 · IO32 CS_S</text><rect x="208" y="231" width="54" height="15" rx="3" stroke="var(--free)" stroke-dasharray="3 2" fill="none"/><circle cx="270" cy="239" r="5" fill="var(--free)"/><text x="258" y="242.5" fill="var(--pcb-ink)" text-anchor="end" font-weight="600">8 · IO33</text><circle cx="270" cy="256" r="5" fill="var(--j1)"/><text x="258" y="259.5" fill="var(--pcb-ink)" text-anchor="end">9 · IO25 BUSY_M</text><circle cx="270" cy="273" r="5" fill="var(--ctl)"/><text x="258" y="276.5" fill="var(--pcb-ink)" text-anchor="end">10 · IO26 RST</text><circle cx="270" cy="290" r="5" fill="var(--ctl)"/><text x="258" y="293.5" fill="var(--pcb-ink)" text-anchor="end">11 · IO27 D/C</text><circle cx="270" cy="307" r="5" fill="var(--spi)"/><text x="258" y="310.5" fill="var(--pcb-ink)" text-anchor="end">12 · IO14 MOSI</text><circle cx="270" cy="324" r="4" fill="var(--pad)" opacity=".55"/><text x="258" y="327.5" fill="var(--pcb-ink)" text-anchor="end" opacity=".6">13 · IO12 strap</text><circle cx="270" cy="341" r="5" fill="var(--gnd)" stroke="var(--pcb-ink)" stroke-width="1"/><text x="258" y="344.5" fill="var(--pcb-ink)" text-anchor="end">14 · GND</text><circle cx="270" cy="358" r="5" fill="var(--spi)"/><text x="258" y="361.5" fill="var(--pcb-ink)" text-anchor="end">15 · IO13 SCK</text><circle cx="270" cy="375" r="4" fill="var(--pad)" opacity=".55"/><text x="258" y="378.5" fill="var(--pcb-ink)" text-anchor="end" opacity=".6">16 · SD2</text><circle cx="270" cy="392" r="4" fill="var(--pad)" opacity=".55"/><text x="258" y="395.5" fill="var(--pcb-ink)" text-anchor="end" opacity=".6">17 · SD3</text><circle cx="270" cy="409" r="4" fill="var(--pad)" opacity=".55"/><text x="258" y="412.5" fill="var(--pcb-ink)" text-anchor="end" opacity=".6">18 · CMD</text><circle cx="270" cy="426" r="4" fill="var(--pad)" opacity=".55"/><text x="258" y="429.5" fill="var(--pcb-ink)" text-anchor="end" opacity=".6">19 · 5V</text>
   </g>
   <text x="62" y="470" fill="var(--pcb-ink)" font-size="13" font-weight="600">Waveshare ESP32</text>
   <text x="62" y="486" fill="var(--pcb-ink)" font-size="13" font-weight="600">Driver Board V3</text>
@@ -107,6 +119,9 @@ svg text{font-family:var(--f-mono)}
   <text x="160" y="545" fill="var(--pcb-ink)" font-size="11" text-anchor="middle">J1 FPC 24p</text>
   <text x="160" y="560" fill="var(--pcb-ink)" font-size="9.5" text-anchor="middle" opacity=".85">booster + condensatori</text>
   <text x="160" y="574" fill="var(--pcb-ink)" font-size="9.5" text-anchor="middle" opacity=".85">dei rail</text>
+  <!-- EPD_3.3V: piazzola di C5/C6/C20 vicino a J1, net distinta dal 3V3 di J3-1 -->
+  <circle cx="270" cy="510" r="4" fill="var(--pwr)"/>
+  <text x="258" y="513" fill="var(--pcb-ink)" font-size="9" text-anchor="end">EPD_3.3V · C5/C6/C20</text>
 
   <!-- Sensore ambientale: BME680 o BME280, stessa piedinatura I2C -->
   <rect x="-150" y="150" width="110" height="150" rx="6" fill="var(--surface)" stroke="var(--bme)" stroke-width="1.5"/>
@@ -124,10 +139,9 @@ svg text{font-family:var(--f-mono)}
     <path d="M-36 205 H-20 V120 H55" stroke="var(--gnd)"/>
     <path d="M-36 225 H4 V205 H55" stroke="var(--bme)"/>
     <path d="M-36 245 H-8 V307 H55" stroke="var(--bme)"/>
-    <path d="M300 120 V70 H-30 V185 H-36" stroke="var(--pwr)"/>
+    <path d="M275 120 H300 V70 H-30 V185 H-36" stroke="var(--pwr)"/>
   </g>
-  <circle cx="300" cy="120" r="3.5" fill="var(--pwr)"/>
-  <text x="-28" y="64" fill="var(--pwr)" font-size="10">3V3 (J3-1), sdoppiato: sensore e breakout</text>
+  <text x="-28" y="64" fill="var(--pwr)" font-size="10">3V3 (J3-1): solo sensore</text>
 
   <!-- long tail -->
   <path d="M290 562 H560" stroke="var(--ribbon)" stroke-width="30" fill="none"/>
@@ -149,7 +163,7 @@ svg text{font-family:var(--f-mono)}
   <!-- short tail -->
   <path d="M816 470 H835 V352" stroke="var(--ribbon)" stroke-width="30" fill="none" stroke-linejoin="round"/>
   <path d="M816 470 H835 V352" stroke="var(--bg)" stroke-width="1" stroke-dasharray="2 3" fill="none" opacity=".6"/>
-  <text x="858" y="398" fill="var(--muted)" font-size="9.5">coda corta</text><text x="858" y="410" fill="var(--muted)" font-size="9.5">FPC-7716</text>
+  <text x="812" y="398" fill="var(--muted)" font-size="9.5" text-anchor="end">coda corta</text><text x="812" y="410" fill="var(--muted)" font-size="9.5" text-anchor="end">FPC-7716</text>
 
   <!-- breakout -->
   <rect x="690" y="110" width="290" height="250" rx="6" fill="var(--pcb)"/>
@@ -160,55 +174,55 @@ svg text{font-family:var(--f-mono)}
   <!-- pads: col x = 714 + col*22, top row (even) y=150, bottom row (odd) y=196 -->
   <g font-size="8.5" text-anchor="middle" font-weight="500">
     <!-- top row even: col0=24 ... col11=2 -->
-    <circle cx="714" cy="150" r="9" fill="var(--rail)"/><text x="714" y="153" fill="#fff">24</text>
-    <circle cx="736" cy="150" r="9" fill="var(--rail)"/><text x="736" y="153" fill="#fff">22</text>
-    <circle cx="758" cy="150" r="9" fill="var(--rail)"/><text x="758" y="153" fill="#fff">20</text>
-    <circle cx="780" cy="150" r="9" fill="var(--rail)"/><text x="780" y="153" fill="#fff">18</text>
+    <circle cx="714" cy="150" r="9" fill="var(--rail)" stroke="var(--fg)" stroke-width="1.5" stroke-dasharray="2.5 1.8"/><text x="714" y="153" fill="#fff">24</text>
+    <circle cx="736" cy="150" r="9" fill="var(--rail)" stroke="var(--fg)" stroke-width="1.5" stroke-dasharray="2.5 1.8"/><text x="736" y="153" fill="#fff">22</text>
+    <circle cx="758" cy="150" r="9" fill="var(--rail)" stroke="var(--fg)" stroke-width="1.5" stroke-dasharray="2.5 1.8"/><text x="758" y="153" fill="#fff">20</text>
+    <circle cx="780" cy="150" r="9" fill="var(--rail)" stroke="var(--fg)" stroke-width="1.5" stroke-dasharray="2.5 1.8"/><text x="780" y="153" fill="#fff">18</text>
     <circle cx="802" cy="150" r="9" fill="var(--pwr)"/><text x="802" y="153" fill="#fff">16</text>
     <circle cx="824" cy="150" r="9" fill="var(--spi)"/><text x="824" y="153" fill="#fff">14</text>
     <circle cx="846" cy="150" r="9" fill="var(--ctl)"/><text x="846" y="153" fill="#fff">12</text>
     <circle cx="868" cy="150" r="9" fill="var(--ctl)"/><text x="868" y="153" fill="#fff">10</text>
     <circle cx="890" cy="150" r="9" fill="var(--gnd)"/><text x="890" y="153" fill="var(--bg)">8</text>
-    <circle cx="912" cy="150" r="9" fill="var(--open)"/><text x="912" y="153" fill="#fff">6</text>
-    <circle cx="934" cy="150" r="9" fill="var(--open)"/><text x="934" y="153" fill="#fff">4</text>
+    <circle cx="912" cy="150" r="9" fill="var(--open)" stroke="var(--ctl)" stroke-width="2.2" stroke-dasharray="0.1 3.2" stroke-linecap="round"/><text x="912" y="153" fill="#fff">6</text>
+    <circle cx="934" cy="150" r="9" fill="var(--open)" stroke="var(--ctl)" stroke-width="2.2" stroke-dasharray="0.1 3.2" stroke-linecap="round"/><text x="934" y="153" fill="#fff">4</text>
     <circle cx="956" cy="150" r="9" fill="var(--open)"/><text x="956" y="153" fill="#fff">2</text>
     <!-- bottom row odd: col0=23 ... col11=1 -->
-    <circle cx="714" cy="196" r="9" fill="var(--rail)"/><text x="714" y="199" fill="#fff">23</text>
-    <circle cx="736" cy="196" r="9" fill="var(--rail)"/><text x="736" y="199" fill="#fff">21</text>
-    <circle cx="758" cy="196" r="9" fill="var(--open)"/><text x="758" y="199" fill="#fff">19</text>
+    <circle cx="714" cy="196" r="9" fill="var(--rail)" stroke="var(--fg)" stroke-width="2.2"/><text x="714" y="199" fill="#fff">23</text>
+    <circle cx="736" cy="196" r="9" fill="var(--rail)" stroke="var(--fg)" stroke-width="2.2"/><text x="736" y="199" fill="#fff">21</text>
+    <circle cx="758" cy="196" r="9" fill="var(--open)" stroke="var(--rail)" stroke-width="2.4"/><text x="758" y="199" fill="#fff">19</text>
     <circle cx="780" cy="196" r="9" fill="var(--gnd)"/><text x="780" y="199" fill="var(--bg)">17</text>
     <circle cx="802" cy="196" r="9" fill="var(--pwr)"/><text x="802" y="199" fill="#fff">15</text>
     <circle cx="824" cy="196" r="9" fill="var(--spi)"/><text x="824" y="199" fill="#fff">13</text>
     <circle cx="846" cy="196" r="9" fill="var(--ctl)"/><text x="846" y="199" fill="#fff">11</text>
     <circle cx="868" cy="196" r="9" fill="var(--busy)"/><text x="868" y="199" fill="#fff">9</text>
-    <circle cx="890" cy="196" r="9" fill="var(--open)"/><text x="890" y="199" fill="#fff">7</text>
-    <circle cx="912" cy="196" r="9" fill="var(--rail)"/><text x="912" y="199" fill="#fff">5</text>
+    <circle cx="890" cy="196" r="9" fill="var(--open)" stroke="var(--ctl)" stroke-width="2.2" stroke-dasharray="0.1 3.2" stroke-linecap="round"/><text x="890" y="199" fill="#fff">7</text>
+    <circle cx="912" cy="196" r="9" fill="var(--rail)" stroke="var(--fg)" stroke-width="1.5" stroke-dasharray="2.5 1.8"/><text x="912" y="199" fill="#fff">5</text>
     <circle cx="934" cy="196" r="9" fill="var(--open)"/><text x="934" y="199" fill="#fff">3</text>
-    <circle cx="956" cy="196" r="9" fill="var(--open)"/><text x="956" y="199" fill="#fff">1</text>
+    <circle cx="956" cy="196" r="9" fill="var(--open)" stroke="var(--ctl)" stroke-width="2.2" stroke-dasharray="0.1 3.2" stroke-linecap="round"/><text x="956" y="199" fill="#fff">1</text>
   </g>
   <!-- ponticello 15-16 sulla breakout -->
   <path d="M802 159 V187" stroke="var(--pwr)" stroke-width="3"/>
-  <!-- BS1 (pad 8) a GND -->
-  <path d="M890 141 V122" stroke="var(--gnd)" stroke-width="2"/>
-  <path d="M882 122 H898 M885 118 H895 M888 114 H892" stroke="var(--gnd)" stroke-width="1.6"/>
-  <text x="904" y="126" fill="var(--pcb-ink)" font-size="9">BS1 → GND</text>
+  <!-- BS1: ponticello dal pad 8 al pad 17 (GND) nello spazio fra le due file, con un salto sopra il ponticello 15-16 -->
+  <path d="M890 159 V173 H807 a5 5 0 0 0 -10 0 H780 V187" stroke="var(--gnd)" stroke-width="2.4" fill="none" stroke-linejoin="round"/>
+  <text x="900" y="176" fill="var(--pcb-ink)" font-size="8.5">BS1 8→17</text>
 
   <!-- fili fase 1, lane superiori (pad riga pari) -->
   <g fill="none" stroke-width="2.4" stroke-linejoin="round">
     <path d="M275 273 H310 V40 H868 V141" stroke="var(--ctl)"/>
     <path d="M275 222 H322 V54 H846 V141" stroke="var(--ctl)"/>
     <path d="M275 307 H334 V68 H824 V141" stroke="var(--spi)"/>
-    <path d="M275 120 H346 V82 H802 V141" stroke="var(--pwr)"/>
+    <path d="M275 510 H346 V82 H802 V141" stroke="var(--pwr)"/>
   </g>
   <g font-size="10">
     <text x="420" y="36" fill="var(--ctl)">IO26 (J3-10) → pad 10 RST</text>
-    <text x="420" y="50" fill="var(--ctl)">IO32 (J3-7) → pad 12 CS  · variante cascade: IO15</text>
+    <text x="420" y="50" fill="var(--ctl)">IO32 (J3-7) → pad 12 CS, pull-up 10-100 kΩ a EPD_3.3V · cascade: IO15</text>
     <text x="420" y="64" fill="var(--spi)">IO14 (J3-12) → pad 14 SDI (MOSI)</text>
-    <text x="420" y="78" fill="var(--pwr)">3V3 (J3-1) → pad 16 VCI + pad 15 VDDIO</text>
+    <text x="420" y="78" fill="var(--pwr)">EPD_3.3V (C5/C6/C20) → pad 16 VCI + pad 15 VDDIO</text>
   </g>
+  <text x="356" y="100" fill="var(--muted)" font-size="9.5">100-330 Ω in serie su ogni filo ESP32 → slave</text>
   <!-- fili fase 1, lane inferiori (pad riga dispari) -->
   <g fill="none" stroke-width="2.4" stroke-linejoin="round">
-    <path d="M275 205 H370 V262 H868 V205" stroke="var(--busy)"/>
+    <path d="M55 154 H48 V745 H995 V262 H868 V205" stroke="var(--busy)"/>
     <path d="M275 290 H382 V248 H846 V205" stroke="var(--ctl)"/>
     <path d="M275 358 H394 V234 H824 V205" stroke="var(--spi)"/>
     <path d="M275 341 H406 V220 H780 V205" stroke="var(--gnd)"/>
@@ -217,24 +231,35 @@ svg text{font-family:var(--f-mono)}
     <text x="470" y="216" fill="var(--gnd)">GND (J3-14) → pad 17 VSS</text>
     <text x="470" y="230" fill="var(--spi)">IO13 (J3-15) → pad 13 SCK</text>
     <text x="470" y="244" fill="var(--ctl)">IO27 (J3-11) → pad 11 D/C</text>
-    <text x="470" y="258" fill="var(--busy)">IO35 (J3-6) → pad 9 BUSY_S</text>
+    <text x="70" y="738" fill="var(--busy)">IO22 (J4-3) → pad 9 BUSY_S, pull-down interno</text>
   </g>
 
   <!-- fase 2: ponte dei rail da J1 -->
   <path d="M290 530 H330 V400 H747 V372" stroke="var(--rail)" stroke-width="3" stroke-dasharray="7 5" fill="none"/>
-  <text x="352" y="392" fill="var(--rail)" font-size="10">fase 2 · rail da J1, stesso numero di pin (da confermare sul tag)</text>
-  <text x="352" y="418" fill="var(--rail)" font-size="10">5 VSH2 · 18 VDD · 20 VSH1 · 21 VGH · 22 VSL · 23 VGL · 24 VCOM</text>
+  <g fill="var(--rail)" font-size="9.5">
+    <text x="356" y="364">fase 2 · rail da J1, stesso numero di pin (da confermare)</text>
+    <text x="356" y="376">due CS: 21 VGH e 23 VGL · contorno pieno</text>
+    <text x="356" y="388">cascade: 5, 18, 20, 22, 24 e CL · tratteggio</text>
+    <text x="356" y="418">prolunga FFC e seconda breakout, mai sulle gambe di J1</text>
+  </g>
 </svg>
   </div>
   <div class="legend">
     <span><i class="sw" style="background:var(--spi)"></i>bus SPI</span>
     <span><i class="sw" style="background:var(--ctl)"></i>controllo (RST, D/C, CS)</span>
     <span><i class="sw" style="background:var(--busy)"></i>BUSY dello slave</span>
-    <span><i class="sw" style="background:var(--pwr)"></i>3,3 V</span>
+    <span><i class="sw" style="background:var(--pwr)"></i>3,3 V (EPD_3.3V per la breakout, 3V3 per il sensore)</span>
     <span><i class="sw" style="background:var(--gnd)"></i>massa</span>
     <span><i class="sw" style="background:var(--rail)"></i>rail di pilotaggio, solo fase 2</span>
     <span><i class="sw" style="background:var(--bme)"></i>I2C del sensore</span>
     <span><i class="dot" style="background:var(--open)"></i>pad da non collegare</span>
+  </div>
+  <div class="legend">
+    <span>Contorni dei pad:</span>
+    <span><i class="dot" style="border:2px solid var(--fg);box-sizing:border-box"></i>ponte da J1 in fase 2, entrambe le varianti</span>
+    <span><i class="dot" style="border:1.5px dashed var(--fg);box-sizing:border-box"></i>ponte da J1 solo nella variante cascade</span>
+    <span><i class="dot" style="background:var(--open);outline:2px dotted var(--ctl);outline-offset:1px"></i>candidati CL o M/S# (1, 4, 6, 7)</span>
+    <span><i class="dot" style="background:var(--open);outline:2px solid var(--rail);outline-offset:0"></i>pad 19 (VPP): mai collegare</span>
   </div>
   <div class="legend">
     <span>Pin degli header:</span>
@@ -242,18 +267,18 @@ svg text{font-family:var(--f-mono)}
     <span><i class="pill" style="border:1px dashed var(--free)"></i>forse portato fuori, da confermare</span>
     <span><i class="pill" style="border:1px solid var(--resv)"></i>riservato al VSPI</span>
     <span><i class="dot" style="background:var(--j1)"></i>già usato dal display tramite J1</span>
-    <span><i class="dot" style="background:var(--pad);opacity:.55"></i>sistema, boot o flash: non usare</span>
-    <span>Gli incroci fra fili non sono connessioni. Il pallino pieno su J3-1 è una giunzione.</span>
+    <span><i class="dot" style="background:var(--pad);opacity:.55"></i>sistema, boot, flash o strapping: non usare</span>
+    <span>Gli incroci fra fili non sono connessioni. Il filo del BUSY_S esce dalla board a sinistra e rientra da destra per non attraversare la breakout.</span>
   </div>
 </section>
 
 <section>
   <h2>Sensore ambientale (BME680 o BME280)</h2>
-  <p>Resta dov'è: SDA e SCL su IO21 e IO16, come in <code>Indoor.h</code> (<code>INDOOR_SDA_PIN</code>, <code>INDOOR_SCL_PIN</code>), che sceglie anche quale dei due sensori è montato. I due moduli hanno gli stessi pin I2C e gli stessi indirizzi. Nessun filo del display usa questi pin, quindi non serve spostarlo. La board ha un solo pin 3V3 sugli header: lo dividi fra sensore e breakout con un cavo a Y o una barra di breadboard. Per la massa il sensore usa J4-1, la breakout J3-14.</p>
+  <p>Resta dov'è: SDA e SCL su IO21 e IO16, come in <code>Indoor.h</code> (<code>INDOOR_SDA_PIN</code>, <code>INDOOR_SCL_PIN</code>), che sceglie anche quale dei due sensori è montato. I due moduli hanno gli stessi pin I2C e gli stessi indirizzi. Nessun filo del display usa questi pin, quindi non serve spostarlo. Il sensore prende il 3V3 da J3-1 (regolatore U2, lo stesso dell'ESP32) e la breakout non lo condivide: VCI e VDDIO della coda corta vengono da EPD_3.3V (regolatore U3), che è un'altra net. Per la massa il sensore usa J4-1, la breakout J3-14.</p>
   <div class="tbl"><table>
     <thead><tr><th>Modulo sensore</th><th>Waveshare</th><th>Nota</th></tr></thead>
     <tbody>
-      <tr><td class="mono">VCC</td><td>3V3, J3-1</td><td>in comune con la breakout</td></tr>
+      <tr><td class="mono">VCC</td><td>3V3, J3-1</td><td>solo il sensore; la breakout prende EPD_3.3V</td></tr>
       <tr><td class="mono">GND</td><td>GND, J4-1 (o J4-7)</td><td></td></tr>
       <tr><td class="mono">SCL</td><td>IO16, J4-12</td><td><code>INDOOR_SCL_PIN</code></td></tr>
       <tr><td class="mono">SDA</td><td>IO21, J4-6</td><td><code>INDOOR_SDA_PIN</code></td></tr>
@@ -271,15 +296,14 @@ svg text{font-family:var(--f-mono)}
     <tbody>
       <tr><td class="mono">4</td><td>J4-13</td><td><span class="chip cf">libero</span></td><td>ingresso e uscita digitale; ADC2, quindi niente analogico col WiFi acceso</td></tr>
       <tr><td class="mono">17</td><td>J4-11</td><td><span class="chip cf">libero</span></td><td>ingresso e uscita digitale</td></tr>
-      <tr><td class="mono">22</td><td>J4-3</td><td><span class="chip cf">libero</span></td><td>ingresso e uscita digitale; è lo SCL di default di <code>Wire</code>, che il firmware non usa</td></tr>
-      <tr><td class="mono">34</td><td>J3-5</td><td><span class="chip cf">libero</span></td><td>solo ingresso, senza pull interni; analogico ADC1 anche col WiFi</td></tr>
+      <tr><td class="mono">34, 35</td><td>J3-5, J3-6</td><td><span class="chip cf">libero</span></td><td>solo ingresso, senza pull interni; analogico ADC1 anche col WiFi</td></tr>
       <tr><td class="mono">33</td><td>J3-8</td><td><span class="chip cf">da confermare</span></td><td>ingresso e uscita, ADC1. Il README lo dà per assente; la netlist lo mette su J3-8</td></tr>
       <tr><td class="mono">36, 39</td><td>J3-3, J3-4</td><td><span class="chip cf">da confermare</span></td><td>solo ingresso, ADC1. Stessa discordanza fra README e netlist</td></tr>
       <tr><td class="mono">5, 18, 19, 23</td><td>J4-10, 9, 8, 2</td><td><span class="chip cr">riservati</span></td><td>bus VSPI (CS 5, CLK 18, MISO 19, MOSI 23) per una periferica SPI in più; se non serve, I/O normali</td></tr>
-      <tr><td class="mono">21, 16</td><td>J4-6, J4-12</td><td><span class="chip cm">sensore</span></td><td>SDA e SCL; il 16 è usabile perché il modulo non ha PSRAM. Il sensore si sposta su 4, 17 o 22 cambiando le due costanti in <code>Indoor.h</code>, se servissero</td></tr>
-      <tr><td class="mono">32, 35</td><td>J3-7, J3-6</td><td><span class="chip cc">12.2"</span></td><td>CS e BUSY della coda corta; liberi col 9.7"</td></tr>
-      <tr><td class="mono">12, 13, 14, 15, 25, 26, 27</td><td>J3 e J4-16</td><td><span class="chip cj">display</span></td><td>già collegati al pannello dentro la board, tramite J1</td></tr>
-      <tr><td class="mono">0, 2</td><td>J4-14, J4-15</td><td><span class="chip c0">evitare</span></td><td>pin di strapping del boot</td></tr>
+      <tr><td class="mono">21, 16</td><td>J4-6, J4-12</td><td><span class="chip cm">sensore</span></td><td>SDA e SCL; il 16 è usabile perchè il modulo non ha PSRAM. Il sensore si sposta su 4 o 17 cambiando le due costanti in <code>Indoor.h</code>, se servissero (il 22 è occupato dal BUSY dello slave)</td></tr>
+      <tr><td class="mono">22, 32</td><td>J4-3, J3-7</td><td><span class="chip cc">12.2"</span></td><td>BUSY (pull-down interno) e CS della coda corta; liberi col 9.7". Il 22 è lo SCL di default di <code>Wire</code>, che il firmware non usa</td></tr>
+      <tr><td class="mono">13, 14, 15, 25, 26, 27</td><td>J3 e J4-16</td><td><span class="chip cj">display</span></td><td>già collegati al pannello dentro la board, tramite J1</td></tr>
+      <tr><td class="mono">0, 2, 12</td><td>J4-14, J4-15, J3-13</td><td><span class="chip c0">evitare</span></td><td>pin di strapping del boot. Il 12 non arriva a J1 (è il MISO fittizio del bus del display): resta libero, ma lo strapping lo rende un pin da lasciar stare</td></tr>
     </tbody>
   </table></div>
 </section>
@@ -293,70 +317,305 @@ svg text{font-family:var(--f-mono)}
     </div>
     <div class="card">
       <h3>Inserimento della coda</h3>
-      <p>Il connettore è a flip-lock: sollevi lo sportellino scuro, infili la coda fino in fondo coi contatti rivolti verso le molle del connettore, richiudi. Se la giri, la numerazione si ribalta (1 ↔ 24): per questo il controllo a fine fase 0 è obbligatorio.</p>
+      <p>Il connettore è a flip-lock: sollevi lo sportellino scuro, infili la coda fino in fondo coi contatti rivolti verso le molle del connettore, richiudi. Una coda con i contatti su una sola faccia, infilata girata, non tocca niente: ogni pad legge OL. Non esiste quindi una lettura "ribaltata" (1 ↔ 24) per una coda così, la numerazione la fissa la coda e non il verso in cui la infili. Se i valori sembrano specchiati, controlla con la lente (0.0) se la coda ha contatti su entrambe le facce.</p>
     </div>
     <div class="card">
       <h3>Cosa manca sulla breakout</h3>
       <p>Niente MOSFET e induttanza del booster (GDR, RESE), niente condensatori su VDD, VGH, VGL, VSH1, VSH2, VSL, VCOM. Sulla Waveshare stanno tutti dietro J1 e servono la sola coda lunga.</p>
+      <p>Ci sono invece due ponticelli da fare: pad 15 con pad 16 (VDDIO e VCI dalla stessa net) e pad 8 con pad 17 (BS1 a GND, cioè SPI a 4 fili: sulla Waveshare lo fa R11 0R, nessuno switch). Un BS1 lasciato flottante rende inconcludente la prova a 3 fili, quindi va sempre legato.</p>
     </div>
   </div>
 </section>
 
 <section>
   <h2>Pin per pin</h2>
-  <p>Nomi da J1 della Waveshare (schematico V3) secondo la piedinatura SSD16xx a 24 pin. Sulla coda corta valgono solo dopo la fase 0.</p>
+  <p>Nomi da J1 della Waveshare (schematico V3) secondo la piedinatura tipica a 24 pin delle famiglie SSD16xx, quella dei datasheet SSD1677 e SSD1683: è un'analogia, non un dato del die EL122R2CRN. Sulla coda corta valgono solo dopo la fase 0.</p>
   <div class="tbl"><table>
     <thead><tr><th>Pad</th><th>Segnale presunto</th><th>Su J1 Waveshare</th><th>Collegamento dalla breakout</th><th>Fase</th></tr></thead>
     <tbody>
-      <tr><td class="n">1</td><td>NC (HLT_CTL)</td><td>senza net</td><td>aperto · candidato CL o M/S#</td><td><span class="chip c0">no</span></td></tr>
+      <tr><td class="n">1</td><td>NC (HLT_CTL)</td><td>senza net</td><td>aperto · candidato CL o M/S#</td><td><span class="chip cc">cand.</span></td></tr>
       <tr><td class="n">2</td><td>GDR</td><td>gate del MOSFET del booster</td><td>aperto: mai sul MOSFET della Waveshare</td><td><span class="chip c0">no</span></td></tr>
-      <tr><td class="n">3</td><td>RESE</td><td>sense del booster (switch 1)</td><td>aperto</td><td><span class="chip c0">no</span></td></tr>
-      <tr><td class="n">4</td><td>NC</td><td>senza net</td><td>aperto · candidato CL o M/S#</td><td><span class="chip c0">no</span></td></tr>
-      <tr><td class="n">5</td><td>VSH2</td><td>condensatore</td><td>J1-5</td><td><span class="chip c2">2</span></td></tr>
-      <tr><td class="n">6</td><td>TSCL</td><td>solo su R5 non montata</td><td>aperto</td><td><span class="chip c0">no</span></td></tr>
-      <tr><td class="n">7</td><td>TSDA</td><td>solo su R6 non montata</td><td>aperto</td><td><span class="chip c0">no</span></td></tr>
-      <tr><td class="n">8</td><td>BS1</td><td>switch 3/4 fili</td><td>GND (SPI a 4 fili)</td><td><span class="chip cg">1</span></td></tr>
-      <tr><td class="n">9</td><td>BUSY</td><td>GPIO25 (master)</td><td>GPIO35, J3-6 · input-only senza pull</td><td><span class="chip cb">1</span></td></tr>
-      <tr><td class="n">10</td><td>RES#</td><td>GPIO26</td><td>GPIO26, J3-10</td><td><span class="chip cc">1</span></td></tr>
-      <tr><td class="n">11</td><td>D/C#</td><td>GPIO27</td><td>GPIO27, J3-11</td><td><span class="chip cc">1</span></td></tr>
-      <tr><td class="n">12</td><td>CS#</td><td>GPIO15 (master)</td><td>GPIO32, J3-7 · in cascade GPIO15, J4-16</td><td><span class="chip cc">1</span></td></tr>
-      <tr><td class="n">13</td><td>SCL (SCK)</td><td>GPIO13</td><td>GPIO13, J3-15</td><td><span class="chip c1">1</span></td></tr>
-      <tr><td class="n">14</td><td>SDA (SDI, MOSI)</td><td>GPIO14</td><td>GPIO14, J3-12</td><td><span class="chip c1">1</span></td></tr>
-      <tr><td class="n">15</td><td>VDDIO</td><td>EPD_3.3V</td><td>3V3, J3-1 (ponticello con 16)</td><td><span class="chip cp">1</span></td></tr>
-      <tr><td class="n">16</td><td>VCI</td><td>EPD_3.3V</td><td>3V3, J3-1</td><td><span class="chip cp">1</span></td></tr>
+      <tr><td class="n">3</td><td>RESE</td><td>sense del booster (SW1)</td><td>aperto</td><td><span class="chip c0">no</span></td></tr>
+      <tr><td class="n">4</td><td>NC</td><td>senza net</td><td>aperto · candidato CL o M/S#</td><td><span class="chip cc">cand.</span></td></tr>
+      <tr><td class="n">5</td><td>VSH2</td><td>condensatore</td><td>cascade: J1-5 · due CS: 1 µF/50 V ceramico verso GND</td><td><span class="chip c2">2</span></td></tr>
+      <tr><td class="n">6</td><td>TSCL</td><td>solo su R5 non montata</td><td>aperto · candidato CL o M/S#</td><td><span class="chip cc">cand.</span></td></tr>
+      <tr><td class="n">7</td><td>TSDA</td><td>solo su R6 non montata</td><td>aperto · candidato CL o M/S#</td><td><span class="chip cc">cand.</span></td></tr>
+      <tr><td class="n">8</td><td>BS1</td><td>GND fisso via R11 0R, nessuno switch</td><td>ponticello al pad 17 (SPI a 4 fili)</td><td><span class="chip cg">1</span></td></tr>
+      <tr><td class="n">9</td><td>BUSY</td><td>GPIO25 (master)</td><td>GPIO22, J4-3 · pull-down interno (<code>INPUT_PULLDOWN</code>), 100-330 Ω in serie</td><td><span class="chip cb">1</span></td></tr>
+      <tr><td class="n">10</td><td>RES#</td><td>GPIO26</td><td>GPIO26, J3-10 · 100-330 Ω in serie</td><td><span class="chip cc">1</span></td></tr>
+      <tr><td class="n">11</td><td>D/C#</td><td>GPIO27</td><td>GPIO27, J3-11 · 100-330 Ω in serie</td><td><span class="chip cc">1</span></td></tr>
+      <tr><td class="n">12</td><td>CS#</td><td>GPIO15 (master)</td><td>GPIO32, J3-7 · 100-330 Ω in serie, pull-up 10-100 kΩ a EPD_3.3V · in cascade GPIO15, J4-16</td><td><span class="chip cc">1</span></td></tr>
+      <tr><td class="n">13</td><td>SCL (SCK)</td><td>GPIO13</td><td>GPIO13, J3-15 · 100-330 Ω in serie</td><td><span class="chip c1">1</span></td></tr>
+      <tr><td class="n">14</td><td>SDA (SDI, MOSI)</td><td>GPIO14</td><td>GPIO14, J3-12 · 100-330 Ω in serie</td><td><span class="chip c1">1</span></td></tr>
+      <tr><td class="n">15</td><td>VDDIO</td><td>EPD_3.3V</td><td>EPD_3.3V, piazzola di C5/C6/C20 vicino a J1 (ponticello con 16)</td><td><span class="chip cp">1</span></td></tr>
+      <tr><td class="n">16</td><td>VCI</td><td>EPD_3.3V</td><td>EPD_3.3V · prima accensione con 10 Ω in serie</td><td><span class="chip cp">1</span></td></tr>
       <tr><td class="n">17</td><td>VSS</td><td>GND</td><td>GND, J3-14</td><td><span class="chip cg">1</span></td></tr>
-      <tr><td class="n">18</td><td>VDD</td><td>condensatore</td><td>J1-18 in cascade, altrimenti 1 µF verso GND</td><td><span class="chip c2">2</span></td></tr>
-      <tr><td class="n">19</td><td>VPP</td><td>senza net</td><td>aperto · candidato CL o M/S#</td><td><span class="chip c0">no</span></td></tr>
-      <tr><td class="n">20</td><td>VSH1</td><td>condensatore</td><td>J1-20</td><td><span class="chip c2">2</span></td></tr>
-      <tr><td class="n">21</td><td>VGH (PREVGH)</td><td>condensatore 50 V</td><td>J1-21</td><td><span class="chip c2">2</span></td></tr>
-      <tr><td class="n">22</td><td>VSL</td><td>condensatore</td><td>J1-22</td><td><span class="chip c2">2</span></td></tr>
-      <tr><td class="n">23</td><td>VGL (PREVGL)</td><td>condensatore 50 V</td><td>J1-23</td><td><span class="chip c2">2</span></td></tr>
-      <tr><td class="n">24</td><td>VCOM</td><td>condensatore</td><td>J1-24 in cascade, altrimenti lo dice il multimetro</td><td><span class="chip c2">2</span></td></tr>
+      <tr><td class="n">18</td><td>VDD</td><td>condensatore</td><td>1 µF ceramico verso GND (fase 1 e due CS) · cascade: J1-18</td><td><span class="chip c2">1, 2</span></td></tr>
+      <tr><td class="n">19</td><td>VPP</td><td>senza net</td><td>mai collegare: è VPP nella piedinatura standard, ma resta fra i pad da annotare in fase 0</td><td><span class="chip c2">mai</span></td></tr>
+      <tr><td class="n">20</td><td>VSH1</td><td>condensatore</td><td>cascade: J1-20 · due CS: 1 µF/50 V ceramico verso GND</td><td><span class="chip c2">2</span></td></tr>
+      <tr><td class="n">21</td><td>VGH (PREVGH)</td><td>condensatore 50 V, uscita del booster</td><td>J1-21 in entrambe le varianti, più 1 µF/50 V ceramico locale</td><td><span class="chip c2">2</span></td></tr>
+      <tr><td class="n">22</td><td>VSL</td><td>condensatore</td><td>cascade: J1-22 · due CS: 1 µF/50 V ceramico verso GND</td><td><span class="chip c2">2</span></td></tr>
+      <tr><td class="n">23</td><td>VGL (PREVGL)</td><td>condensatore 50 V, uscita del booster</td><td>J1-23 in entrambe le varianti, più 1 µF/50 V ceramico locale</td><td><span class="chip c2">2</span></td></tr>
+      <tr><td class="n">24</td><td>VCOM</td><td>condensatore</td><td>cascade: J1-24 · due CS: 1 µF/50 V ceramico verso GND, mai a ponte</td><td><span class="chip c2">2</span></td></tr>
     </tbody>
   </table></div>
+  <p><b>cand.</b> = candidato CL o M/S#. In fase 1 si usa solo come ingresso con 1 kΩ in serie o con un tie debole 4,7-10 kΩ, mai a filo, e solo se la fase 0 non lo ha trovato a ~0 V o ~0 Ω (è già uno strap). Il pad 19 non si collega a niente in nessuna fase. Le righe con "1, 2" e "2" valgono solo se la fase 0 conferma la piedinatura.</p>
 </section>
 
 <section>
-  <h2>Prova: pinout della coda lunga</h2>
-  <p><b>L'idea.</b> Il multimetro in modalità diodo, messo fra la massa e un contatto della coda, mostra un numero che dipende da cosa c'è dietro quel contatto. Misuri così i 24 contatti della coda lunga, poi i 24 della coda corta. Se le due liste di numeri sono uguali, le due code hanno lo stesso pinout.</p>
-  <p><b>Perché la coda lunga.</b> È quella che già funziona in J1, quindi sappiamo cosa c'è su ogni suo contatto: le sue letture fanno da riferimento.</p>
-  <p><b>Perché funziona.</b> Ogni pin del controller ha un diodo di protezione verso la massa (VSS, pad 17). Fra VSS e un pin logico il multimetro legge la soglia di quel diodo, circa 0,4-0,7 V. Un contatto senza pista dà OL. Alimentazioni e rail danno altri valori. Non si alimenta niente.</p>
+  <h2>Fase 0 · Mappa col multimetro, a board spenta</h2>
+  <p class="lead">Serve a capire se la coda corta ha la stessa piedinatura della lunga, prima di collegarle qualunque filo. Non si alimenta niente: una pinza resta fissa sulla massa della Waveshare spenta e un puntale tocca, uno alla volta, i fori della breakout in cui è infilata la coda. Le piste a 0,5 mm della coda non si toccano mai.</p>
 
-  <ol class="steps">
-    <li><h3>Prepara</h3>
-      <p>Scollega la board dall'USB. Segna col pennarello da che lato guardano i contatti della coda lunga, poi estraila da J1. Il connettore regge poche decine di inserzioni: apri del tutto lo sportellino e non piegare la coda.</p></li>
-    <li><h3>Infila la coda lunga nella breakout</h3>
-      <p>Coda dritta fino in fondo, contatti verso le molle, sportellino chiuso. Da qui tocchi solo i pad della breakout.</p></li>
-    <li><h3>Misura</h3>
-      <p>Multimetro in modalità diodo (simbolo ▶|). Puntale rosso sul pad 17 e lascialo lì. Col nero tocca i pad da 1 a 24, uno alla volta, e scrivi nella colonna "Coda lunga" il numero che leggi, oppure OL.</p></li>
-    <li><h3>Controlla</h3>
-      <p>I pad 8-14 devono dare tutti fra 0,4 e 0,7 V. Se danno tutti OL, la coda è probabilmente girata: girala e rifai il passo 3. Se anche girata danno OL, fermati.</p></li>
-    <li><h3>Rimetti la coda lunga in J1</h3>
-      <p>Dal lato che hai segnato, poi fai un refresh: il pannello deve dipingere come prima.</p></li>
-    <li><h3>Ripeti con la coda corta</h3>
-      <p>Passi 2-4 con la coda corta, scrivendo nella colonna "Coda corta".</p></li>
+  <h3>Le misure della fase 0</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Misura</th><th>Passi</th><th>Cosa dice</th><th>Cosa non dice</th></tr></thead>
+    <tbody>
+      <tr><td><b>Diodo verso massa</b>, pad per pad, su ciascuna coda</td><td class="mono">0.2, 0.3</td><td>La categoria di ogni pad: pin logico, alimentazione o rail, massa, nessuna pista. Confrontando le due code riga per riga dice se hanno la stessa piedinatura.</td><td>Quale pin logico è quale: BUSY e D/C# danno lo stesso valore.</td></tr>
+      <tr><td><b>Continuità fra le code</b></td><td class="mono">0.4</td><td>Quali net sono in comune fra le due code: VSS, VCOM, eventuali rail, e se la coda corta ha la numerazione rovesciata.</td><td>A quale pad della coda corta corrisponde un pin logico della lunga. I due controller sono chip separati: fra i loro pin logici non c'è rame, e su quei pin il risultato atteso è OL.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Ogni pin del controller ha di norma un diodo di protezione verso VSS. In modalità diodo il multimetro fa passare una piccola corrente dal rosso al nero: con il rosso sulla massa e il nero su un pin, la corrente attraversa quel diodo nel suo verso e il display ne mostra la soglia, circa 0,4-0,7 V. Fra un pin della coda lunga e uno della coda corta, invece, qualunque percorso attraversa uno dei due diodi in inversa.</p>
+
+  <div class="fig">
+<svg viewBox="0 0 1000 330" role="img" aria-label="Perchè la misura a diodo verso massa legge i pin logici e la continuità fra le due code non li collega: due controller separati con il solo VSS in comune">
+  <!-- pannello con i due controller e il VSS in comune -->
+  <rect x="60" y="24" width="880" height="256" rx="6" fill="none" stroke="var(--muted)" stroke-dasharray="5 4"/>
+  <text x="76" y="44" fill="var(--muted)" font-size="10">pannello</text>
+  <rect x="110" y="74" width="260" height="140" rx="6" fill="var(--surface)" stroke="var(--fg)" stroke-width="1.5"/>
+  <rect x="630" y="74" width="260" height="140" rx="6" fill="var(--surface)" stroke="var(--fg)" stroke-width="1.5"/>
+  <text x="124" y="98" fill="var(--fg)" font-size="11" font-weight="600">controller</text><text x="124" y="112" fill="var(--fg)" font-size="11" font-weight="600">coda lunga</text>
+  <text x="644" y="98" fill="var(--fg)" font-size="11" font-weight="600">controller</text><text x="644" y="112" fill="var(--fg)" font-size="11" font-weight="600">coda corta</text>
+
+  <!-- pin 9 e diodo di protezione verso VSS, in ciascun controller -->
+  <g stroke="var(--fg)" stroke-width="2" fill="none">
+    <path d="M240 46 V240"/><path d="M760 46 V240"/>
+    <path d="M160 240 H840"/><path d="M160 240 V306"/><path d="M840 240 V306"/>
+  </g>
+  <path d="M228 148 H252 L240 126 Z M228 126 H252" stroke="var(--fg)" stroke-width="2" fill="var(--fg)"/>
+  <path d="M748 148 H772 L760 126 Z M748 126 H772" stroke="var(--fg)" stroke-width="2" fill="var(--fg)"/>
+  <circle cx="240" cy="40" r="6" fill="var(--busy)"/><circle cx="760" cy="40" r="6" fill="var(--busy)"/>
+  <circle cx="160" cy="306" r="6" fill="var(--gnd)"/><circle cx="840" cy="306" r="6" fill="var(--gnd)"/>
+  <g font-size="10">
+    <text x="228" y="16" fill="var(--fg)" text-anchor="end">pad 9 della coda lunga</text>
+    <text x="772" y="16" fill="var(--fg)">pad 9 della coda corta</text>
+    <text x="172" y="322" fill="var(--fg)">pad 17 della coda lunga</text>
+    <text x="828" y="322" fill="var(--fg)" text-anchor="end">pad 17 della coda corta</text>
+    <text x="500" y="258" fill="var(--muted)" text-anchor="middle">VSS in comune fra le code (verificato in 0.1)</text>
+  </g>
+
+  <!-- continuità fra le code: nessun rame, diodo in inversa -->
+  <path d="M250 40 H750" stroke="var(--rail)" stroke-width="2" stroke-dasharray="6 5" fill="none"/>
+  <path d="M488 28 L512 52 M512 28 L488 52" stroke="var(--rail)" stroke-width="3"/>
+  <text x="500" y="72" fill="var(--rail)" font-size="10" text-anchor="middle">nessun rame fra i due pad</text>
+  <text x="258" y="134" fill="var(--rail)" font-size="10">in inversa per</text>
+  <text x="258" y="147" fill="var(--rail)" font-size="10">la continuità</text>
+
+  <!-- misura a diodo verso massa sulla coda corta -->
+  <path d="M850 306 V250 H770 V50" stroke="var(--busy)" stroke-width="2" stroke-dasharray="6 4" fill="none"/>
+  <text x="782" y="134" fill="var(--busy)" font-size="10">misura a diodo:</text>
+  <text x="782" y="147" fill="var(--busy)" font-size="10">0,4-0,7 V</text>
+</svg>
+  </div>
+  <div class="legend">
+    <span><i class="sw" style="background:var(--busy)"></i>misura a diodo verso massa (0.2, 0.3): rosso sul pad 17, nero sul pad 9, la corrente attraversa il diodo nel suo verso</span>
+    <span><i class="sw" style="background:var(--rail)"></i>continuità fra le code (0.4): fra il pad 9 della lunga e il pad 9 della corta ogni percorso passa da un diodo in inversa, e il multimetro legge OL</span>
+  </div>
+
+  <div class="overview">
+    <span class="chip">0.1 massa comune</span><span class="chip">0.2 coda corta, diodo verso massa</span><span class="chip">0.3 coda lunga, diodo verso massa</span><span class="chip">0.4 continuità fra le code</span><span class="chip">risultato</span>
+  </div>
+  <p>Se il tag funziona ancora, la cattura con l'analizzatore logico (0.6, fra le misure facoltative in fondo) dice più di tutta questa mappa: in quel caso falla per prima.</p>
+
+  <h3>Montaggio e preparazione</h3>
+
+  <div class="fig">
+<svg viewBox="0 0 1000 500" role="img" aria-label="Montaggio della fase 0: pinza del puntale rosso su GND dell'header J3 della Waveshare spenta, coda lunga in J1, coda corta nella breakout, puntale nero sui fori della breakout">
+  <!-- multimetro -->
+  <rect x="400" y="14" width="200" height="118" rx="10" fill="var(--surface)" stroke="var(--fg)" stroke-width="1.5"/>
+  <rect x="418" y="28" width="164" height="44" rx="4" fill="var(--bg)" stroke="var(--line)"/>
+  <text x="500" y="59" fill="var(--fg)" font-size="22" text-anchor="middle" font-weight="500">0,52 V</text>
+  <text x="500" y="90" fill="var(--muted)" font-size="10" text-anchor="middle">modalità diodo ▶| oppure Ω / bip</text>
+  <circle cx="450" cy="114" r="7" fill="var(--rail)"/><text x="466" y="118" fill="var(--rail)" font-size="10">V Ω</text>
+  <circle cx="550" cy="114" r="7" fill="var(--fg)"/><text x="534" y="118" fill="var(--fg)" font-size="10" text-anchor="end">COM</text>
+
+  <!-- Waveshare spenta -->
+  <rect x="20" y="150" width="300" height="320" rx="10" fill="var(--pcb)"/>
+  <text x="40" y="176" fill="var(--pcb-ink)" font-size="13" font-weight="600">Waveshare ESP32 Driver Board V3</text>
+  <text x="40" y="194" fill="var(--rail)" font-size="11" font-weight="600">spenta: USB scollegato</text>
+  <text x="290" y="216" fill="var(--pcb-ink)" font-size="10" text-anchor="middle">J3</text>
+  <g font-size="9.5" text-anchor="end">
+    <circle cx="290" cy="232" r="5" fill="var(--busy)"/><text x="278" y="235.5" fill="var(--pcb-ink)">9 · IO25 · J1-9</text>
+    <circle cx="290" cy="250" r="5" fill="var(--ctl)"/><text x="278" y="253.5" fill="var(--pcb-ink)">10 · IO26 · J1-10</text>
+    <circle cx="290" cy="268" r="5" fill="var(--ctl)"/><text x="278" y="271.5" fill="var(--pcb-ink)">11 · IO27 · J1-11</text>
+    <circle cx="290" cy="286" r="5" fill="var(--spi)"/><text x="278" y="289.5" fill="var(--pcb-ink)">12 · IO14 · J1-14</text>
+    <circle cx="290" cy="304" r="4" fill="var(--pad)" opacity=".55"/><text x="278" y="307.5" fill="var(--pcb-ink)" opacity=".6">13 · IO12</text>
+    <circle cx="290" cy="322" r="6" fill="var(--gnd)" stroke="var(--pcb-ink)" stroke-width="1.5"/><text x="278" y="325.5" fill="var(--pcb-ink)" font-weight="600">14 · GND · J1-17</text>
+    <circle cx="290" cy="340" r="5" fill="var(--spi)"/><text x="278" y="343.5" fill="var(--pcb-ink)">15 · IO13 · J1-13</text>
+  </g>
+  <text x="40" y="380" fill="var(--pcb-ink)" font-size="9.5" opacity=".85">J4-16 · IO15 · J1-12</text>
+  <text x="40" y="394" fill="var(--pcb-ink)" font-size="9.5" opacity=".85">GND anche su J4-1 e J4-7</text>
+  <!-- condensatori attorno a J1 -->
+  <g fill="var(--pad)"><rect x="196" y="420" width="10" height="18" rx="1"/><rect x="214" y="420" width="10" height="18" rx="1"/><rect x="232" y="420" width="10" height="18" rx="1"/><rect x="250" y="420" width="10" height="18" rx="1"/></g>
+  <text x="40" y="430" fill="var(--pcb-ink)" font-size="9.5" opacity=".85">condensatori dei rail</text>
+  <text x="40" y="443" fill="var(--pcb-ink)" font-size="9.5" opacity=".85">ed EPD_3.3V attorno a J1</text>
+  <rect x="276" y="404" width="40" height="52" rx="3" fill="none" stroke="var(--pcb-ink)" stroke-width="1.5"/>
+  <text x="296" y="398" fill="var(--pcb-ink)" font-size="10" text-anchor="middle">J1</text>
+
+  <!-- coda lunga in J1 -->
+  <path d="M316 430 H560" stroke="var(--ribbon)" stroke-width="26" fill="none"/>
+  <text x="438" y="466" fill="var(--muted)" font-size="10" text-anchor="middle">coda lunga, resta in J1</text>
+
+  <!-- pannello -->
+  <rect x="560" y="300" width="180" height="180" rx="4" fill="var(--surface)" stroke="var(--fg)" stroke-width="1.5"/>
+  <text x="650" y="324" fill="var(--fg)" font-size="11" text-anchor="middle" font-weight="600">SOLUM 12.2"</text>
+  <text x="650" y="352" fill="var(--muted)" font-size="9.5" text-anchor="middle">VSS in comune</text>
+  <text x="650" y="365" fill="var(--muted)" font-size="9.5" text-anchor="middle">fra le code? (0.1)</text>
+  <text x="650" y="458" fill="var(--muted)" font-size="9" text-anchor="middle">diodo di protezione</text>
+  <text x="650" y="470" fill="var(--muted)" font-size="9" text-anchor="middle">del pin, nel controller</text>
+
+  <!-- coda corta verso la breakout -->
+  <path d="M740 430 H885 V394" stroke="var(--ribbon)" stroke-width="22" fill="none" stroke-linejoin="round"/>
+  <text x="812" y="466" fill="var(--muted)" font-size="10" text-anchor="middle">coda corta</text>
+
+  <!-- breakout FPC-24P: fila alta pari 24..2, fila bassa dispari 23..1, pin 1 a destra -->
+  <rect x="784" y="170" width="208" height="230" rx="8" fill="var(--pcb)"/>
+  <rect x="840" y="366" width="90" height="26" rx="3" fill="var(--surface)" stroke="var(--fg)"/>
+  <text x="885" y="384" fill="var(--fg)" font-size="9" text-anchor="middle">FPC 24p</text>
+  <text x="888" y="300" fill="var(--pcb-ink)" font-size="11" text-anchor="middle" font-weight="600">breakout FPC-24P</text>
+  <g font-size="8.5" text-anchor="middle" fill="var(--pcb-ink)">
+    <text x="800" y="196">24</text><text x="816" y="196">22</text><text x="832" y="196">20</text><text x="848" y="196">18</text><text x="864" y="196">16</text><text x="880" y="196">14</text><text x="896" y="196">12</text><text x="912" y="196">10</text><text x="928" y="196">8</text><text x="944" y="196">6</text><text x="960" y="196">4</text><text x="976" y="196">2</text>
+    <text x="800" y="262">23</text><text x="816" y="262">21</text><text x="832" y="262">19</text><text x="848" y="262">17</text><text x="864" y="262">15</text><text x="880" y="262">13</text><text x="896" y="262">11</text><text x="912" y="262">9</text><text x="928" y="262">7</text><text x="944" y="262">5</text><text x="960" y="262">3</text><text x="976" y="262">1</text>
+  </g>
+  <g fill="var(--pad)" stroke="var(--pcb-ink)" stroke-width="1">
+    <circle cx="800" cy="210" r="5"/><circle cx="816" cy="210" r="5"/><circle cx="832" cy="210" r="5"/><circle cx="848" cy="210" r="5"/><circle cx="864" cy="210" r="5"/><circle cx="880" cy="210" r="5"/><circle cx="896" cy="210" r="5"/><circle cx="912" cy="210" r="5"/><circle cx="928" cy="210" r="5"/><circle cx="944" cy="210" r="5"/><circle cx="960" cy="210" r="5"/><circle cx="976" cy="210" r="5"/>
+    <circle cx="800" cy="236" r="5"/><circle cx="816" cy="236" r="5"/><circle cx="832" cy="236" r="5"/><circle cx="848" cy="236" r="5" fill="var(--gnd)"/><circle cx="864" cy="236" r="5" fill="var(--pwr)"/><circle cx="880" cy="236" r="5"/><circle cx="896" cy="236" r="5"/><circle cx="912" cy="236" r="5" fill="var(--busy)"/><circle cx="928" cy="236" r="5"/><circle cx="944" cy="236" r="5"/><circle cx="960" cy="236" r="5"/><circle cx="976" cy="236" r="5"/>
+  </g>
+  <text x="848" y="284" fill="var(--pcb-ink)" font-size="8.5" text-anchor="middle">VSS</text>
+  <text x="864" y="284" fill="var(--pcb-ink)" font-size="8.5" text-anchor="start" dx="4">VDDIO</text>
+
+  <!-- percorso della corrente di prova -->
+  <path d="M296 322 H340 V430 H636 M664 430 H885 V392 M885 366 L912 242" stroke="var(--busy)" stroke-width="2" stroke-dasharray="6 4" fill="none"/>
+  <path d="M636 420 V440 L662 430 Z M664 419 V441" stroke="var(--busy)" stroke-width="2" fill="var(--busy)"/>
+
+  <!-- puntale rosso: pinza fissa su J3-14 -->
+  <path d="M450 121 C450 230 380 322 316 322" stroke="var(--rail)" stroke-width="3" fill="none"/>
+  <path d="M296 314 L318 316 L318 328 L296 330 Z" fill="var(--rail)"/>
+  <text x="462" y="222" fill="var(--rail)" font-size="10" font-weight="600">pinza fissa</text>
+  <text x="462" y="235" fill="var(--rail)" font-size="10">su J3-14 GND</text>
+
+  <!-- puntale nero: scorre sui fori -->
+  <path d="M550 121 C600 150 880 120 930 150" stroke="var(--fg)" stroke-width="3" fill="none"/>
+  <path d="M930 150 L916 228" stroke="var(--fg)" stroke-width="5" stroke-linecap="round"/>
+  <path d="M916 228 L913 238" stroke="var(--fg)" stroke-width="2"/>
+  <text x="640" y="200" fill="var(--fg)" font-size="10" font-weight="600">puntale nero</text>
+  <text x="640" y="213" fill="var(--fg)" font-size="10">scorre sui fori 1-24</text>
+</svg>
+  </div>
+  <div class="legend">
+    <span><i class="sw" style="background:var(--rail)"></i>cavo rosso, presa V Ω, con la pinza</span>
+    <span><i class="sw" style="background:var(--fg)"></i>cavo nero, presa COM, il puntale che si muove</span>
+    <span><i class="sw" style="background:var(--busy)"></i>percorso della corrente di prova</span>
+  </div>
+  <p>Il montaggio di 0.1, 0.2 e 0.4. In 0.3 le code si scambiano fra J1 e la breakout, e i puntali restano dove sono.</p>
+
+  <div class="grid2">
+    <div class="card"><h3>Cosa serve</h3>
+      <ul>
+        <li>Multimetro con modalità diodo (▶|) e continuità col bip.</li>
+        <li>Una pinza a coccodrillo da infilare sul puntale rosso.</li>
+        <li>Un cavetto dupont maschio, solo per i casi in cui la pinza va sulla breakout.</li>
+        <li>Un pennarello.</li>
+      </ul></div>
+    <div class="card"><h3>Prima di cominciare</h3>
+      <ol class="act">
+        <li>Scollega l'USB dalla board. Il sensore può restare collegato.</li>
+        <li>Cavo rosso nella presa V Ω, cavo nero in COM.</li>
+        <li>Trova J3-14 sulla serigrafia: è il GND fra IO12 e IO13, sul lato di J3 dove il pin 1 è il 3V3.</li>
+        <li>In modalità Ω tocca i puntali fra loro e annota il valore: è la resistenza dei cavi.</li>
+      </ol></div>
+    <div class="card"><h3>Come leggere il display</h3>
+      <p>In modalità diodo, rosso sulla massa e nero sul foro:</p>
+      <div class="tbl"><table class="read">
+        <tbody>
+          <tr><td class="mono">0,4-0,7 V</td><td>pin logico del controller</td></tr>
+          <tr><td class="mono">~0 V, bip</td><td>contatto a massa: VSS o uno strap</td></tr>
+          <tr><td class="mono">sale piano</td><td>alimentazione o rail: si sta caricando un condensatore</td></tr>
+          <tr><td class="mono">OL</td><td>nessuna pista, oppure una resistenza alta (la misura in Ω lo dice)</td></tr>
+          <tr><td>altro</td><td>annota il valore com'è</td></tr>
+        </tbody>
+      </table></div></div>
+  </div>
+
+  <ol class="steps plain">
+    <li><h3><span class="tag">0.0</span>Guarda le code con la lente</h3>
+      <p>Batterie del tag tolte. Su ognuna delle due code conta i conduttori con il rame e guarda su quale faccia stanno: se una ne ha 24 e l'altra meno, segna quali mancano (i sospetti sono 1, 4 e 19). Sulla scheda del tag individua il booster, il connettore senza booster (quello della coda corta) e i componenti vicini, e fotografa tutto prima di toccare.</p></li>
+
+    <li><h3><span class="tag">0.1</span>Verifica che la massa arrivi alla coda corta</h3>
+      <p class="setup"><b>Montaggio:</b> coda lunga in J1, dove sta già; coda corta nella breakout; board spenta.</p>
+      <ol class="act">
+        <li>Infila la coda corta nella breakout: sportellino alzato, coda dritta fino in fondo coi contatti verso le molle, sportellino chiuso.</li>
+        <li>Multimetro in continuità, pinza rossa su J3-14.</li>
+        <li>Puntale nero sul foro 17.</li>
+      </ol>
+      <ul>
+        <li><b>Bip:</b> la massa della board arriva alla coda corta attraverso il pannello. La pinza resta su J3-14 per tutta la fase 0.</li>
+        <li><b>OL:</b> annotalo, è già un risultato. Da qui in avanti la pinza va sul foro 17 della breakout, agganciata al cavetto dupont infilato nel foro.</li>
+      </ul></li>
+
+    <li><h3><span class="tag">0.2</span>Coda corta: diodo verso massa</h3>
+      <p class="setup"><b>Montaggio:</b> come in 0.1. Si scrive nella parte "Coda corta" della tabella qui sotto.</p>
+      <ol class="act">
+        <li>Modalità diodo. Tocca col puntale nero i fori da 1 a 24, saltando il 17, e scrivi ogni lettura nella colonna "Diodo".</li>
+        <li>Solo sui fori che hanno dato OL o ~0 V: modalità Ω, rileggi e scrivi nella colonna "Ω".</li>
+        <li>Se in Ω leggi un valore, scambia le due spine nel multimetro (i puntali restano dove sono) e rileggi: due valori uguali sono una resistenza, cioè uno strap; due valori diversi sono un diodo.</li>
+      </ol>
+      <details>
+        <summary>Passata facoltativa: diodo verso l'alimentazione</summary>
+        <p>Serve solo se le prime due passate lasciano dubbi su un foro. Sposta la pinza sul puntale nero e agganciala al cavetto infilato nel foro 15 (VDDIO), poi tocca i fori col puntale rosso. Un pin con la protezione verso l'alimentazione dà 0,4-0,7 V. Scrivi nella colonna "Nero su 15".</p>
+      </details></li>
+
+    <li><h3><span class="tag">0.3</span>Coda lunga: diodo verso massa</h3>
+      <p class="setup"><b>Montaggio:</b> code scambiate, la corta in J1 e la lunga nella breakout. È l'unico passo che tocca J1, un connettore che regge poche decine di inserzioni: sportellini alzati del tutto e code mai piegate. Le letture della coda lunga sono il riferimento, perchè è la coda di cui si sa già cosa c'è su ogni contatto.</p>
+      <ol class="act">
+        <li>Segna col pennarello da che lato guardano i contatti della coda lunga.</li>
+        <li>Togli la coda lunga da J1 e la corta dalla breakout, poi infila la corta in J1 e la lunga nella breakout.</li>
+        <li>Rifai le passate di 0.2 scrivendo nella parte "Coda lunga" della tabella.</li>
+        <li>Controllo: i fori da 8 a 14 devono dare 0,4-0,7 V. Se sono tutti OL gira la coda e rifai; se restano OL fermati.</li>
+        <li>Rimetti la coda corta nella breakout e la lunga in J1, dal lato segnato. La board resta spenta: serve così in 0.4.</li>
+      </ol>
+      <p>Se 0.1 ha dato OL, non scambiare le code: misura la coda lunga con J1 vuoto e la pinza sul foro 17 della breakout, poi rimetti la coda lunga in J1.</p></li>
+
+    <li><h3><span class="tag">0.4</span>Continuità fra le code</h3>
+      <p class="setup"><b>Montaggio:</b> come in 0.1, multimetro in continuità. Ogni punto della board in tabella è un contatto della coda lunga.</p>
+      <p>Questa misura non trova a quale pad della coda corta corrisponde un pin logico della lunga: i due controller sono chip separati e fra i loro pin logici non c'è rame. Sulle righe da 9 a 14 il risultato atteso è nessun bip. Trova invece le net che il pannello ha in comune fra le due code.</p>
+      <ol class="act">
+        <li>Pinza sul primo punto della tabella.</li>
+        <li>Striscia il puntale nero lungo le due file di fori della breakout. Dove suona, scrivi il numero del foro in quella riga.</li>
+        <li>Passa al punto successivo.</li>
+        <li>Alla fine collega l'USB e fai un refresh: il pannello deve dipingere come prima di 0.3.</li>
+      </ol>
+      <p>Un bip breve che si spegne subito è un condensatore che si carica: non conta.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Pinza su</th><th>Contatto della coda lunga</th><th>Fori della coda corta che suonano</th></tr></thead>
+        <tbody>
+          <tr><td>J3-14 GND</td><td class="mono">17 VSS</td><td class="mono">17 atteso</td></tr>
+          <tr><td>J3-9 · IO25</td><td class="mono">9 BUSY</td><td></td></tr>
+          <tr><td>J3-10 · IO26</td><td class="mono">10 RES#</td><td></td></tr>
+          <tr><td>J3-11 · IO27</td><td class="mono">11 D/C#</td><td></td></tr>
+          <tr><td>J4-16 · IO15</td><td class="mono">12 CS#</td><td></td></tr>
+          <tr><td>J3-15 · IO13</td><td class="mono">13 SCK</td><td></td></tr>
+          <tr><td>J3-12 · IO14</td><td class="mono">14 SDA</td><td></td></tr>
+          <tr><td>ogni condensatore attorno a J1, uno alla volta, sul lato che non suona verso J3-14</td><td class="mono">15, 16 e i rail 5, 18, 20-24</td><td></td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li><b>Suonano solo il 17 e forse il 24:</b> normale, VCOM in comune è atteso in tutte e due le ipotesi.</li>
+        <li><b>Un foro <i>k</i> suona verso il contatto 25-<i>k</i>:</b> la coda corta ha la numerazione rovesciata.</li>
+        <li><b>Altri fori suonano verso un condensatore:</b> rail in comune, indizio di cascade.</li>
+      </ul></li>
   </ol>
 
+  <h3>Tabella da compilare</h3>
   <div class="legend">
     <span>Stessi colori dei pad nello schema:</span>
     <span><i class="dot" style="background:var(--spi)"></i>bus SPI</span>
@@ -368,79 +627,192 @@ svg text{font-family:var(--f-mono)}
     <span><i class="dot" style="background:var(--open)"></i>non collegati nel cablaggio</span>
   </div>
   <div class="tbl"><table class="rec">
-    <thead><tr><th>Pad</th><th>Segnale sulla coda lunga</th><th>Coda lunga</th><th>Coda corta</th></tr></thead>
+    <thead>
+      <tr><th rowspan="2">Pad</th><th rowspan="2">Segnale sulla coda lunga</th><th class="grp" colspan="3">Coda lunga</th><th class="grp" colspan="3">Coda corta</th></tr>
+      <tr><th class="grp">Diodo</th><th>Ω, due versi</th><th>Nero su 15</th><th class="grp">Diodo</th><th>Ω, due versi</th><th>Nero su 15</th></tr>
+    </thead>
     <tbody>
-      <tr class="t-open"><td class="n"><span class="pd pd-open">1</span></td><td class="mono sig">NC</td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-open"><td class="n"><span class="pd pd-open">2</span></td><td class="mono sig">GDR</td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-open"><td class="n"><span class="pd pd-open">3</span></td><td class="mono sig">RESE</td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-open"><td class="n"><span class="pd pd-open">4</span></td><td class="mono sig">NC</td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-rail"><td class="n"><span class="pd pd-rail">5</span></td><td class="mono sig">VSH2</td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-open"><td class="n"><span class="pd pd-open">6</span></td><td class="mono sig">TSCL</td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-open"><td class="n"><span class="pd pd-open">7</span></td><td class="mono sig">TSDA</td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-gnd"><td class="n"><span class="pd pd-gnd">8</span></td><td class="mono sig">BS1 <span class="hint">0,4-0,7 V</span></td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-busy"><td class="n"><span class="pd pd-busy">9</span></td><td class="mono sig">BUSY <span class="hint">0,4-0,7 V</span></td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-ctl"><td class="n"><span class="pd pd-ctl">10</span></td><td class="mono sig">RES# <span class="hint">0,4-0,7 V</span></td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-ctl"><td class="n"><span class="pd pd-ctl">11</span></td><td class="mono sig">D/C# <span class="hint">0,4-0,7 V</span></td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-ctl"><td class="n"><span class="pd pd-ctl">12</span></td><td class="mono sig">CS# <span class="hint">0,4-0,7 V</span></td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-spi"><td class="n"><span class="pd pd-spi">13</span></td><td class="mono sig">SCL <span class="hint">0,4-0,7 V</span></td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-spi"><td class="n"><span class="pd pd-spi">14</span></td><td class="mono sig">SDA <span class="hint">0,4-0,7 V</span></td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-pwr"><td class="n"><span class="pd pd-pwr">15</span></td><td class="mono sig">VDDIO</td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-pwr"><td class="n"><span class="pd pd-pwr">16</span></td><td class="mono sig">VCI</td><td class="b"></td><td class="b"></td></tr>
-      <tr class="ref t-gnd"><td class="n"><span class="pd pd-gnd">17</span></td><td class="mono sig">VSS</td><td colspan="2">qui resta il puntale rosso</td></tr>
-      <tr class="t-rail"><td class="n"><span class="pd pd-rail">18</span></td><td class="mono sig">VDD</td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-open"><td class="n"><span class="pd pd-open">19</span></td><td class="mono sig">VPP</td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-rail"><td class="n"><span class="pd pd-rail">20</span></td><td class="mono sig">VSH1</td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-rail"><td class="n"><span class="pd pd-rail">21</span></td><td class="mono sig">VGH</td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-rail"><td class="n"><span class="pd pd-rail">22</span></td><td class="mono sig">VSL</td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-rail"><td class="n"><span class="pd pd-rail">23</span></td><td class="mono sig">VGL</td><td class="b"></td><td class="b"></td></tr>
-      <tr class="t-rail"><td class="n"><span class="pd pd-rail">24</span></td><td class="mono sig">VCOM</td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-open"><td class="n"><span class="pd pd-open">1</span></td><td class="mono sig">NC <span class="hint">candidato</span></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-open"><td class="n"><span class="pd pd-open">2</span></td><td class="mono sig">GDR</td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-open"><td class="n"><span class="pd pd-open">3</span></td><td class="mono sig">RESE</td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-open"><td class="n"><span class="pd pd-open">4</span></td><td class="mono sig">NC <span class="hint">candidato</span></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-rail"><td class="n"><span class="pd pd-rail">5</span></td><td class="mono sig">VSH2</td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-open"><td class="n"><span class="pd pd-open">6</span></td><td class="mono sig">TSCL <span class="hint">candidato</span></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-open"><td class="n"><span class="pd pd-open">7</span></td><td class="mono sig">TSDA <span class="hint">candidato</span></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-gnd"><td class="n"><span class="pd pd-gnd">8</span></td><td class="mono sig">BS1 <span class="hint">0,4-0,7 V</span></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-busy"><td class="n"><span class="pd pd-busy">9</span></td><td class="mono sig">BUSY <span class="hint">0,4-0,7 V</span></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-ctl"><td class="n"><span class="pd pd-ctl">10</span></td><td class="mono sig">RES# <span class="hint">0,4-0,7 V</span></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-ctl"><td class="n"><span class="pd pd-ctl">11</span></td><td class="mono sig">D/C# <span class="hint">0,4-0,7 V</span></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-ctl"><td class="n"><span class="pd pd-ctl">12</span></td><td class="mono sig">CS# <span class="hint">0,4-0,7 V</span></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-spi"><td class="n"><span class="pd pd-spi">13</span></td><td class="mono sig">SCL <span class="hint">0,4-0,7 V</span></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-spi"><td class="n"><span class="pd pd-spi">14</span></td><td class="mono sig">SDA <span class="hint">0,4-0,7 V</span></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-pwr"><td class="n"><span class="pd pd-pwr">15</span></td><td class="mono sig">VDDIO</td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-pwr"><td class="n"><span class="pd pd-pwr">16</span></td><td class="mono sig">VCI</td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="ref t-gnd"><td class="n"><span class="pd pd-gnd">17</span></td><td class="mono sig">VSS</td><td colspan="6">verso J3-14 deve dare pochi Ω (0.1); se dà OL qui va la pinza rossa</td></tr>
+      <tr class="t-rail"><td class="n"><span class="pd pd-rail">18</span></td><td class="mono sig">VDD</td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-open"><td class="n"><span class="pd pd-open">19</span></td><td class="mono sig">VPP <span class="hint">mai collegare</span></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-rail"><td class="n"><span class="pd pd-rail">20</span></td><td class="mono sig">VSH1</td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-rail"><td class="n"><span class="pd pd-rail">21</span></td><td class="mono sig">VGH</td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-rail"><td class="n"><span class="pd pd-rail">22</span></td><td class="mono sig">VSL</td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-rail"><td class="n"><span class="pd pd-rail">23</span></td><td class="mono sig">VGL</td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
+      <tr class="t-rail"><td class="n"><span class="pd pd-rail">24</span></td><td class="mono sig">VCOM</td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td><td class="b"></td></tr>
     </tbody>
   </table></div>
 
   <h3>Risultato</h3>
+  <p>Si confrontano, riga per riga, le colonne "Diodo" della coda lunga e della coda corta. Tre righe di esempio:</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Pad</th><th>Coda lunga</th><th>Coda corta</th><th>Come si legge</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">9</td><td class="mono">0,52 V</td><td class="mono">0,51 V</td><td>uguali: sullo stesso pad le due code hanno un pin logico</td></tr>
+      <tr><td class="mono">5</td><td class="mono">sale piano</td><td class="mono">OL</td><td>diversi: la coda corta non ha un rail su quel pad</td></tr>
+      <tr><td class="mono">9 e 16</td><td class="mono">9: 0,52 V</td><td class="mono">16: 0,51 V</td><td>il pad 9 della lunga dà lo stesso valore del 16 della corta (16 = 25 - 9): se succede su tutte le righe la coda corta è specchiata</td></tr>
+    </tbody>
+  </table></div>
   <ul>
-    <li><b>Colonne uguali</b> (a meno di qualche centesimo di volt): stesso pinout, lo schema di questa pagina vale. Passa alla fase 1.</li>
-    <li><b>Diverse solo sui pad 1, 4 o 19</b>: lì passano i segnali della cascade (CL, M/S#). Annota quali e segui la variante cascade della fase 2.</li>
-    <li><b>Diverse su altri pad</b>: pinout diverso. Non collegare niente e ricostruisci il pinout dalla scheda del tag.</li>
+    <li><b>Colonne uguali</b> fra le due code, a meno di qualche centesimo di volt: indizio di stessa piedinatura, lo schema di questa pagina vale. Passa alla fase 1.</li>
+    <li><b>Uguali leggendo la coda corta al contrario</b> (pad <i>k</i> contro pad 25-<i>k</i>): piedinatura specchiata. Lo schema di questa pagina non vale così com'è: non collegare niente prima di averlo rifatto con la numerazione rovesciata.</li>
+    <li><b>Diverse solo sui fori 1, 4, 6, 7 o 19</b>: lì passano i segnali della cascade (CL, M/S#) o un enable. Annota quali; il 19 resta comunque scollegato.</li>
+    <li><b>Diverse su altri fori</b>: piedinatura diversa. Non collegare niente e ricostruiscila dalla scheda del tag (0.5) o dalla cattura (0.6).</li>
+    <li><b>Fori che in 0.4 hanno suonato verso la board</b>: sono net in comune fra le code, quindi in 0.2 e 0.3 la lettura comprende anche i componenti della board. Su quelle righe le colonne si confrontano con cautela.</li>
   </ul>
+
+  <details>
+    <summary>Dettagli e limiti</summary>
+    <p><b>Perchè la massa della board arriva alla breakout.</b> J3-14 è collegato al contatto 17 di J1, cioè al VSS della coda lunga; se il pannello ha il VSS in comune fra le due code, da lì arriva al foro 17 della breakout. È quello che verifica 0.1.</p>
+    <p><b>Perchè la board non sostituisce la breakout.</b> La Waveshare porta all'header solo i contatti di J1 che hanno una net sulla board: 9-14 attraverso i GPIO e 17 come GND. I contatti 15 e 16 e i rail arrivano solo alle piazzole dei condensatori, 2 e 3 al booster, 6 e 7 a R5 e R6 non montate, e 1, 4 e 19 a niente. Su ogni contatto collegato la board aggiunge poi i suoi componenti: diodi di protezione dell'ESP32, condensatori, booster. Per questo la mappa si legge sempre sulla breakout, e la board serve solo da punto fisso. I contatti 1, 4, 6, 7 e 19 della coda lunga non si confrontano dalla board: servono le due code in due breakout, ed è una misura da fare solo se il resto lascia dubbi.</p>
+    <p><b>Cosa non può dire.</b> Distingue categorie (pin logico, alimentazione, rail, nessuna pista) e non funzioni: non separa due pin logici fra loro e non riconosce CL o M/S# da un ingresso qualunque. Uno strap interno al COF non si vede: M/S# del master deve essere uno strap così, visto che i pad 1, 4 e 19 di J1 non hanno net. "Tutto OL" non prova che la coda sia girata: può essere anche un contatto mancato. Letture uguali a quelle della coda lunga sono un indizio di stessa piedinatura, non una prova; le misure sul tag (0.5 e 0.6) valgono più di qualunque confronto fra le due code.</p>
+  </details>
+
+  <h3>Misure facoltative, sul tag e sulla board</h3>
+  <ol class="steps plain">
+    <li><h3><span class="tag">0.5</span>Sul tag, con prolunghe</h3>
+      <p>Misura sul tag passando da prolunghe FFC e breakout, mai sulle gambe a 0,5 mm del connettore. Per ogni pad del connettore nudo annota a cosa va: pad n o 25-n del connettore col booster, GND, VDDIO, pin dell'MCU (RTL8762), passivo con valore, oppure isolato. Misura in Ω e a diodo, perchè la continuità non vede uno strap da 10 kΩ.</p>
+      <ul>
+        <li>Un pad del connettore nudo che va a un GPIO proprio dell'MCU: CS2 o BUSY2, cioè un controller indipendente con piedinatura diversa.</li>
+        <li>Pad che vanno al connettore col booster: rail o CL, cioè uno slave in cascade.</li>
+        <li>Un pad a GND o a VDDIO senza passare dal connettore col booster: è lo strap di M/S#, con il suo valore.</li>
+        <li>Se il tag dice cose diverse dalla tabella di questa pagina, vale il tag.</li>
+      </ul></li>
+    <li><h3><span class="tag">0.6</span>Cattura passiva, se il tag funziona</h3>
+      <p>Con il tag alimentato e funzionante, un analizzatore logico a 3,3 V sulle linee del connettore nudo (sui punti di accesso della scheda, non sulle gambe) mostra se i CS sono uno o due, la sequenza dei comandi, i livelli di M/S# e di BS e la frequenza di CL. È la misura più informativa e a rischio nullo: se il tag funziona, falla prima di tutte le altre.</p></li>
+    <li><h3><span class="tag">0.7</span>Sense di SW1 e baseline del master</h3>
+      <p>Misura in ogni posizione di SW1 la resistenza di sense del booster: lo schematico dice ON:A = 0,47 Ω e OFF:B = 3 Ω, il wiki dice il contrario, quindi non fidarti di nessuna delle due fonti (nè della serigrafia) prima della misura. Registra anche la baseline del master da solo: tensioni sui condensatori dei rail vicino a J1 a riposo e a fine refresh, e una foto del frame di riferimento.</p></li>
+  </ol>
 </section>
 
 <section>
   <h2>Procedura</h2>
-  <ol class="steps">
-    <li><h3>Fase 0 · Mappa a pannello e board staccati</h3>
-      <p>La fonte migliore è la scheda del tag originale, che ce l'hai: col multimetro in continuità, per ogni pin del connettore nudo (quello della coda corta) annota a quale pin del connettore col booster è collegato, quali vanno a GND o a 3,3 V e quali sono aperti. È la tabella del ponte fatta dal produttore, e chiude anche la questione M/S#: se un pin del connettore nudo va a GND senza passare dal primo connettore, è lo slave di una cascade.</p>
+  <p>Lo sketch è <code>examples/12_2c/dual_panel_finder</code>. Dal menu: <code>c</code> = LUNGA (la coda lunga sta in J1), <code>f</code> = sì (secondo FFC collegato), SPI a 4 MHz dalle voci 3, 4 e 5 del menu <code>p</code>. Poi il tasto <code>t</code>, che chiede lo stato del cablaggio ed esegue solo le sonde utili in quella fase. Lo sketch è in rielaborazione: se i nomi delle fasi a schermo non coincidono con questi, per i collegamenti fa fede questa pagina.</p>
+  <ol class="steps plain">
+    <li><h3>Fase 1 · Solo logica e 3,3 V, prima in ascolto poi in scrittura</h3>
+      <p>Tasto <code>t</code>, fase "coda corta sulla breakout con la sola logica". Alla breakout arrivano solo GND (17), VCI e VDDIO da EPD_3.3V (16 e 15), il ponticello di BS1 (8 → 17), 1 µF ceramico verso GND sul pad 18 (VDD) e i fili logici RST, D/C, CS, SCK, MOSI e BUSY, ciascuno con 100-330 Ω in serie. Nessun rail e nessun filo su GDR e RESE. Se un pad della fase 0 contraddice la tabella, fermati.</p>
+      <p>In questa fase lo sketch manda solo logica: SWRESET, <code>0x34</code>, <code>0x47</code> e <code>0x46</code>, e mai un <code>0x22</code> con bit analogici seguito da <code>0x20</code>. Legge il BUSY con entrambi i pull, perchè in fase 1 i regolatori dello slave non hanno condensatori e un BUSY flottante si legge al valore del pull.</p>
       <ul>
-        <li>Poi misura le due code sulla breakout come descritto in "Prova: pinout della coda lunga" e confronta le letture.</li>
-        <li>Se il tag dice cose diverse dalla tabella qui sopra, vale il tag.</li>
+        <li><b>In ascolto.</b> I GPIO liberi (4, 17, 34, 35) come ingressi, ciascuno con 1 kΩ in serie, si collegano a turno ai pad candidati (1, 4, 6, 7) e al pad 9 mentre parte un reset con SWRESET sul CS dello slave: serve a trovare un BUSY2 che non sia il pad 9.</li>
+        <li><b>In scrittura, un candidato e uno stato alla volta.</b> Tie debole da 4,7-10 kΩ, mai a filo, del candidato prima a VDDIO e poi a VSS. Per ogni stato: reset e SWRESET sul CS dello slave (GPIO32) e lettura del BUSY con pull-up e con pull-down. Un pad che in fase 0 era a ~0 V o ~0 Ω non si collega a niente. Il pad 19 mai.</li>
+        <li><b>BUSY che sale dopo SWRESET sul CS dello slave</b>, in almeno uno stato: il chip ha una risposta propria (è la prova per-CS, <code>i</code> voce 6, che il tasto <code>t</code> esegue per te). Annota stato e pad, e la variante due CS della fase 2 diventa praticabile.</li>
+        <li><b>BUSY che segue il pull in ogni stato</b>: nessuna risposta, e non è una prova di cascade nè di altro. Esito nullo: la fase 1 non conclude, si passa alla fase 2a.</li>
       </ul>
     </li>
-    <li><h3>Fase 1 · Solo logica e 3,3 V</h3>
-      <p>I fili colorati dello schema, nessun rail. Se un pad della fase 0 contraddice la tabella, fermati. Lo sketch è <code>examples/12_2c/dual_panel_finder</code>: menu <code>f</code> su "cablato", init con <code>i</code> voce 6 (per-CS). Con fili volanti tieni lo SPI a 4 MHz.</p>
+    <li><h3>Fase 2a · Cascade con la sola logica</h3>
+      <p>Prima di ogni rail ad alta tensione. Fra i due chip ci sono solo CL (sul pad indicato dalla fase 0 fra 1, 4, 6, 7, mai il 19) e VDD (pad 18 con J1-18). M/S# dello slave a VSS (se la fase 0 lo ha trovato come strap interno al COF non c'è niente da collegare), VDDIO comune da EPD_3.3V, CS dello slave (pad 12) su GPIO15 insieme al master. Dallo sketch (tasto <code>t</code>, fase "ponte cascade"): <code>0x21 = 00 10</code> al master e SWRESET allo slave, poi baseline del master.</p>
       <ul>
-        <li><b>BUSY su GPIO35 sale dopo reset e SWRESET</b>: controller indipendente con oscillatore suo. Prosegui con la fase 2, variante a due CS.</li>
-        <li><b>BUSY resta flottante</b>: è lo slave di una cascade (BUSY aperto, oscillatore spento). Prosegui con la fase 2, variante cascade.</li>
+        <li>CL è un filo su cui girano i fronti del clock: in coppia intrecciata con un filo di GND, lontano dai rail.</li>
+        <li><b>Niente saldature sulle gambe di J1</b> (0,5 mm, vicine a GDR, RESE e VSH2). La coda lunga passa da una prolunga FFC e da una seconda breakout che porta tutti i 24 conduttori a J1 e li espone sui suoi pad: CL e i rail si saldano lì. Oppure si usa il front-end del tag (sezione "Alternativa").</li>
+        <li>Se la baseline del master cambia, o l'assorbimento a riposo sale, fermati e togli il ponte.</li>
       </ul>
     </li>
     <li><h3>Fase 2 · Rail di pilotaggio</h3>
-      <p>Fili corti, saldati sulle piazzole dei condensatori dei rail vicino a J1 (trovi quale con la continuità dal pin di J1, board spenta e senza pannello). Collegali al pad con lo stesso numero sulla breakout.</p>
+      <p>Fili corti, saldati sulle piazzole dei condensatori dei rail vicino a J1 (trovi quale con la continuità dal pin di J1, board spenta e senza pannello) o, meglio, sui pad della seconda breakout. Si collega al pad con lo stesso numero sulla breakout della coda corta. Il perchè delle due varianti, per analogia con SSD1677 (tab. 5-3 e 5-4): VGH, VGL, VSH1, VSH2 e VSL sono ingressi di alimentazione che di norma si collegano alle uscite regolate del chip stesso, quindi ponticellarli fra due chip attivi mette due regolatori sullo stesso nodo. Quali pin del die arrivino ai pad del FPC resta un'inferenza dai nomi di J1.</p>
       <div class="grid2">
-        <div class="card"><h3>Due CS (BUSY attivo)</h3><p>Ponte di VGH, VGL, VSH1, VSH2, VSL. VDD con un suo 1 µF verso GND sul pad 18. CL non serve. CS resta su GPIO32, il driver usa <code>ADDRESSING_DUAL_CS</code> (default) e <code>Layout_122c.h</code> ha già <code>PIN_CS_S = 32</code> e <code>PIN_BUSY_S = 35</code>.</p></div>
-        <div class="card"><h3>Cascade (BUSY flottante)</h3><p>Ponte di VDD, VGH, VGL, VSH1, VSH2, VSL, VCOM, più CL fra le due code sul pin che la fase 0 ha trovato (1, 4 o 19). CS spostato da GPIO32 a GPIO15, driver con <code>setAddressingMode(ADDRESSING_CASCADE)</code> e <code>cs2 = -1</code>.</p></div>
+        <div class="card"><h3>Due CS (BUSY risponde)</h3><p>Subordinata a una risposta del chip in fase 1. M/S# a VDDIO. Ponte solo di PREVGH (21) e PREVGL (23), che sono uscite del booster di J1; il resto lo rigenera ogni chip con i suoi condensatori: 1 µF/50 V ceramici locali su 5, 18, 20, 22 e 24, come C2, C7, C9, C11 e C13 della Waveshare. VCOM (24) non si ponta: se la fase 0.4 la dà in comune fra le code, annotalo, sono due uscite sullo stesso nodo e conta la baseline del master prima e dopo. CL non serve.</p>
+          <p><b>Attivazione sincrona:</b> <code>0x22</code> e <code>0x20</code> con i due CS bassi insieme, altrimenti le scariche di fine update di un chip agiscono sui rail dell'altro. Il driver in <code>ADDRESSING_DUAL_CS</code> (default) lo fa già (<code>_writeCommandAll</code>): resta un requisito per qualunque altro codice.</p>
+          <p>Firmware: <code>SECOND_CONTROLLER_CASCADE = false</code>, <code>PIN_CS_S = 32</code>, <code>PIN_BUSY_S = 22</code>.</p></div>
+        <div class="card"><h3>Cascade (nessuna risposta in fase 1)</h3><p>M/S# a VSS, VDDIO comune. Ponte di VDD (18), VGH (21), VGL (23), VSH1 (20), VSH2 (5), VSL (22) e VCOM (24), più CL. Si procede dopo la 2a, un rail alla volta e con baseline fra uno e l'altro: prima VCOM, VSH1, VSH2 e VSL, per ultimi VGH e VGL. Condensatori locali da 100 nF-1 µF vicino alla breakout anche qui, per la lunghezza dei fili.</p>
+          <p>Firmware: <code>SECOND_CONTROLLER_CASCADE = true</code> in <code>Layout_122c.h</code>, che porta anche CS e BUSY dello slave a -1: il pad 12 della coda corta va a GPIO15 (J4-16), insieme al master, e il pad 9 resta aperto. Il driver imposta <code>setAddressingMode(ADDRESSING_CASCADE)</code>.</p></div>
       </div>
     </li>
   </ol>
 </section>
 
 <section>
+  <h2>Messa in servizio</h2>
+  <p>Vale da quando alla breakout arriva qualcosa di attivo. Ogni filo si collega e si sposta con la board scollegata dall'USB.</p>
+  <div class="grid2">
+    <div class="card"><h3>Ordine</h3>
+      <ol class="steps" style="gap:6px">
+        <li>Baseline: un frame del master da solo, fotografato, prima di collegare la massa dello slave. Il diodo ESD del VCOM dello slave può clampare il VCOM negativo del master.</li>
+        <li>GND (pad 17 con J3-14).</li>
+        <li>VCI e VDDIO da EPD_3.3V (pad 16 e 15).</li>
+        <li>I segnali: RST, D/C, CS, SCK, MOSI, BUSY.</li>
+      </ol></div>
+    <div class="card"><h3>Protezioni</h3>
+      <ul>
+        <li>100-330 Ω in serie su ogni filo fra ESP32 e slave: limita la corrente dai diodi ESD verso il chip non alimentato e smorza i 20-35 cm di filo, che sono uno stub anche per il bus del master.</li>
+        <li>Pull-up da 10-100 kΩ da GPIO32 a EPD_3.3V: al boot il pin è flottante mentre 14 e 15 commutano.</li>
+        <li>Prima accensione con 10 Ω in serie su VCI (pad 16): se il chip assorbe troppo lo vedi come caduta sul resistore.</li>
+        <li>Alimentazione 5 V esterna da 1-2 A e 100-220 µF di bulk su EPD_3.3V vicino a J1: il budget dell'USB è stretto col booster in refresh.</li>
+      </ul></div>
+    <div class="card"><h3>Firmware</h3>
+      <p><code>Layout_122c.h</code> imposta già lo SPI a 4 MHz (<code>SPI_CLOCK_HZ = 4000000</code>) per i fili volanti e il reset a 10 ms (<code>RESET_DURATION_MS = 10</code>), il valore con cui il 12.2" è stato provato.</p>
+      <p><b>Banco:</b> per le prove di ricablaggio metti <code>#define DISPLAY_SKIP_UNCHANGED 0</code> nel <code>.ino</code>: con 1 un frame uguale al precedente non viene ridipinto e dopo un ricablaggio non vedresti niente. Rimettilo a 1 a prove finite.</p></div>
+  </div>
+</section>
+
+<section>
+  <h2>Se l'immagine esce specchiata o capovolta</h2>
+  <p>Prima di cablare la coda corta, con la sola coda lunga in J1, la banda bassa del layout deve comparire dritta nella metà del vetro dal lato della coda. Se non è così, correggi l'orientamento prima di toccare la breakout: l'ordine conta, perchè la banda alta (slave) eredita le specchiature del master.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Con la sola coda lunga la banda bassa esce</th><th>Correzione</th></tr></thead>
+    <tbody>
+      <tr><td>dritta (la metà alta resta bianca)</td><td>niente: valgono le specchiature di default, master (false, false) e slave (true, true)</td></tr>
+      <tr><td>ribaltata solo in Y</td><td><code>setMasterMirror(false, true)</code> e <code>setSlaveMirror(true, false)</code> in <code>makePanel()</code> di <code>Layout_122c.h</code></td></tr>
+      <tr><td>ribaltata solo in X</td><td><code>setMasterMirror(true, false)</code> e <code>setSlaveMirror(false, true)</code></td></tr>
+      <tr><td>capovolta del tutto (coda lunga dal lato alto)</td><td><code>ROTATION = 2</code> in <code>Layout_122c.h</code>; compone col dispatch delle bande solo se il master è dritto</td></tr>
+    </tbody>
+  </table></div>
+  <p>La specchiatura dello slave (true, true) è dedotta, non misurata: la verificano a coda corta collegata i tile ad angolo marcato della fase driver dello sketch, e <code>setSlaveMirror()</code> la corregge senza toccare il driver.</p>
+</section>
+
+<section>
+  <h2>Alternativa: la scheda del tag come front-end analogico</h2>
+  <div class="callout info">
+    <h3>Mai provata</h3>
+    <p>Questa via non è stata tentata: è una proposta. Se lo slave è uno slave in cascade la revisione elettrica la indica come il percorso più sicuro, perchè il ponte fra i due controller, CL e il booster sono già fatti, corti e pensati dal produttore: niente ponti di rail a filo e niente condensatori aggiunti a mano. Su un die di cui non si conosce il datasheet resta comunque un giudizio per analogia.</p>
+  </div>
+  <p>Si tiene la scheda del tag EL122R2CRN come front-end e si sostituisce solo il suo MCU con l'ESP32. L'RTL8762 resta in reset, tenuto dalla piazzola RST. L'ESP32 si collega alle linee EPD della scheda: CS, D/C, RST, CLK, MOSI, BUSY, più CS2 e BUSY2 se la fase 0.5 li trova. EPD_PWR va alto e BS basso, come nel firmware R2 di fabbrica (P0_5 e P3_2 sul 5,85" e sul 9,7"). L'alimentazione è 3,3 V esterna al posto delle batterie.</p>
+  <div class="grid2">
+    <div class="card"><h3>Prerequisiti</h3>
+      <ul>
+        <li>La mappa 0.5 completa: sai quale pad del connettore nudo va a quale GPIO dell'RTL8762.</li>
+        <li>La rete di EPD_PWR, BS e RST sulla scheda R2 misurata: il firmware del 5,85" non permette di assumerla uguale.</li>
+        <li>3,3 V esterni da 300-500 mA, con massa comune con l'ESP32. Batterie tolte.</li>
+        <li>Dump della flash dell'RTL8762 prima di qualunque intervento, se possibile.</li>
+      </ul></div>
+    <div class="card"><h3>Controlli prima di collegare l'ESP32</h3>
+      <ul>
+        <li>Livello e impedenza delle linee EPD con l'MCU in reset: i suoi GPIO in reset non sono garantiti in alta impedenza.</li>
+        <li>MCU alimentato e in reset.</li>
+        <li>EPD_PWR e BS portati dall'ESP32 ai livelli del firmware R2.</li>
+        <li>100-330 Ω in serie su ogni filo.</li>
+        <li>Sequenza: prima il tag, poi l'ESP32.</li>
+      </ul></div>
+  </div>
+  <p>Rischi: le saldature su passi fini della scheda del tag e le linee dell'MCU in reset che non restano in alta impedenza.</p>
+</section>
+
+<section>
   <h2>Attenzioni</h2>
   <ul>
-    <li>Ogni filo si collega e si sposta a board scollegata dall'USB. VGH e VGL arrivano a ±20 V circa.</li>
+    <li>Ogni filo si collega e si sposta a board scollegata dall'USB. Nessuna FFC si inserisce o si toglie sotto tensione. VGH e VGL arrivano a ±20 V circa.</li>
     <li>GDR e RESE della coda corta restano aperti: un secondo controller che pilota il MOSFET del booster della Waveshare è un conflitto fra uscite.</li>
-    <li>In fase 2 i due controller devono essere alimentati dallo stesso 3,3 V, altrimenti i rail ponticellati alimentano dai diodi di protezione il chip spento. Se il 3V3 di J3 e l'EPD_3.3V di J1 non sono la stessa net (verifica in continuità), prendi VCI e VDDIO dal pin 16 di J1.</li>
-    <li>GPIO35 non ha pull interni: con un BUSY flottante il driver aspetta fino al timeout. Una 100 kΩ da GPIO35 a GND lo tiene "libero" a riposo senza disturbare un BUSY pilotato.</li>
-    <li>Lo switch 1 della Waveshare (A = 3R, B = 0,47R) regola il booster che ora alimenta due controller: se in fase 2 i rail cedono durante il refresh, prova l'altra posizione.</li>
-    <li>In fase 2 il 3V3 alimenta anche il secondo controller: se la tensione cala durante il refresh, il sensore ambientale sullo stesso pin la vede. Si nota come letture strane o un reset del sensore in coincidenza col refresh.</li>
+    <li>I due controller devono essere alimentati dalla stessa net: VCI e VDDIO della coda corta prendono EPD_3.3V dalla piazzola di C5, C6 o C20 vicino a J1, non il 3V3 di J3-1, che è un'altra net (U2 per l'ESP32 e il sensore, U3 per il pannello). Verifica in continuità, a board spenta, che la piazzola sia sui pin 15 e 16 di J1. Con net diverse i rail ponticellati alimenterebbero dai diodi di protezione il chip che è ancora spento.</li>
+    <li>GPIO22 ha il pull-down interno, che il driver attiva: un BUSY scollegato o aperto si legge "libero" senza resistenze esterne. GPIO35 non ha pull interni, ed è per questo che il BUSY non sta lì.</li>
+    <li>Lo switch 1 della Waveshare regola la resistenza di sense del booster, che in fase 2 alimenta due controller. Schematico e wiki si contraddicono su quale posizione sia 0,47 Ω e quale 3 Ω: decide la misura di 0.7. Se in fase 2 i rail cedono durante il refresh, prova l'altra posizione.</li>
+    <li>Condensatori solo ceramici, da 50 V su VGH, VGL e sui nodi a ±15 V. C10 e C12 della Waveshare vanno scaricati (con una resistenza, non a filo) prima di saldare vicino a J1.</li>
+    <li>La coda corta è lunga circa 1,5 cm: fissala meccanicamente, perchè un contatto che si muove in fase 2 mette un rail su un pin logico.</li>
+    <li>Sensore e breakout stanno su regolatori diversi (3V3 di J3-1 contro EPD_3.3V): il carico del secondo controller non si riflette sulle letture del sensore.</li>
   </ul>
 </section>
 </div>

@@ -56,7 +56,7 @@ contiene, la estende con i driver di pannelli che upstream non supporta.
 // Globale, non locale a setup(): selectSPI() conserva il puntatore a hspi
 SPIClass hspi(HSPI);
 
-// Pinout nella struct uniforme: cs, dc, rst, busy, cs2, busy2, sck, miso, mosi.
+// Pinout nella struct uniforme: cs, dc, rst, busy, cs2, busy2.
 // Qui il cablaggio della Waveshare E-Paper ESP32 Driver Board; i campi non
 // passati restano -1, cioè assenti.
 GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS, SOLUM_MAX_HEIGHT(GxEPD2_SOLUM_DRIVER_CLASS)>
@@ -125,7 +125,9 @@ significherebbe riscrivere la riga di costruzione del display.
 3. **Bus SPI da `_pSPIx` / `_spi_settings`** della base `GxEPD2_EPD`, mai
    dall'oggetto `SPI` globale: uno sketch che chiama `selectSPI()` si aspetta
    che valga per tutti i driver. Se il driver ha un default proprio, lo imposta
-   nel costruttore chiamando `selectSPI()`, non cablandolo nelle primitive.
+   nel costruttore chiamando `selectSPI()`, non cablandolo nelle primitive. Il
+   driver non apre e non riconfigura il bus, e non conosce i pin della board: lo
+   sketch apre il bus sui propri pin prima di `init()`.
 4. **Membro `panel`**: i driver di questa libreria prendono in prestito un
    valore di `GxEPD2::Panel` di un pannello upstream. Va scelto uno che i
    template **non** trattino in modo speciale: `GxEPD2_3C` applica workaround
@@ -305,18 +307,26 @@ refresh al giorno.
 
 ### 0.6 Interfaccia elettrica (dallo schematico Waveshare V3)
 
-Connettore FPC 24 pin `J10`, pin ricavati dal netlist dello schematico:
+Connettore FPC 24 pin `J1`, pin ricavati dal netlist dello schematico (nel testo
+estratto i pin compaiono come `PIJ10xx`, da cui una vecchia lettura "J10"):
 
 | Pin | Segnale | Pin | Segnale |
 |---|---|---|---|
-| 4 | HLT_CTL | 12 | SDI (MOSI) |
-| 5 | GDR | 13 | VDDIO |
-| 6 | RESE | 14 | VCI |
-| 7 | VGL | 15 | VDD |
-| 8 | BS | 16 | **VPP** |
-| 9 | RST | 17 | VSH |
-| 10 | D/C | 18 | PREVGH |
-| 11 | CS | 1–3, 19–24 | PREVGL, VCOM, VGH, TSCL, TSDA, GND / NC |
+| 1 | NC (simbolo `HLT_CTL`, nessuna net) | 13 | SCL (CLK), IO13 |
+| 2 | GDR, gate di Q1 | 14 | SDA (DIN, MOSI), IO14 |
+| 3 | RESE, sense del booster (R7 + R8 con SW1) | 15 | VDDIO, EPD_3.3V |
+| 4 | NC, nessuna net | 16 | VCI, EPD_3.3V |
+| 5 | VSH2, C2 | 17 | VSS |
+| 6 | TSCL, solo su R5 (10K/NC) | 18 | VDD, C7 |
+| 7 | TSDA, solo su R6 (10K/NC) | 19 | NC (VPP nella piedinatura standard), nessuna net |
+| 8 | BS1, a GND via R11 0R (R10 NC) | 20 | VSH1, C9 |
+| 9 | BUSY, IO25 | 21 | PREVGH, C10 e D4 |
+| 10 | RES#, IO26 | 22 | VSL, C11 |
+| 11 | D/C#, IO27 | 23 | PREVGL, C12 e D2 |
+| 12 | CS#, IO15 | 24 | VCOM, C13 |
+
+EPD_3.3V è l'uscita di un regolatore proprio (U3 RT9193), distinta dal 3V3 dell'header J3-1
+(U2 ME6217) che alimenta l'ESP32.
 
 Tre conseguenze pratiche:
 
@@ -327,17 +337,17 @@ Tre conseguenze pratiche:
   1 µF/50 V sui pin 21/23/24), non dal pannello: se un refresh esce sbiadito
   conviene guardare lì prima che nel codice;
 - il pin 8 è **BS**, cioè `BS1` del controller: sceglie l'interfaccia MCU,
-  **L = 4 fili**, H = 3 fili a 9 bit. Sulla board è cablato, su una coda montata
-  a mano va portato basso — lasciato flottante il controller può ignorare tutto
-  il traffico a 4 fili;
-- il pin 16 è **VPP**. Sui Solomon quel nome è la tensione di programmazione
-  dell'OTP, quindi il percorso per *scrivere* l'OTP sarebbe fisicamente presente
-  sul connettore — un motivo per limitarsi alla lettura (`0x2D`, Read Register
+  **L = 4 fili**, H = 3 fili a 9 bit. Sulla board è a massa tramite R11 0R, su una
+  coda montata a mano va portato basso: lasciato flottante il controller può
+  ignorare tutto il traffico a 4 fili;
+- il pin 19 è **VPP** nella piedinatura standard, e sulla board non ha net. Sui
+  Solomon quel nome è la tensione di programmazione dell'OTP, quindi il percorso per
+  *scrivere* l'OTP passerebbe da quel contatto del FPC, che la board lascia scollegato: un motivo per limitarsi alla lettura (`0x2D`, Read Register
   for Display Option). C'è però una seconda lettura da verificare: sul tag di
   fabbrica di questi pannelli il pin che l'HAL chiama `EPD_VPP` è usato come
   **MISO**, cioè è la linea dati in uscita dal controller
   (`docs/openepaperlink/nrf52811_tag_fw/HAL_Newton_M3.h`). Se sul FPC è lo
-  stesso segnale, il pin 16 è il candidato per la lettura dei registri che
+  stesso segnale, il pin 19 è il candidato per la lettura dei registri che
   [§0.10](#010-il-4-colore-non-esiste-questione-chiusa) dà per impossibile.
 
 ### 0.7 SPI e volumi di transfer

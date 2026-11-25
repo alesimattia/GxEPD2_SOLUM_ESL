@@ -14,11 +14,12 @@
 //   #include <GxEPD2_SOLUM.h>
 //
 //   GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS, SOLUM_MAX_HEIGHT(GxEPD2_SOLUM_DRIVER_CLASS)>
-//       display(GxEPD2_SOLUM_DRIVER_CLASS(GxEPD2_SOLUM_Pins{ 15, 27, 26, 25, 32, 35, 13, 12, 14 }));
+//       display(GxEPD2_SOLUM_DRIVER_CLASS(GxEPD2_SOLUM_Pins{ 15, 27, 26, 25, 32, 22 }));
 //
 // Nè il nome della classe nè l'arità del costruttore compaiono nello sketch:
 // il pinout passa dalla struct uniforme GxEPD2_SOLUM_Pins, che ogni driver
-// legge per la parte che gli serve.
+// legge per la parte che gli serve. Il bus SPI lo apre lo sketch sui pin della
+// propria board e lo passa con display.epd2.selectSPI() prima di init().
 //
 // AGGIUNGERE UN DRIVER
 //   1. nuovo header in src/, che include "GxEPDImage.h" e "GxEPD2_SOLUM_Pins.h"

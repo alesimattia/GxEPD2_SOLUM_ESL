@@ -4,7 +4,7 @@ Materiale raccolto fuori dai datasheet, con le deduzioni che ne seguono e le pro
 suggerisce. Le fonti primarie sono archiviate in questa cartella: quanto segue serve a sapere
 cosa contengono e cosa se ne ricava.
 
-Documenti correlati: [`122c/identificazione_pannello.md`](122c/identificazione_pannello.md),
+Documenti correlati: [`122c/panel_identification.md`](122c/panel_identification.md),
 [`../README.md`](../README.md), [`../README_122c.md`](../README_122c.md).
 
 Datasheet Solomon Systech archiviati qui, e a cosa servono:

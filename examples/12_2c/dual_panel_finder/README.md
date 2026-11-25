@@ -1,13 +1,19 @@
 # dual_panel_finder — cosa misura, e quanto costa
 
-Suite di reverse engineering del **SOLUM 12.2"** (`EL122H6W4A`), 768 × 960 px nativi pilotati
-landscape come **960 w × 768 h**, due controller SSD16xx. Il suo prodotto è un **log** che, insieme
-alle schermate viste sul vetro, basta a correggere `src/GxEPD2_SOLUM_122c_960x768.h` perchè piloti
-il pannello intero.
+Suite di reverse engineering del **SOLUM 12.2"** (`EL122R2CRN`, lo stesso vetro delle linee
+`EL122H6W4A` e Core), 768 × 960 px nativi pilotati landscape come **960 w × 768 h**, due controller
+che parlano il set di comandi SSD16xx. Il suo prodotto è un **log** che, insieme alle schermate viste
+sul vetro, basta a correggere `src/GxEPD2_SOLUM_122c_960x768.h` perchè piloti il pannello intero.
 
 Stato del bring-up: con la **coda lunga** il driver stampa correttamente su **metà pannello**, e la
-metà dipinta è quella adiacente alla propria COF. Con la **coda corta**, infilata nello stesso
-connettore da 24 pin senza adattatore, non stampa niente.
+metà dipinta è quella adiacente alla propria COF, cioè le **righe 384..767** del driver (lo scambio
+delle bande sta già nel driver). Con la **coda corta**, infilata nello stesso connettore da 24 pin
+senza adattatore, non stampa niente: il BUSY segue il pull e nessun comando ottiene risposta.
+
+Il pinout dei due connettori è quello della Waveshare ESP32 Driver Board V3: J1 con **CS 15** e
+**BUSY 25**; il secondo connettore, sulla breakout della coda corta, con **CS 32** e **BUSY 22**
+(pull-down interno, quindi un BUSY scollegato si legge "libero"). **BS1 è fisso a GND** tramite R11
+da 0 ohm, non flottante.
 
 ## La geometria, dalla fonte del produttore
 
@@ -30,40 +36,36 @@ l'asse perpendicolare, 768 px, si divide in **384 gate per controller**. E i due
 bordi opposti, quindi il secondo è ruotato di 180°: la specchiatura è un effetto atteso, non
 un'ipotesi.
 
-## La cascade è esclusa, e non da un'ipotesi
+## La topologia del secondo controller è aperta
 
-SSD1683 §6.12, verbatim:
+Il controller del 12.2" è **sconosciuto**. Del die è misurato solo: set di comandi SSD16xx (`0x12`,
+`0x24`/`0x26`, `0x22 = F7`, `0x20`), `0x11 = 03` necessario, TB funzionante, `0x46`/`0x47` inefficaci,
+secondo byte di `0x21` accettato con effetto ignoto. SSD1677 e SSD1683 sono **analogie**: tutto ciò
+che segue su cascade, `M/S#`, `CL`, rail e strap lo è, e nessuna misura dimostra che il die sia uno
+di quei chip.
 
-> *"The SSD1683 has a cascade mode that can cascade 2 chips to achieve the display resolution up to
-> **800 (sources) x 300 (gates)**. […] When the chip is configured as a slave chip, its oscillator
-> and booster & regulator circuit will be disabled."*
+Che cosa esclude la coda corta muta in J1? Poco. Con BS1 basso (fisso a GND via R11 sulla board) un
+controller **indipendente con la piedinatura standard** avrebbe risposto come la lunga, e non l'ha
+fatto. **La cascade non è esclusa**: sincronizza due chip (clock `CL` e rail comuni), mentre come
+gate e sorgenti si dividano fra loro lo decide il cablaggio del vetro, e due chip in cascade che
+scandiscono ciascuno la propria metà sono un pannello dual-scan. Restano tre ipotesi:
 
-Il chip singolo è 400 × 300: la cascade **raddoppia l'asse source e lascia i gate dove sono**. Due
-argomenti indipendenti convergono:
+| Osservazione sul secondo connettore | slave in cascade | piedinatura diversa o enable mancante | chip danneggiato |
+|---|---|---|---|
+| BUSY su SWRESET / `0x47` / `0x34` | fermo su tutto, senza il clock del master | fermo finchè il pad giusto non è abilitato | fermo |
+| strap debole sul pad giusto (VDDIO o VSS) | indifferente | **il BUSY sale dopo SWRESET** | indifferente |
+| ponte di `CL` e rail, sonda `b` | **la banda slave si dipinge** | indifferente | indifferente |
 
-1. **aritmetica** — una coppia in cascade di chip di questa famiglia darebbe 1920 source × **680
-   gate**, e 680 < 768: non copre l'asse gate del 12.2" per nessun cablaggio;
-2. **osservazione** — con la coda lunga sola il pannello dipinge **960 px di larghezza piena**,
-   mentre in cascade il master coprirebbe metà delle sorgenti, cioè 480 px.
-
-La topologia è quindi **due controller indipendenti, ciascuno col proprio oscillatore**, che
-condividono i **rail di pilotaggio** — e il datasheet SSD1677 li dà per alimentabili dall'esterno
-(Features p.5, Table 5-4: *"VGH, VGL, VSH1, VSH2, VSL can be connected to external power supply"*).
-È la spiegazione del secondo connettore nudo sulla scheda del tag, e fa una **previsione che
-discrimina**:
-
-| | slave in cascade | chip indipendente a rail condivisi |
-|---|---|---|
-| oscillatore | disabilitato | **proprio, vivo** |
-| BUSY su SWRESET / `0x47` / `0x34` | **fermo su tutto** | **risponde** |
-| `0x14` HV Ready | fermo | parte e **va al massimo**: l'HV non arriva mai |
-| refresh | non parte | parte e non dipinge |
-
-È esattamente quello che misura la sonda `4`.
+Sono previsioni per analogia, non misure. Le separano la fase 0 di `docs/122c/cable_linking.html`
+(continuità e prova a diodo a pannello staccato) e il tasto `t`, che porta le sonde sul secondo
+connettore in modalità **sola logica**: `SWRESET`, `0x34` e i pattern `0x47`/`0x46`, mai un `0x22`
+con bit analogici seguito da `0x20`, perchè in quella fase i regolatori dello slave non hanno
+condensatori.
 
 ## Tre limiti di registro, e la domanda sul pannello intero
 
-Un controller solo **non** può coprire 768 righe, e lo dicono tre limiti indipendenti:
+**Se** il die fosse un SSD1677 Rev 1.0, un controller solo non potrebbe coprire 768 righe, e lo
+direbbero tre limiti indipendenti del suo datasheet (un'analogia, il die è sconosciuto):
 
 - **§8.4**, `0x45`: *"00h <= YSA[9:0], YEA[9:0] <= **2A7h**"* — la finestra RAM in Y si ferma alla
   riga **679**;
@@ -71,9 +73,9 @@ Un controller solo **non** può coprire 768 righe, e lo dicono tre limiti indipe
 - **p.5 e Table 5-5**: RAM `960x680 bit` per piano, uscite `G[679:0]`.
 
 Il massimo che un SSD1677 vero potrebbe dipingere è **680 righe su 768**. Restano due strade per i
-960 × 768 da una coda sola, ed entrambe sono economiche: la sonda `b` (`opcode|0x80`, zero refresh
-se il BUSY non si muove) prova che il pannello ponticelli internamente, e la sonda `0` chiede al
-silicio se è davvero una Rev 1.0, spazzando MUX e finestra **fuori specifica**.
+960 × 768 da una coda sola: la sonda `b` (`opcode|0x80`, a ponte cascade fatto) prova se il secondo
+chip si indirizza dallo stesso connettore, e la sonda `0` chiede al silicio se è davvero una Rev 1.0,
+spazzando MUX e finestra **fuori specifica**.
 
 ## E se il die non fosse un SSD1677 Rev 1.0?
 
@@ -94,7 +96,8 @@ Un refresh.
 
 ## Le sonde, e la riga di driver che ognuna decide
 
-Nessuna sonda sta fuori dalla selezione di default: **`t` esegue la suite intera**. Il numero fra
+Nessuna sonda sta fuori dalla selezione di default: **`T` esegue la suite intera** e **`t` la
+procedura guidata** per fasi di cablaggio (vedi "L'ordine della diagnosi"). Il numero fra
 parentesi è il **minimo**, cioè quello che la sonda spende con l'esaustivo spento; l'esaustivo, che
 è acceso di default, rimette in gioco le passate condizionali.
 
@@ -105,15 +108,23 @@ parentesi è il **minimo**, cioè quello che la sonda spende con l'esaustivo spe
 | `1` | candidate di init, sei varianti | `_InitDisplay`, e il pattern hardware `0x46`/`0x47` per `_writeScreenBuffer` |
 | `2` | bit 7 dell'opcode | se `opcode\|0x80` indirizza qualcosa |
 | `3` | costo del push ai tre clock | il clock di `selectSPI` |
-| `4` | **impronta della coda, e confronto** | il modello di indirizzamento, con la tabella sopra |
-| `5` | **SPI a 3 fili: BS1 flottante** | niente nel driver: il **cablaggio** |
-| `6` | **reset a ritentativi** | `reset_duration` di `init()`, cioè l'impulso di `_reset()` della base, e l'attesa dopo lo SWRESET |
+| `4` | **impronta della coda, e confronto** | il modello di indirizzamento, con la tabella sopra; BUSY letto con i due pull |
+| `5` | **SPI a 3 fili, inconcludente con BS1 a GND** | niente nel driver: sulla breakout, dove BS1 è un pad libero, dice se serve un pull-down |
+| `6` | **reset a ritentativi** | `reset_duration` di `init()`, cioè l'impulso di `_reset()` della base, e l'attesa dopo lo SWRESET; un BUSY fisso alto non conta come risposta |
+
+Le sonde elettriche sono **puntabili sul secondo connettore** (tasto `B`, o la fase 2 di `t`): le
+primitive di bus leggono una coppia (CS, BUSY) bersaglio, J1 (15/25) oppure il secondo connettore
+(32/22), quindi `1`, `2`, `4`, `5` e `6` misurano anche la coda corta con la lunga ferma. Quando il
+bersaglio è il secondo connettore con il cablaggio a sola logica, i comandi analogici (power on,
+`0x14`, `0x15`, il refresh) sono bloccati. Un BUSY che non sale è un esito a sè (**mai salito**, non
+una durata di 0 ms) e un BUSY che non scende è **ancora alto**: nessuno dei due si legge come
+risposta del controller.
 
 ### Il pannello intero e la specchiatura
 
 | Tasto | Sonda | Refresh | Cosa decide |
 |---|---|---|---|
-| `b` | secondo controller a `opcode\|0x80` | 1 | `ADDRESSING_CASCADE` |
+| `b` | secondo controller a `opcode\|0x80`, a ponte cascade fatto (richiede il secondo FFC) | 1 | `ADDRESSING_CASCADE`, `SECOND_CONTROLLER_CASCADE` |
 | `0` | **identità del die: MUX fuori specifica** | 2 | `PART_HEIGHT`, la famiglia del controller |
 | `j` | **TB = 1, reverse scan gate** | 1 | `_reverseBits`: cancellabile o no |
 | `e` | **specchiatura via entry mode `0x11`** | 1 | `ScreenPart::_setPartialRamArea`, `setSlaveMirror` |
@@ -134,7 +145,7 @@ parentesi è il **minimo**, cioè quello che la sonda spende con l'esaustivo spe
 | `g` | banchi di waveform per temperatura | 4 | `busy_timeout`, `full_refresh_time` |
 | `o` | RAM ping-pong `0x37` in Mode 2 | 1 | `0x37` F[6] |
 | `u` | deep sleep | 3 | `hibernate`, e la famiglia del controller |
-| `r` | fase driver | 1 | il driver contro il silicio |
+| `r` | fase driver | 1 | il driver contro il silicio: con un controller solo compaiono i tile bassi e la metà inferiore di quello sulla giunzione |
 
 Totale: **30 refresh minimi** (~9 minuti di solo pannello), **41 in esaustivo** (~13 minuti), più
 il tempo che ci si mette a guardare ogni schermata.
@@ -154,24 +165,34 @@ quello che il README la chiamava un tentativo alla cieca.
 
 ## L'ordine della diagnosi
 
-È la sequenza in cui le ipotesi si escludono, dalla più economica alla più costosa. **Le prime due
-riguardano il pannello intero e vengono prima di tutto**, perchè un esito positivo rende
-irrilevante la coda muta.
+È la sequenza in cui le ipotesi si separano, dalla più economica alla più costosa, e il tasto **`t`**
+la percorre per fasi: chiede in che stato è il cablaggio ed esegue solo le sonde utili, nell'ordine
+delle fasi di `docs/122c/cable_linking.html`. La coda lunga sta sempre in J1. Ogni frame passa dal
+gate e chiede il proprio esito: quale banda ha dipinto, e come sono specchiati i tile dell'angolo
+marcato (dritto = la tacca bianca in alto e a destra, 8 righe nere sopra e 16 sotto).
 
-1. **`b` con la coda lunga sola** — gli opcode `|0x80` accendono la seconda banda? Zero refresh se
-   il BUSY non si muove. Un esito negativo qui è **atteso**, perchè `|0x80` è il meccanismo della
-   cascade e la cascade è esclusa: conferma il quadro invece di lasciare la domanda aperta.
-2. **`0` e `j`** — che die è, e TB = 1 ribalta la banda? Tre refresh, e decidono il pezzo più
-   fragile del driver.
-3. **`4` con la lunga**, poi `c` per dichiarare la coda e **`4` con la corta** — cascade o rail
-   condivisi, secondo la tabella sopra.
-4. **`5`** sulla corta — se in 3 fili risponde, è `BS1` flottante e il rimedio è un pull-down.
-5. **`6`** sulla corta — esclude che sia una questione di tempi di reset.
-6. **multimetro a pannello staccato** — continuità di `M/S#` verso VDDIO o VSS su ciascuna coda (il
-   pin table lo dà *"reserved pin, should be connected to VDDIO"*), `BS1` verso massa, e **dove
-   finiscono VGH/VGL/VSH1/VSH2/VSL**: se corrono dal primo FFC al secondo, il quadro dei rail
-   condivisi è confermato senza scrivere una riga di codice.
-7. Solo se 1-6 non concludono, le due prove hardware più sotto.
+| Stato del cablaggio | Sonde | Criterio |
+|---|---|---|
+| 1. sola coda lunga in J1 | `4`, `1`, `2`, `6` su J1, poi la fase driver `r` (1 refresh) | la banda **bassa** esce dritta; i tile ad angolo marcato dicono la specchiatura del master |
+| 2. coda corta sulla breakout, sola logica | `4`, `1`, `6` sul secondo connettore, BUSY con i due pull, poi la domanda sullo strap debole | il BUSY **sale dopo SWRESET** sul CS dello slave |
+| 3. ponte cascade fatto | `b` (1 refresh), poi la fase driver in `ADDRESSING_CASCADE` | compaiono le **due** bande |
+| 4. ponte a due CS fatto | la fase driver in `ADDRESSING_DUAL_CS` | compaiono le **due** bande |
+
+Nella fase 2 la domanda guidata chiede se hai collegato debolmente (4,7-10 kohm, mai a filo) un pad
+candidato strap o enable a VDDIO o a VSS, un pad e un livello alla volta, e ripete il criterio a ogni
+cambio finchè il BUSY risponde o rinunci; un esito nullo non conclude e non esclude la cascade. Il
+pad 19, VPP nella piedinatura standard, non si collega mai.
+
+La procedura **chiude con la scheda `DRV`**, che nomina il valore di `SECOND_CONTROLLER_CASCADE` in
+`Layout_122c.h` (`true` se le due bande compaiono in cascade, `false` con due CS) e le chiamate
+`setMasterMirror()` e `setSlaveMirror()` ricavate dai tile. Il valore di `SECOND_CONTROLLER_CASCADE`
+e le specchiature sono caratteristiche con un esito proprio, salvate in NVS come le altre.
+
+Fuori dalla procedura restano nel menu le sonde che non dipendono dal cablaggio: `0` e `j`
+(identità del die, TB = 1), le sonde a frame, il partial, le LUT, la temperatura, il ping-pong, lo
+sleep. Prima di ogni ricablaggio la fase 0 di `cable_linking.html` (ispezione, prova a diodo e
+continuità a board spenta, con la massa presa dall'header) resta la misura che non costa rischio,
+e dice dove finiscono `M/S#`, `CL` e i rail.
 
 ## Il gate: l'operatore fa cambiare schermata
 
@@ -193,22 +214,29 @@ gate leggono invece una **riga**, chiusa da INVIO, perchè scelgono fra più di 
 
 | Tasto | Cosa fa |
 |---|---|
-| `t` | esegue le sonde selezionate, con il preventivo dei refresh |
+| `t` | **procedura guidata**: chiede lo stato del cablaggio ed esegue solo le sonde utili, fino alla scheda `DRV` |
+| `T` | esegue le sonde selezionate (la suite intera di default), con il preventivo dei refresh |
 | `s` | riepilogo: registro delle misure, indice delle schermate, confronto fra le code, scheda per il driver |
 | `k` | caratteristiche note: ridichiara quello che una sessione precedente ha già determinato |
 | `n` | quali sonde eseguire |
 | `p` | parametri di misura: temperature, i quattro MUX, gate per controller, clock, timeout, finestra del multimetro, e i parametri di registro (voci 10..15: soft start, entry mode, TB, `0x21` con la sua posizione, reset, border sotto LUT) |
-| `c` | quale coda è infilata: è anche la colonna in cui la sonda `4` scrive |
+| `c` | quale coda è infilata in J1: è anche la colonna in cui la sonda `4` scrive quando il bus punta J1 |
 | `f` | secondo connettore FFC cablato |
+| `B` | connettore su cui parla il bus: J1 (CS 15, BUSY 25) o il secondo (CS 32, BUSY 22) |
 | `x` | esaustivo: le passate condizionali |
 | `w` | polarità del piano BW |
 | `v` | righe di dettaglio, spente di default |
 | `i` | re-init con una candidata scelta fra le sei |
-| `z` | configurazione ai valori di fabbrica |
+| `z` | configurazione ed esiti ai valori di fabbrica, e la NVS azzerata |
 | `h` | ristampa il menu |
 
-**Niente NVS**: un example non lascia stato nella flash della board. La configurazione vive quanto
-la sessione, e la voce `k` è il modo di ridichiarare quello che si sa già.
+**NVS**: configurazione ed esiti delle caratteristiche stanno in NVS (`Preferences`, namespace
+`dpf122`, un byte di versione in testa ai due blob: un profilo di un'altra versione si scarta) e si
+salvano a ogni cambio. La configurazione comprende coda, secondo FFC, bersaglio del bus, cablaggio
+dichiarato e tutti i parametri del menu `p`. Gli esiti rinviati dalla NVS restano marcati
+**dichiarati** e non misurati, perchè non li ha prodotti questa esecuzione; vale ancora come una
+misura ai fini dei prerequisiti. La voce `k` è il modo di ridichiarare a mano quello che si sa già,
+e `z` azzera anche la NVS.
 
 Il clamp del MUX arriva al **massimo del registro, 1024**, e non ai 680 del chip: la sonda `0` deve
 poter chiedere 768 linee, cioè uscire di proposito dalla specifica, perchè è così che si scopre se
@@ -225,9 +253,9 @@ tensione al POR non è invece uscire dai default del chip.
 
 | File | Contenuto |
 |---|---|
-| `dual_panel_finder.ino` | tabella delle sonde, sottomenu, runner, scheda per il driver, menu |
-| `Config.h` | configurazione della sessione, limiti del silicio col riferimento al datasheet, input seriale, `waveformGuard()` |
-| `Report.h` | frame numerati, gate, registro delle misure, log a tag |
+| `dual_panel_finder.ino` | tabella delle sonde, sottomenu, runner, procedura guidata, scheda per il driver, menu |
+| `Config.h` | configurazione, persistenza in NVS, bersaglio del bus, limiti del silicio col riferimento al datasheet, input seriale, `waveformGuard()` |
+| `Report.h` | frame numerati, gate, registro delle misure, esiti delle caratteristiche (anche in NVS), log a tag |
 | `Graphics.h` | font 5×7, riquadro del numero, composizione delle righe. Non tocca SPI |
 | `Controller.h` | bus a 4 e 3 fili, init e candidate, refresh, registri, LUT. Non conosce le sonde |
 | `ProbesElettriche.h` | le sonde che non spendono un refresh |
@@ -270,43 +298,40 @@ Il tasto `v` accende le righe di dettaglio (`.`), spento di default: su un refre
 righe che dicono "sta ancora andando" servono quando una misura non torna, non mentre torna. Le
 motivazioni non stanno sul seriale ma nei commenti dei file e qui.
 
-## Le due prove che aspettano hardware in più
+## Le prove che aspettano hardware in più
 
-### A. Le due code insieme, due chip select
+Il cablaggio della coda corta, i pad da misurare, i condensatori dei rail, l'ordine di messa in
+servizio e la variante da scegliere stanno in `docs/122c/cable_linking.html`: qui restano i pin e
+quello che la procedura guidata verifica.
 
-**È la prova che il datasheet sostiene**, non il ponte in cascade. Serve un secondo breakout FFC.
+Condivisi con J1: **SCK 13**, **MOSI 14**, **DC 27**, **RST 26**, GND. Propri del secondo
+connettore:
 
-Condivisi: **SCK 13**, **MOSI 14**, **DC 27**, **RST 26**, 3V3, GND. Propri della seconda coda:
+- **CS su GPIO32**: la netlist dello schematico mette GPIO33 sull'header J3-8 (da confermare sulla
+  serigrafia), ma il cablaggio del test usa il 32;
+- **BUSY su GPIO22**, con il pull-down interno (`INPUT_PULLDOWN`): un BUSY scollegato o aperto si legge
+  "libero" e non manda ogni attesa in timeout, e la prova "pilotato o flottante" funziona con i due
+  pull. I GPIO 34..39 non hanno pull interni e non servirebbero a questo.
 
-- **CS_S su GPIO32** — *non* GPIO33, che su questa board non è portato fuori: le net dello
-  schematico saltano dal 32 al 34, e un `digitalWrite` sul 33 non arriva da nessuna parte;
-- **BUSY_S su GPIO35**, che è input-only: va bene per un BUSY e non per un CS.
+Da evitare 0/2/12, che sono pin di strapping (IO12 è anche il MISO fittizio, e non arriva a J1).
 
-Da evitare 0/2/12, che sono pin di strapping.
+### A. Coda corta sulla breakout, sola logica
 
-In firmware: voce `f` del menu a "cablato", e la candidata di init `per-CS` (tasto `i`, voce 6), che
-inizializza **ciascun** chip sul proprio chip select invece di mandare tutto in broadcast. Criterio
-di riuscita: si accende la banda dell'altro controller.
+È la fase 2 di `t`. La candidata di init `per-CS` (tasto `i`, voce 6) esegue, con il bus su J1, un
+secondo giro che seleziona il **solo** secondo connettore, manda il proprio `SWRESET` e misura la
+salita del BUSY su GPIO22 entro 50 ms, con una riga di log. Criterio: **il BUSY sale dopo SWRESET sul
+CS dello slave**. Se non sale, un BUSY fisso alto non è una risposta e un BUSY che non si muove con il
+pull-down non è una prova di cascade.
 
-Avvertenza: `GPIO35` non ha pull interni pilotabili, quindi un BUSY flottante si legge come
-"occupato" e manda ogni attesa in timeout. La sonda `4` lo distingue guardando il livello a riposo
-con e senza pull — ma quella prova vale sul BUSY della coda sotto test, che sta su GPIO25. Per
-averla anche sul secondo, portalo su 4, 21 o 22.
+### B. Ponti: cascade o due CS
 
-### B. Ponte dei rail di pilotaggio
-
-Serve se il secondo chip **risponde ai comandi ma non dipinge**, che è la firma del quadro a rail
-condivisi. Da ponticellare fra i due FFC i cinque rail che il datasheet sancisce come alimentabili
-dall'esterno: **VGH, VGL, VSH1, VSH2, VSL**.
-
-**`CL` non serve.** Ogni chip ha il proprio oscillatore, e il datasheet lo dà *"should be left open
-in application"*: serviva solo nell'ipotesi cascade, che è esclusa. `VCOM` è un pin a condensatore
-per chip, quindi generato localmente: se sia condiviso lo dice il multimetro, non il datasheet.
-
-**Prima di saldare**, a pannello staccato: continuità di `M/S#` verso VDDIO o VSS su ciascuna coda,
-`BS1` verso massa, e dove finiscono i cinque rail. Se sulla corta `M/S#` va a VSS è lo slave di una
-coppia in cascade, e allora è il pannello a non essere quello che il conteggio dei gate dice: vale
-la pena rileggere tutto da capo prima di saldare qualsiasi cosa.
+Sono le fasi 3 e 4 di `t`, e vanno fatte solo dopo la fase 0 e, per i rail, dopo la fase a sola
+logica. Nella variante **cascade** lo slave sta sul CS 15, si ponticellano `CL` e i rail, e la prova è
+la sonda `b` seguita dalla fase driver in `ADDRESSING_CASCADE`; nella variante **due CS** il secondo
+controller ha CS 32 e BUSY 22, la fase driver in `ADDRESSING_DUAL_CS` attiva `0x22` e `0x20` con i due
+CS bassi insieme (le scariche di fine update di un chip agirebbero sui rail dell'altro) e i rail
+comuni vanno ponticellati solo come `cable_linking.html` prescrive. L'esito è il valore di
+`SECOND_CONTROLLER_CASCADE` che la scheda `DRV` nomina.
 
 ## Acquisire il log
 
@@ -319,8 +344,11 @@ file. Dalla cartella di questo esempio:
 python3 ../../../tools/registra_run.py /dev/cu.usbmodemXXXX -o .
 ```
 
-Qualunque monitor si usi deve poter **inviare**: il gate si chiude con un tasto qualsiasi, e le
-domande leggono una riga chiusa da INVIO, che lo script inoltra come `\n`.
+Lo script resta **solo macOS**: su Windows non serve, perchè da quel PC si compila soltanto e il
+flash e l'acquisizione avvengono dal Mac o da un altro PC. Qualunque monitor si usi deve poter
+**inviare**: il gate si chiude con un tasto qualsiasi, e le domande leggono una riga chiusa da INVIO,
+che lo script inoltra come `\n`. Con la NVS un riavvio a metà cablaggio non perde configurazione ed
+esiti, quindi si può riaprire la sessione e rilanciare `t`.
 
 Il log finisce in `dual_panel_finder_<AAAAMMGG-hhmmss>.txt` nella cartella indicata da `-o`. Senza
 la porta come argomento lo script elenca quelle disponibili, Ctrl-C chiude il file. Usa solo la

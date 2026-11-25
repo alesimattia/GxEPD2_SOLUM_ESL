@@ -923,13 +923,14 @@ static void composeRowRighello(int16_t y, uint8_t* row, uint16_t gate)
  *   - §8.1, 0x01: "Multiplex ratio (MUX ratio) from 300 MUX to 680 MUX";
  *   - p.5 e Table 5-5: RAM 960x680 bit per piano, uscite G[679:0].
  *
- * Ma il progetto ha due indizi che il die NON sia una Rev 1.0: l'init di
- * fabbrica SOLUM scrive 0x21 con due byte, e la Rev 1.0 ne dichiara uno solo;
- * e i pin della cascade esistono. Questa sonda chiede quindi al silicio se è
- * davvero quello che il datasheet descrive, spazzando il MUX fino FUORI
- * specifica. Non si tocca nessuna tensione, e chiedere più linee di quante
- * esistano è un overflow del contatore di scansione: il 9.7" ha già girato a
- * MUX 167 e 335, cioè sotto il pavimento dichiarato, senza danni.
+ * Ma il controller del 12.2" è sconosciuto, il datasheet SSD1677 è solo
+ * un'analogia, e un indizio dice che il die NON sia una Rev 1.0: l'init di
+ * fabbrica SOLUM scrive 0x21 con due byte, e la Rev 1.0 ne dichiara uno solo.
+ * Questa sonda chiede quindi al silicio se è davvero quello che il datasheet
+ * descrive, spazzando il MUX fino FUORI specifica. Non si tocca nessuna
+ * tensione, e chiedere più linee di quante esistano è un overflow del contatore
+ * di scansione: il 9.7" ha già girato a MUX 167 e 335, cioè sotto il pavimento
+ * dichiarato, senza danni.
  *
  * Chiude anche una circolarità: il rettangolo 960x384 osservato al bring-up è
  * stato ottenuto CON IL MUX PROGRAMMATO A 383, quindi conferma che il MUX

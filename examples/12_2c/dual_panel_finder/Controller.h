@@ -50,33 +50,34 @@ static uint16_t g_mux  = 384;
  * Offset sommato a ogni opcode. Vale 0 per tutto il test tranne che dentro la
  * sonda del secondo controller, dove diventa 0x80: è il modo in cui il
  * firmware di fabbrica del 5.85" distingue i due controller di una coppia in
- * CASCADE sullo stesso bus. Su questo pannello la cascade è esclusa — estende
- * le sorgenti e non i gate — quindi la sonda serve a verificare se il bit 7
- * indirizza qualcosa, non ad assumere che indirizzi. Va sempre riportato a 0
- * prima di uscire da quella sonda, altrimenti anche le letture di registro
+ * CASCADE sullo stesso bus. Che questo pannello sia una cascade non è escluso e
+ * non è dimostrato (il controller è sconosciuto), quindi la sonda verifica se il
+ * bit 7 indirizza qualcosa invece di assumere che indirizzi. Va sempre riportato
+ * a 0 prima di uscire da quella sonda, altrimenti anche le letture di registro
  * partirebbero offset.
  */
 static uint8_t cmdOffset = 0x00;
 
 /**
- * Con csBoth attivo il chip select dell'altra coda segue quello della coda
- * sotto test, così i due controller vedono lo stesso bus. Fuori dalla sonda
- * resta false e l'altra coda sta alta, cioè muta.
+ * Con csBoth attivo il chip select dell'altro connettore segue quello del
+ * connettore bersaglio, così i due controller vedono lo stesso bus. Resta
+ * coerente con il bersaglio: il CS "altro" è quello che il bersaglio non
+ * seleziona. Di norma resta false e l'altro connettore sta alto, cioè muto.
  */
 static bool csBoth = false;
 
 static inline void csAssert()
 {
-  digitalWrite(PIN_CS, LOW);
+  digitalWrite(csPin(), LOW);
   if (csBoth)
-    digitalWrite(PIN_CS_OTHER, LOW);
+    digitalWrite(otherCsPin(), LOW);
 }
 
 static inline void csRelease()
 {
-  digitalWrite(PIN_CS, HIGH);
+  digitalWrite(csPin(), HIGH);
   if (csBoth)
-    digitalWrite(PIN_CS_OTHER, HIGH);
+    digitalWrite(otherCsPin(), HIGH);
 }
 
 /**
@@ -122,18 +123,50 @@ static void writeData(uint8_t d)
   hspi.endTransaction();
 }
 
-/** Attende la discesa del BUSY. Ritorna i ms attesi, oppure -1 al timeout. */
-static int32_t waitBusy(uint32_t timeout_ms)
+/**
+ * Attende la discesa di un BUSY che si sa già alto, perchè il chiamante ne ha
+ * appena osservato la salita. Ritorna i ms in cui è rimasto alto, oppure
+ * BUSY_STILL_HIGH se al timeout non è ancora sceso.
+ */
+static int32_t waitBusyFall(uint32_t timeout_ms)
 {
   const uint32_t t0 = millis();
-  while (digitalRead(PIN_BUSY) == BUSY_ACTIVE)
+  while (digitalRead(busyPin()) == BUSY_ACTIVE)
   {
     if ((millis() - t0) > timeout_ms)
-      return -1;
+      return BUSY_STILL_HIGH;
     delay(1);
   }
   return (int32_t)(millis() - t0);
 }
+
+/**
+ * Attende che il controller prenda un comando e finisca: prima la salita del
+ * BUSY entro BUSY_RISE_WINDOW_MS, poi la discesa. Ritorna i ms in cui il BUSY è
+ * rimasto alto, BUSY_NEVER_ROSE se non è mai salito (il comando non è arrivato o
+ * il chip è muto: non è una durata zero) e BUSY_STILL_HIGH se al timeout non era
+ * ancora sceso.
+ */
+static int32_t waitBusy(uint32_t timeout_ms)
+{
+  const uint32_t t0 = millis();
+  while (digitalRead(busyPin()) != BUSY_ACTIVE)
+  {
+    if ((millis() - t0) >= BUSY_RISE_WINDOW_MS)
+      return BUSY_NEVER_ROSE;
+  }
+  return waitBusyFall(timeout_ms);
+}
+
+/**
+ * Vero se l'ultimo resetPanelTentativi() ha visto il BUSY salire dopo il rilascio
+ * del reset e non scendere più entro RESET_BUSY_FALL_MS: un pin fisso alto, per
+ * esempio flottante con un pull-up, non è una risposta del controller.
+ */
+static bool resetSawBusyStuckHigh = false;
+
+/** Quanto il BUSY può restare alto dopo un reset prima di dichiararlo fisso. */
+static const uint32_t RESET_BUSY_FALL_MS = 1000;
 
 /**
  * Reset hardware, con la durata dell'impulso e il numero di tentativi presi da
@@ -142,9 +175,15 @@ static int32_t waitBusy(uint32_t timeout_ms)
  * non dà segno di vita, e su una coda che non risponde quella differenza è una
  * delle spiegazioni possibili del silenzio. Ritorna il numero del tentativo in
  * cui il BUSY si è mosso, 0 se non si è mosso mai.
+ *
+ * Il BUSY "si è mosso" solo se dopo il rilascio sale e poi scende: un BUSY alto
+ * che non scende mai è un pin fisso e non un controller che sta eseguendo
+ * l'init, quindi non conta come risposta ma lascia il segno in
+ * resetSawBusyStuckHigh.
  */
 static uint8_t resetPanelTentativi(uint8_t tentativi, uint8_t lowMs)
 {
+  resetSawBusyStuckHigh = false;
   for (uint8_t k = 1; k <= (tentativi ? tentativi : 1); ++k)
   {
     const uint16_t attesa = (uint16_t)(lowMs + 20 * (k - 1));
@@ -158,7 +197,12 @@ static uint8_t resetPanelTentativi(uint8_t tentativi, uint8_t lowMs)
     // controller ha iniziato la propria sequenza interna.
     const uint32_t t0 = millis();
     while ((millis() - t0) < 20)
-      if (digitalRead(PIN_BUSY) == BUSY_ACTIVE) return k;
+    {
+      if (digitalRead(busyPin()) != BUSY_ACTIVE) continue;
+      if (waitBusyFall(RESET_BUSY_FALL_MS) >= 0) return k;
+      resetSawBusyStuckHigh = true;
+      break;
+    }
   }
   return 0;
 }
@@ -167,6 +211,67 @@ static uint8_t resetPanelTentativi(uint8_t tentativi, uint8_t lowMs)
 static void resetPanel()
 {
   resetPanelTentativi(cfg.resetTentativi, cfg.resetLowMs);
+}
+
+/**
+ * Manda uno SWRESET al solo secondo connettore e misura la salita del BUSY su
+ * GPIO22 entro 50 ms: è il criterio con cui si decide se la coda corta ha un
+ * controller che risponde sul proprio chip select. Il bersaglio deve essere già
+ * il secondo connettore, e J1 resta fuori dal bus con il CS alto. Ritorna i ms in
+ * cui il BUSY è rimasto alto, BUSY_NEVER_ROSE se non è salito, BUSY_STILL_HIGH se
+ * è salito e non è più sceso, che è un pin fisso e non una risposta. Esegue solo
+ * logica: nessun comando analogico.
+ */
+static int32_t probeSecondSwreset(const char* contesto)
+{
+  digitalWrite(PIN_CS, HIGH);
+  pinMode(PIN_CS_OTHER, OUTPUT);
+  digitalWrite(PIN_CS_OTHER, HIGH);
+  pinMode(PIN_BUSY_OTHER, INPUT_PULLDOWN);
+
+  writeCommand(0x12);
+  const uint32_t tSw = millis();
+  bool rose = false;
+  uint32_t riseMs = 0;
+  while ((millis() - tSw) < 50)
+  {
+    if (digitalRead(PIN_BUSY_OTHER) == BUSY_ACTIVE)
+    {
+      rose = true;
+      riseMs = millis() - tSw;
+      break;
+    }
+  }
+  const int32_t highMs = rose ? waitBusyFall(1000) : BUSY_NEVER_ROSE;
+  // il controller ignora i comandi per ~100-300 ms dopo lo SWRESET
+  const uint32_t elapsed = millis() - tSw;
+  if (elapsed < 200) delay(200 - elapsed);
+
+  measure("SWRESET BUSY 2O CONNETTORE", 0, highMs);
+  if (!rose)
+    logLine("2o connettore (CS %d): SWRESET, BUSY su GPIO%d mai salito entro 50 ms [%s]",
+            PIN_CS_OTHER, PIN_BUSY_OTHER, contesto);
+  else if (highMs == BUSY_STILL_HIGH)
+    logLine("2o connettore (CS %d): SWRESET, BUSY su GPIO%d salito dopo %lu ms e ancora alto a 1000 ms [%s]",
+            PIN_CS_OTHER, PIN_BUSY_OTHER, (unsigned long)riseMs, contesto);
+  else
+    logLine("2o connettore (CS %d): SWRESET, BUSY su GPIO%d salito dopo %lu ms, alto per %ld ms [%s]",
+            PIN_CS_OTHER, PIN_BUSY_OTHER, (unsigned long)riseMs, (long)highMs, contesto);
+
+  if (rose && highMs >= 0)
+  {
+    secondSwresetState  = 1;
+    secondSwresetRiseMs = (int32_t)riseMs;
+    verdict("il secondo connettore RISPONDE a SWRESET sul proprio CS: ha un controller che esegue [%s]", contesto);
+  }
+  else
+  {
+    secondSwresetState  = -1;
+    secondSwresetRiseMs = BUSY_NEVER_ROSE;
+    verdict(rose ? "BUSY fisso alto sul secondo connettore: non è una risposta di SWRESET [%s]"
+                 : "nessuna risposta di SWRESET sul CS del secondo connettore [%s]", contesto);
+  }
+  return highMs;
 }
 
 // Finestra RAM e cursore. Stessa sequenza di comandi del driver custom.
@@ -362,11 +467,11 @@ static void writeMux(uint16_t mux)
  * Il SECONDO byte invece non esiste nella Rev 1.0 dell'SSD1677: lo definisce il
  * SSD1683, dove B[4] è *ckouten*, "0: Single chip application, 1: Cascade
  * application". Che l'init di fabbrica SOLUM lo mandi è uno degli indizi che il
- * die sia più recente della Rev 1.0. Su questo pannello però la cascade è
- * esclusa, quindi mandarlo a 1 è probabilmente un errore da togliere dal
- * driver: la sonda lo verifica invece di assumerlo, e la posizione conta perchè
- * upstream varia — il gemello BW del 5.79" lo manda nel refresh, la variante a
- * tre colori non lo manda affatto.
+ * die sia più recente della Rev 1.0, ma il controller del 12.2" è sconosciuto e
+ * il SSD1683 è solo un'analogia. Se il secondo chip sia in cascade non è deciso:
+ * mandare B[4] = 1 vale se lo è, e la sonda lo verifica invece di assumerlo. La
+ * posizione conta perchè upstream varia: il gemello BW del 5.79" lo manda nel
+ * refresh, la variante a tre colori non lo manda affatto.
  *
  * `dove`: 1 = dentro l'init, 2 = subito prima di 0x22. Vale per ogni candidata
  * tranne CAND_OEPL, dove `0x21 = 08 00` è parte della sequenza di fabbrica che
@@ -393,7 +498,7 @@ static void writeReg21(uint8_t dove)
  * passa anche per g_cand e g_mux, che restano lo stato corrente per le funzioni
  * che compongono i pattern e per il report.
  *
- * Ritorna i ms di BUSY dello SWRESET, -1 se il BUSY non si è mosso.
+ * Ritorna i ms di BUSY dello SWRESET, BUSY_NEVER_ROSE se il BUSY non si è mosso.
  */
 static int32_t initPanel(uint8_t cand, uint16_t mux)
 {
@@ -410,20 +515,26 @@ static int32_t initPanel(uint8_t cand, uint16_t mux)
   bool rose = false;
   while ((millis() - tSw) < 50)
   {
-    if (digitalRead(PIN_BUSY) == BUSY_ACTIVE)
+    if (digitalRead(busyPin()) == BUSY_ACTIVE)
     {
       rose = true;
       riseMs = millis() - tSw;
       break;
     }
   }
-  int32_t swBusy = -1;
+  int32_t swBusy = BUSY_NEVER_ROSE;
   if (rose)
-    swBusy = waitBusy(1000);
+    swBusy = waitBusyFall(1000);
   // il controller ignora i comandi per ~100-300 ms dopo lo SWRESET
   const uint32_t swElapsed = millis() - tSw;
   if (swElapsed < 200)
     delay(200 - swElapsed);
+
+  if (cfg.busTarget == TARGET_SECOND)
+  {
+    secondSwresetState  = (rose && swBusy >= 0) ? 1 : -1;
+    secondSwresetRiseMs = rose ? (int32_t)riseMs : BUSY_NEVER_ROSE;
+  }
 
   const uint32_t tCfg = micros();
 
@@ -525,41 +636,45 @@ static int32_t initPanel(uint8_t cand, uint16_t mux)
     case CAND_PERCS:
       /**
        * Init a controller INDIPENDENTI: la stessa sequenza di CAND_1330C, ma
-       * mandata due volte, una per chip select, invece che in broadcast. È la
-       * topologia che il datasheet sostiene per uno split sull'asse gate —
-       * la cascade estende le sorgenti, non i gate — ed è quella che il driver
-       * dovrà tenere se la sonda dell'impronta dice che il secondo chip ha un
-       * oscillatore proprio.
+       * mandata una volta per connettore, ognuno sul proprio chip select, invece
+       * che in broadcast. È la topologia a due CS del driver, e la misura che dice
+       * se la coda corta ha un controller che risponde da solo.
        *
-       * Con un solo connettore cablato la seconda passata non arriva a nessuno
-       * e la candidata degenera in CAND_1330C: non è uno spreco, è il caso di
-       * controllo che dice che il doppio init non disturba il chip che risponde.
+       * Il secondo giro seleziona il SOLO secondo connettore (il bersaglio passa
+       * lì per la durata del giro), manda il proprio SWRESET e misura la salita
+       * del BUSY su GPIO22. Con un solo connettore cablato non c'è il secondo
+       * giro e la candidata degenera in CAND_1330C, che è il caso di controllo.
+       * Se il bersaglio è già il secondo connettore il giro unico è il suo.
        */
-      for (uint8_t giro = 0; giro < 2; ++giro)
       {
-        const bool secondo = (giro == 1);
-        if (secondo && !cfg.secondFfc) break;
-        if (secondo)
+        const uint8_t salvaTarget = cfg.busTarget;
+        const uint8_t giri = (cfg.secondFfc && salvaTarget == TARGET_J1) ? 2 : 1;
+        for (uint8_t giro = 0; giro < giri; ++giro)
         {
-          digitalWrite(PIN_CS, HIGH);          // il primo esce dal bus
-          pinMode(PIN_CS_OTHER, OUTPUT);
-          digitalWrite(PIN_CS_OTHER, HIGH);
+          if (giro == 1)
+          {
+            cfg.busTarget = TARGET_SECOND;
+            probeSecondSwreset("giro per-CS");
+          }
+          writeSoftStart();
+          writeMux(mux);
+          writeCommand(0x3C);
+          writeData(0x01);
+          writeCommand(0x18);
+          writeData(0x80);
+          writeReg21(1);
+          setRamWindow(0, 0, SRC, cfg.gate);
         }
-        writeSoftStart();
-        writeMux(mux);
-        writeCommand(0x3C);
-        writeData(0x01);
-        writeCommand(0x18);
-        writeData(0x80);
-        writeReg21(1);
-        setRamWindow(0, 0, SRC, cfg.gate);
+        cfg.busTarget = salvaTarget;
+        digitalWrite(PIN_CS, HIGH);
+        if (cfg.secondFfc) digitalWrite(PIN_CS_OTHER, HIGH);
       }
       break;
   }
 
   const uint32_t usCfg = micros() - tCfg;
 
-  measure("SWRESET BUSY", 0, rose ? swBusy : -1);
+  measure("SWRESET BUSY", 0, rose ? swBusy : BUSY_NEVER_ROSE);
   logDetail("init %s, reset %lu us (tentativo %u), config %lu us",
             CAND_LABEL[cand], (unsigned long)usReset, (unsigned)tentativo,
             (unsigned long)usCfg);
@@ -570,7 +685,7 @@ static int32_t initPanel(uint8_t cand, uint16_t mux)
     logLine("SWRESET: BUSY non e' salito entro 50 ms");
   else
     logDetail("SWRESET: BUSY salito dopo %lu ms", (unsigned long)riseMs);
-  return rose ? swBusy : -1;
+  return rose ? swBusy : BUSY_NEVER_ROSE;
 }
 /**
  * Compone la riga y del piano B/N. Polarità SSD16xx del cmd 0x24: bit 1 =
@@ -817,7 +932,7 @@ static int32_t waitRefresh(uint32_t timeout_ms)
     ++phase;
     const uint32_t tPhase = millis();
     uint32_t nextLog = 2500;
-    while (digitalRead(PIN_BUSY) == BUSY_ACTIVE)
+    while (digitalRead(busyPin()) == BUSY_ACTIVE)
     {
       if ((millis() - t0) > timeout_ms)
         return -1;
@@ -827,9 +942,10 @@ static int32_t waitRefresh(uint32_t timeout_ms)
                   (unsigned long)(millis() - tPhase));
         nextLog += 2500;
       }
-      // il BUSY dell'altra coda è un testimone: se si muove, i due
+      // il BUSY dell'altro connettore è un testimone: se si muove, i due
       // controller condividono qualcosa oltre al bus
-      if (cfg.secondFfc && digitalRead(PIN_BUSY_OTHER) == BUSY_ACTIVE)
+      if ((cfg.secondFfc || cfg.busTarget == TARGET_SECOND)
+          && digitalRead(otherBusyPin()) == BUSY_ACTIVE)
         otherBusyMoved = true;
       delay(1);
     }
@@ -839,7 +955,7 @@ static int32_t waitRefresh(uint32_t timeout_ms)
     bool again = false;
     while ((millis() - tIdle) < 800)
     {
-      if (digitalRead(PIN_BUSY) == BUSY_ACTIVE)
+      if (digitalRead(busyPin()) == BUSY_ACTIVE)
       {
         again = true;
         break;
@@ -891,6 +1007,19 @@ static int32_t runRefresh(uint8_t updateSequence = 0xF7,
   if (timeout_ms == 0) timeout_ms = cfg.timeoutMs;
 
   /**
+   * In sola logica nessun 0x22 con bit analogici seguito da 0x20: i regolatori del
+   * secondo chip non hanno ancora condensatori. La prenotazione eventuale di una
+   * sonda che ha già scritto il proprio numero nella RAM viene buttata, perchè il
+   * frame non arriverà sul vetro.
+   */
+  if (logicOnly())
+  {
+    logLine("modalità sola logica: refresh 0x22 = 0x%02X + 0x20 NON eseguito", updateSequence);
+    annullaPrenotazione();
+    return -1;
+  }
+
+  /**
    * Il numero si prenota prima, perchè va scritto nel riquadro; il gate scatta
    * subito dopo, quando la RAM è pronta ma il vetro mostra ancora la schermata
    * precedente. Scatta prima di OGNI refresh, anche di una passata non
@@ -920,9 +1049,9 @@ static int32_t runRefresh(uint8_t updateSequence = 0xF7,
   writeCommand(0x20);   // master activation
 
   const uint32_t tAct = millis();
-  while (digitalRead(PIN_BUSY) != BUSY_ACTIVE && (millis() - tAct) < 1000)
+  while (digitalRead(busyPin()) != BUSY_ACTIVE && (millis() - tAct) < 1000)
     delay(1);
-  if (digitalRead(PIN_BUSY) != BUSY_ACTIVE)
+  if (digitalRead(busyPin()) != BUSY_ACTIVE)
   {
     /**
      * Il frame prenotato non arriva sul vetro, quindi non lo si attiva: le
@@ -973,10 +1102,10 @@ static void readRegister(uint8_t cmd, uint8_t* out, uint8_t n)
   writeCommand(cmd);
   hspi.beginTransaction(spiReadSettings);
   digitalWrite(PIN_DC, HIGH);
-  digitalWrite(PIN_CS, LOW);
+  digitalWrite(csPin(), LOW);
   for (uint8_t i = 0; i < n; ++i)
     out[i] = hspi.transfer(0x00);
-  digitalWrite(PIN_CS, HIGH);
+  digitalWrite(csPin(), HIGH);
   hspi.endTransaction();
 }
 
@@ -1029,7 +1158,8 @@ static void reportRegisters()
  * Riempie un piano col pattern hardware (0x47 per il B/N, 0x46 per l'accent):
  * il controller scrive la propria RAM da sè, senza passare dal bus. Serve a due
  * cose: è una prova di vita che non dipende da 46 KB di push SPI, e alza il
- * BUSY per una durata misurabile. Ritorna i ms di BUSY, -1 al timeout.
+ * BUSY per una durata misurabile. Ritorna i ms di BUSY, BUSY_NEVER_ROSE se il
+ * comando non l'ha alzato, BUSY_STILL_HIGH se è rimasto alto al timeout.
  */
 static int32_t patternFill(uint8_t patternCommand, uint8_t value, const char* label)
 {
@@ -1039,15 +1169,15 @@ static int32_t patternFill(uint8_t patternCommand, uint8_t value, const char* la
   bool rose = false;
   while ((millis() - tAct) < 200)
   {
-    if (digitalRead(PIN_BUSY) == BUSY_ACTIVE) { rose = true; break; }
+    if (digitalRead(busyPin()) == BUSY_ACTIVE) { rose = true; break; }
   }
   if (!rose)
   {
     measure(label, 0, REFRESH_NON_ESEGUITO);
-    logLine("pattern 0x%02X: BUSY non e' salito, comando non accettato", patternCommand);
-    return -1;
+    logLine("pattern 0x%02X: BUSY non è salito, comando non accettato", patternCommand);
+    return BUSY_NEVER_ROSE;
   }
-  const int32_t ms = waitBusy(5000);
+  const int32_t ms = waitBusyFall(5000);
   measure(label, 0, ms);
   return ms;
 }
@@ -1250,8 +1380,11 @@ static void loadWaveformLut(const uint8_t* lut, uint8_t border)
     writeCommand(0x12);
     const int32_t sw = waitBusy(1000);
     delay(200);
-    logDetail("SWRESET prima del carico: tensioni ai POR senza scriverle, BUSY %ld ms",
-              (long)sw);
+    if (sw < 0)
+      logDetail("SWRESET prima del carico: tensioni ai POR senza scriverle, BUSY non salito o fisso alto");
+    else
+      logDetail("SWRESET prima del carico: tensioni ai POR senza scriverle, BUSY %ld ms",
+                (long)sw);
   }
 
   writeCommand(0x3C);
@@ -1296,6 +1429,11 @@ static void forceRamOptionsNormal()
 /** Power on esplicito, come lo fa il GDEH116T91 prima di ogni _Update_Part(). */
 static int32_t powerOnExplicit()
 {
+  if (logicOnly())
+  {
+    logLine("modalità sola logica: power on 0x22 = 0xC0 + 0x20 NON eseguito");
+    return BUSY_NEVER_ROSE;
+  }
   writeCommand(0x22);
   writeData(0xC0);
   writeCommand(0x20);
@@ -1312,6 +1450,11 @@ static int32_t powerOnExplicit()
  */
 static int32_t powerOffExplicit()
 {
+  if (logicOnly())
+  {
+    logLine("modalità sola logica: power off 0x22 = 0xC3 + 0x20 NON eseguito");
+    return BUSY_NEVER_ROSE;
+  }
   writeCommand(0x22);
   writeData(0xC3);
   writeCommand(0x20);

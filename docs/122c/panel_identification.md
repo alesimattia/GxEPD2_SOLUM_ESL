@@ -37,6 +37,11 @@ l'etichetta serigrafata sul vetro**, che va letta sull'esemplare in mano;
 `normal` distingue la versione non freezer. Il barcode dell'esemplare PRO è
 `FF00C9A6E59B`, quello Core `0B1A1612E5D2`, entrambi lotto `031`.
 
+L'esemplare del progetto è un **`EL122R2CRN`**: piattaforma R2, MCU del tag RTL8762ESL,
+campo colore `R` = BWR, code `FPC-7717` (lunga) e `FPC-7716` (corta). Le foto e le
+serigrafie di questa pagina vengono dalle pratiche PRO e Core, che documentano lo stesso vetro
+su schede tag diverse: quello che dicono delle schede va verificato sulla scheda R2.
+
 **Come si legge un codice modello SOLUM** (§3.6 "Label Marking" del datasheet
 PRO, `../Newton-PRO_Data-sheet_C-Lab_G_240320.pdf`):
 
@@ -119,7 +124,8 @@ FFC #1 ─┤            960 × 384  (384 gate)              │
 
 Nel sistema di coordinate del driver (`WIDTH = 960` sull'asse source,
 `HEIGHT = 768` sull'asse gate) le due metà sono quindi **bande orizzontali**:
-righe 0..383 a un controller, 384..767 all'altro.
+righe 384..767 al controller della coda lunga, che dipinge la metà dal proprio lato con il
+gate 0 alla giunzione, e righe 0..383 a quello della coda corta.
 
 La posizione delle code conferma quale asse è quale: su tutti e tre i pannelli
 della famiglia la coda si attacca **al centro di un bordo lungo**, cioè al
@@ -216,10 +222,14 @@ che va dal primo connettore al secondo è il collegamento di quei rail.
 
 ## 6. Perchè la seconda coda resta muta
 
-Stato attuale del bring-up: con l'ESP32 su una coda si stampa 960 × 384
-correttamente — è la metà che il firmware di produzione già disegna — mentre
-spostando lo stesso cablaggio sull'altra coda non si stampa nulla. Ipotesi in
-ordine di probabilità.
+Stato attuale del bring-up: con l'ESP32 sulla coda lunga si stampa 960 × 384
+correttamente, nella metà dal suo lato, mentre la coda corta infilata nello stesso connettore
+non stampa nulla e il suo BUSY segue il pull. In quella prova la coda corta aveva tutto ciò che
+serve a un controller indipendente con la piedinatura standard: EPD_3.3V, il booster e i
+condensatori della Waveshare, BS1 a massa (R11 0R) e reset da 2 a 50 ms. Quel caso è quindi
+escluso, e restano le ipotesi qui sotto; la misura che le separa è la fase 0 di
+[cable_linking.html](cable_linking.html). Il controller non coincide con nessun datasheet
+noto, quindi SSD1683 e SSD1677 valgono come analogia.
 
 0. **È la coda dello slave di una coppia in cascade, e da sola non può
    funzionare.** È la spiegazione che copre tutti i sintomi senza ipotesi
@@ -258,8 +268,8 @@ cablati anche sul secondo attacco.
 | Geometria per controller | **chiuso**: 960 × 384, split sull'asse corto |
 | Famiglia del controller | **chiuso in pratica**: SSD16xx, base di init dal 9.7". Il fratello a 4 colori della stessa taglia (SSD2677, 960 × 680, RAM a 2 bit/pixel) parla invece UC: non è questo |
 | Part number esatto del controller | aperto: nessuna serigrafia leggibile, il COF è schermato. Si chiuderebbe leggendo `0x2E` (User ID da OTP), che richiede un SDO: il connettore interno della board non lo porta, la coda cablata a mano forse sì — vedi il punto 7 in testa a `examples/12_2c/dual_panel_finder` |
-| Quale metà è quale coda | aperto: da annotare al bring-up del secondo controller |
+| Quale metà è quale coda | **chiuso**: la coda lunga dipinge la metà dal proprio lato, banda bassa del driver (righe 384..767) |
 | Verso della scansione della seconda metà | aperto: una delle due va in reverse |
 | Alimentazione della seconda coda | **chiuso in pratica**: nessun boost sul secondo connettore, i rail arrivano dal primo — cascade mode, §5 |
-| Indirizzamento del secondo controller | opcode `\|0x80` su un solo CS, più `0x21` B[4] = 1 sul master: da verificare sul pannello |
+| Indirizzamento del secondo controller | aperto: il driver supporta a runtime due CS (default) e cascade (opcode `\|0x80` su un solo CS, `0x21 = 00 10` sul master); lo decide la fase 0 di [cable_linking.html](cable_linking.html) |
 | Ordine dei pin sulla seconda coda | aperto: possibile ribaltamento, vedi §6 |
