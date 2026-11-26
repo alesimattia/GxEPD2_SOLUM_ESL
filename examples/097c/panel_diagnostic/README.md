@@ -16,7 +16,7 @@ correggere quel driver. Due domande sono aperte:
 Il driver deriva da `GxEPD2_EPD` e può fare **override** dei suoi virtual (`refresh`, `powerOff`,
 `hibernate`, `writeImage*`, `setPaged`) oltre a ridefinire i propri metodi interni
 (`_InitDisplay`, `_Update_Full`, `_Init_Part`, `_Update_Part`, `_PowerOn`, `_PowerOff`,
-`_cleanColorIfPrevious`). Il blocco `DRV` del riepilogo dice, voce per voce, quale metodo
+`_cleanRam26`). Il blocco `DRV` del riepilogo dice, voce per voce, quale metodo
 rivedere e con quale valore.
 
 ## Una sola compilazione
@@ -139,15 +139,19 @@ comando.
 | `partialInit()` | `_Init_Part()` | `0x3C = 0xC0`, `0x32` byte 0..104, `0x04` byte 106..108 |
 | `partialPowerOn()` / `powerOffPanel()` | `_PowerOn()` / `_PowerOff()` | `0x22 = 0xC0` / `0xC3`, `0x83`, `0x03` |
 | `partialUpdate()` | `_Update_Part()` | power on, finestra piena, `0x22 = 0xCC` |
-| `drawPartial()` | `drawImagePartial()` | `0x24`, passata, ricopia in `0x26` |
+| `drawPartial()` | `drawImagePartial()` di `PartialProbeDriver.h` | `0x24`, passata, ricopia in `0x26` |
 | `fullRefresh()` | `_Update_Full()` | border di produzione, `0x22 = 0xF7` |
-| `setWaveform()` | `setPartialLut()` | power off, poi `partialInit()` |
-| `fillByPattern(0x46, 0xFF)` | `writeScreenBufferPrevious()` | pattern hardware su `0x26` |
-| `fillByPattern(0x46, 0x00)` | `_cleanColorIfPrevious()` | pattern hardware su `0x26` |
+| `setWaveform()` | `setPartialLut()` di `PartialProbeDriver.h` | power off, poi `partialInit()` |
+| `fillByPattern(0x46, 0xFF)` | `writeScreenBufferPrevious()` di `PartialProbeDriver.h` | pattern hardware su `0x26` |
+| `fillByPattern(0x46, 0x00)` | `_cleanRam26(true)` | pattern hardware su `0x26` |
 
 L'unica cosa che arriva dalla libreria è la costante `GxEPD2_SOLUM_097c_lut_partial`: la taratura
 deve confrontare esattamente i byte che andrebbero in produzione. Nessuna istanza del driver viene
-creata.
+creata. Le API opt-in del partial che alcune primitive rispecchiano (`drawImagePartial()`,
+`writeScreenBufferPrevious()`, `setPartialLut()` e le altre) non stanno nel driver della libreria ma
+nella sottoclasse `GxEPD2_SOLUM_097c_PartialProbe` di [`PartialProbeDriver.h`](PartialProbeDriver.h),
+con le stesse firme: lo sketch la include per tenerla compilata insieme al driver e non la istanzia,
+perchè le sonde lavorano a SPI diretta.
 
 ## I nove driver SSD1677 di GxEPD2, e la scelta della base
 
@@ -234,11 +238,11 @@ Il blocco `DRV` del riepilogo mappa ogni rilevazione sul metodo da rivedere:
 |---|---|---|
 | soft start, ordine `0x18`/`0x0C`, MUX B, attesa dopo SWRESET | `_InitDisplay()` | `i`, `b` |
 | `0x21` prima del refresh, oggi assente | `_Update_Full()`, `_Update_Part()` | `4` con `x` |
-| `full_refresh_time`, `_busy_timeout` | costanti e costruttore | `1`, `6` |
+| `full_refresh_time`, `_busy_timeout` (`BUSY_TIMEOUT_US`) | costanti e costruttore | `1`, `6` |
 | `power_on_time`, `power_off_time`, sequenza di off | `_PowerOn()`, `_PowerOff()` | `b` |
 | LUT, `0x04`, border, `0x22 = 0xCC`, `partial_refresh_time` | `_Init_Part()`, `_Update_Part()` | `8`, `p`, `t` |
-| allineamento di `0x26` e invariante di catena | `drawImagePartial()`, `writeImageToPrevious()` | `p` |
-| uscita dalla catena | `_cleanColorIfPrevious()`, `setPaged()` | `p` con `x` |
+| allineamento di `0x26` e invariante di catena | `drawImagePartial()`, `writeImageToPrevious()` di `PartialProbeDriver.h` | `p` |
+| uscita dalla catena | `_cleanRam26(true)`, `setPaged()` | `p` con `x` |
 | refresh d'area: pieno o partial | override di `refresh(x, y, w, h)` | `5` |
 | refresh pieno B/N veloce | un `_Init_Full()` alla 370 e un'API dedicata | `w` |
 | banco caldo | `_Update_Full()` con `0x1A` | `6` con `x` |
@@ -332,7 +336,7 @@ tutti e tre.
 
 Altri due limiti di disegno da conoscere prima di concludere qualcosa:
 
-- **`_cleanColorIfPrevious()` non viene esercitato nel caso negativo** se
+- **`_cleanRam26(true)` non viene esercitato nel caso negativo** se
   `esaustivo` è spento: la passata di trappola `[7b]` è condizionale, e senza di
   lei manca anche la riga `DRV` corrispondente;
 - **l'allineamento di `0x26` che apre la catena non copre il riquadro del

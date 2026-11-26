@@ -13,6 +13,9 @@
 // partial, GxEPD2_SOLUM_097c_lut_partial: la taratura deve confrontare
 // esattamente i byte che andrebbero in produzione, non una copia che può
 // divergere. Nessuna istanza del driver viene creata, nessun metodo chiamato.
+// Le API opt-in del partial che alcune primitive rispecchiano (drawImagePartial()
+// e le altre) stanno nella sottoclasse di PartialProbeDriver.h, che la suite
+// include per tenerla compilata e non istanzia.
 //
 // Hardware: Waveshare E-Paper ESP32 Driver Board V3, che scambia SCK e MOSI
 // rispetto al default HSPI. Lo switch n.1 della board NON sceglie il tipo di
@@ -263,9 +266,9 @@ static void setRamWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
  * GxEPD2_SOLUM_097c_960x672::_InitDisplay(). È il punto di partenza di ogni
  * sonda, e insieme la prima cosa che le misure devono poter smentire.
  *
- * Il BUSY dopo lo SWRESET viene osservato dentro la finestra di 200 ms che il
- * driver spende comunque a delay: la durata reale del reset interno diventa un
- * dato invece di una stima, e sul bus non cambia niente.
+ * Il BUSY dopo lo SWRESET viene osservato dentro una finestra di almeno 200 ms,
+ * più lunga dell'attesa del driver sul BUSY: la durata reale del reset interno
+ * diventa un dato invece di una stima.
  */
 static void initPanel()
 {
@@ -301,8 +304,7 @@ static void initPanel()
   lutCustomLoaded = false;   // il SWRESET ha rimesso le LUT dell'OTP
   analogOn = false;
   if (rose)
-    logDetail("init: reset %lu us, SWRESET BUSY su dopo %lu ms, alto %ld ms"
-              " (il driver attende 200 ms fissi)",
+    logDetail("init: reset %lu us, SWRESET BUSY su dopo %lu ms, alto %ld ms",
               (unsigned long)usReset, (unsigned long)riseMs, (long)swBusy);
   else
     logDetail("init: reset %lu us, SWRESET BUSY mai salito entro 50 ms",
@@ -326,8 +328,8 @@ static void enterRaw()
  * step width 960, cioè un unico step su tutta la RAM nativa.
  *
  * Rispecchia _fillPlaneByPattern() del driver, e con 0x46 vale anche per le due
- * primitive del frame precedente: (0x46, 0xFF) è writeScreenBufferPrevious(),
- * (0x46, 0x00) è _cleanColorIfPrevious().
+ * primitive del frame precedente: (0x46, 0xFF) è writeScreenBufferPrevious() di
+ * PartialProbeDriver.h, (0x46, 0x00) è _cleanRam26(true) del driver.
  * Ritorna i ms del riempimento, -1 se il comando non è praticabile.
  */
 static int32_t fillByPattern(uint8_t patternCommand, uint8_t value)
@@ -458,8 +460,8 @@ static uint32_t fillPlaneRect(uint8_t plane, uint16_t x, uint16_t y,
  * Scrive una bitmap del chiamante dentro un rettangolo di un piano: rispecchia
  * _writeImage() del driver, righe da w/8 byte. invert serve al piano accent
  * scritto da una bitmap in convenzione "bit = 1 non è quel colore", che è
- * quello che fa writeImageRed(); il frame precedente del partial invece si
- * scrive SENZA invert, perchè lì 0x26 porta il piano B/N.
+ * quello che fa writeImageRed() di PartialProbeDriver.h; il frame precedente del
+ * partial invece si scrive SENZA invert, perchè lì 0x26 porta il piano B/N.
  */
 static void writePlaneRect(uint8_t plane, const uint8_t* bitmap,
                            uint16_t x, uint16_t y, uint16_t w, uint16_t h, bool invert)
@@ -936,7 +938,8 @@ static bool partialInit()
 }
 
 /**
- * Cambia waveform a sessione aperta: rispecchia setPartialLut() del driver.
+ * Cambia waveform a sessione aperta: rispecchia setPartialLut() di
+ * PartialProbeDriver.h.
  * Il power off non è opzionale — senza, le tensioni nuove arrivano ad analog
  * già acceso e la passata girerebbe con quelle di prima.
  */
@@ -961,10 +964,10 @@ static int32_t partialUpdate(const char* caption)
 }
 
 /**
- * Il ciclo completo su una bitmap B/N: rispecchia drawImagePartial(). Scrive il
- * frame nuovo in 0x24, fa la passata e ricopia la stessa bitmap in 0x26, così
- * il frame precedente resta allineato al vetro e il partial successivo non ha
- * bisogno di preparazione.
+ * Il ciclo completo su una bitmap B/N: rispecchia drawImagePartial() di
+ * PartialProbeDriver.h. Scrive il frame nuovo in 0x24, fa la passata e ricopia
+ * la stessa bitmap in 0x26, così il frame precedente resta allineato al vetro e
+ * il partial successivo non ha bisogno di preparazione.
  */
 static int32_t drawPartial(const uint8_t* bitmap, uint16_t x, uint16_t y,
                            uint16_t w, uint16_t h, const char* caption)

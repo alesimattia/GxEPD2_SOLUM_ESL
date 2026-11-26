@@ -1,4 +1,4 @@
-# GxEPD2_SOLUM_ESL — driver custom per pannelli SOLUM ESL
+# GxEPD2_SOLUM_ESL: driver custom per pannelli SOLUM ESL
 
 Libreria Arduino che estende [GxEPD2](https://github.com/ZinggJM/GxEPD2) con i
 driver di pannelli e-paper recuperati da etichette elettroniche SOLUM, che
@@ -7,11 +7,17 @@ upstream non supporta.
 | Driver | Pannello | Controller | Colori | Stato |
 |---|---|---|---|---|
 | [`src/GxEPD2_SOLUM_097c_960x672.h`](src/GxEPD2_SOLUM_097c_960x672.h) | Newton Pro 9.7", 960w × 672h | SSD1677 | B/W/R verificati, 4° colore [questione aperta](#010-il-4-colore-non-esiste-questione-chiusa) | in uso |
-| [`src/GxEPD2_SOLUM_122c_960x768.h`](src/GxEPD2_SOLUM_122c_960x768.h) | Newton PRO / Core 12.2", 960w × 768h | 2 × SSD16xx, 960×384 ciascuno | B/W/R | una banda validata, le due insieme no — vedi [README_122c.md](README_122c.md) |
+| [`src/GxEPD2_SOLUM_122c_960x768.h`](src/GxEPD2_SOLUM_122c_960x768.h) | Newton PRO / Core 12.2", 960w × 768h | 2 × SSD16xx, 960×384 ciascuno | B/W/R | una banda validata, le due insieme no: vedi [README_122c.md](README_122c.md) |
 
 Il namespace `GxEPDImage` (descrittori immagine e `showImage()`) sta in
 [`src/GxEPDImage.h`](src/GxEPDImage.h) e lo condividono tutti i driver: due
-header driver possono coesistere nella stessa translation unit.
+header driver possono coesistere nella stessa translation unit. Anche
+`GxEPDFrame` (un frame intero in una chiamata, vedi
+[§3.2](#32-il-refresh-differenziale-il-partial-dentro-il-loop-paged)) e l'esito
+del BUSY `GxEPD2_SOLUM_BusyFault` hanno header propri,
+[`src/GxEPDFrame.h`](src/GxEPDFrame.h) e
+[`src/GxEPD2_SOLUM_BusyFault.h`](src/GxEPD2_SOLUM_BusyFault.h), che non
+dipendono dal driver.
 
 Le prime sezioni valgono per la libreria; da [Il driver 9.7"](#il-driver-97)
 in poi il documento riguarda quel pannello. Per il 12.2" vedi
@@ -27,7 +33,7 @@ in poi il documento riguarda quel pannello. Per il 12.2" vedi
 - [Il driver 9.7"](#il-driver-97)
 - [0. Il pannello SOLUM 9.7"](#0-il-pannello-solum-97)
 - [Origine](#origine)
-- [1. `GxEPDImage::showImage()` — unico entry-point pubblico](#1-gxepdimageshowimage--unico-entry-point-pubblico)
+- [1. `GxEPDImage::showImage()`: unico entry-point pubblico](#1-gxepdimageshowimage-unico-entry-point-pubblico)
 - [2. Due API siblings single-channel uniformi](#2-due-api-siblings-single-channel-uniformi)
 - [3. Il template a due canali e le scritture out-of-band](#3-il-template-a-due-canali-e-le-scritture-out-of-band)
 - [4. Sistema di descrittori universali (`namespace GxEPDImage`)](#4-sistema-di-descrittori-universali-namespace-gxepdimage)
@@ -64,16 +70,17 @@ GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS, SOLUM_MAX_HEIGHT(GxEPD2_SOLUM_DRIVER_CLASS)
 
 void setup()
 {
-  hspi.begin(13, 12, 14, 15);                                  // SCK, MISO, MOSI, SS
-  display.epd2.selectSPI(hspi, SPISettings(10000000, MSBFIRST, SPI_MODE0));
-  display.init(115200, true, 2, false);
+  // beginBus() apre il bus sui pin della board e restituisce le SPISettings;
+  // l'overload nativo di init() le passa al driver con selectSPI() prima di init().
+  display.init(115200, true, 2, false, hspi,
+               GxEPD2_SOLUM::beginBus(hspi, 13, 12, 14, 15, 10000000));  // SCK, MISO, MOSI, SS, Hz
   display.setRotation(0);                                      // 960w × 672h landscape
   display.setFullWindow();
 }
 ```
 
-Requisiti: target **ESP32** — il driver usa `SPIClass::writeBytes` e ha i
-`delay(1)` di yield WDT per ESP8266 rimossi dai hot path — e alimentazione
+Requisiti: target **ESP32** (il driver usa `SPIClass::writeBytes` e ha i
+`delay(1)` di yield WDT per ESP8266 rimossi dai hot path) e alimentazione
 3,3 V su VCC **e su tutte le data line** del pannello, che non sono
 5V-tolerant. Adafruit_GFX serve solo se `ENABLE_GxEPD2_GFX` è attivo.
 
@@ -96,12 +103,16 @@ libreria invece che negli esempi.
 | `GxEPD2_SOLUM_DRIVER_CLASS` | nome della classe del driver selezionato |
 | `SOLUM_MAX_HEIGHT(EPD)` | altezza della page derivata dal budget RAM, con cap a `EPD::HEIGHT`. Due piani da 1 bpp, quindi il budget si divide per due |
 | `SOLUM_MAX_DISPLAY_BUFFER_SIZE` | budget RAM dei buffer di page. Default 65536, lo stesso di upstream per ESP32, l'unica architettura della libreria. Definendolo prima dell'include si sovrascrive |
+| `SOLUM_PAGE_HEIGHT(EPD, PAGES)` | altezza della page per un numero di pagine scelto, arrotondata per eccesso: `PAGES` pagine coprono sempre il pannello |
+| `GxEPD2_SOLUM_Display<PH>` | alias del `GxEPD2_3C` del driver selezionato, con page alta `PH`. Un `static_assert` verifica che con il refresh differenziale la page copra il pannello in al più 16 pagine (`GxEPD2_SOLUM_Differential::MAX_PAGES`): con page più basse il partial non partirebbe mai, senza nessun errore |
+| `GxEPD2_SOLUM::beginBus(spi, sck, miso, mosi, cs, hz)` | apre il bus SPI sui pin della board e restituisce le `SPISettings` (MSBFIRST, modo 0, `hz` di default 10 MHz) da passare all'overload nativo `GxEPD2_3C::init(diag, initial, reset_ms, pulldown, spi, settings)`, che fa `selectSPI()` prima di `init()` |
 | `GxEPD2_SOLUM_Pins` | struct di pinout uniforme fra i driver, in [`src/GxEPD2_SOLUM_Pins.h`](src/GxEPD2_SOLUM_Pins.h) |
 
 Con `SOLUM_MAX_DISPLAY_BUFFER_SIZE` al default, su un pannello da 960 px di
 larghezza la page viene di 273 righe, cioè ~65 KB di buffer. Se la RAM serve
 anche ad altro, passare al template un valore proprio: il firmware consumer usa
-`EPD::HEIGHT / 8`, cioè ~20 KB e otto page.
+`EPD::HEIGHT / 8`, cioè ~20 KB e otto page, che con l'alias diventa
+`GxEPD2_SOLUM_Display<SOLUM_PAGE_HEIGHT(GxEPD2_SOLUM_DRIVER_CLASS, 8)>`.
 
 La struct di pinout è ciò che rende sostituibile un driver con l'altro: i
 pannelli non hanno tutti lo stesso numero di segnali (il 12.2" ha due CS e due
@@ -119,7 +130,12 @@ significherebbe riscrivere la riga di costruzione del display.
    non ha rami per driver, e compone i due piani che `GxEPD2_3C` gestisce:
    nessun driver deve dichiarare primitive che non gli servono. Un pannello con
    un terzo piano può esporne le primitive come API propria, che il chiamante
-   usa fuori dal loop paged.
+   usa fuori dal loop paged. Il refresh differenziale (`hasDifferentialRefresh`
+   e le chiamate di [§3.2](#32-il-refresh-differenziale-il-partial-dentro-il-loop-paged)),
+   il salto del frame invariato (`setSkipUnchanged()` e `frameSkipped()`) e
+   l'esito del BUSY (`busyFault()` e `lastUpdateMs()`) sono facoltativi:
+   `GxEPDFrame` li rileva dal tipo del driver, e un driver che non li dichiara
+   fa un refresh pieno a ogni frame.
 2. **Costruttore `explicit Driver(const GxEPD2_SOLUM_Pins&)`**, oltre a quelli
    nativi. È la firma che gli sketch usano.
 3. **Bus SPI da `_pSPIx` / `_spi_settings`** della base `GxEPD2_EPD`, mai
@@ -127,7 +143,8 @@ significherebbe riscrivere la riga di costruzione del display.
    che valga per tutti i driver. Se il driver ha un default proprio, lo imposta
    nel costruttore chiamando `selectSPI()`, non cablandolo nelle primitive. Il
    driver non apre e non riconfigura il bus, e non conosce i pin della board: lo
-   sketch apre il bus sui propri pin prima di `init()`.
+   sketch apre il bus sui propri pin con `GxEPD2_SOLUM::beginBus()` e l'overload
+   di `init()` che riceve bus e impostazioni.
 4. **Membro `panel`**: i driver di questa libreria prendono in prestito un
    valore di `GxEPD2::Panel` di un pannello upstream. Va scelto uno che i
    template **non** trattino in modo speciale: `GxEPD2_3C` applica workaround
@@ -152,17 +169,24 @@ SSD1677) su
 Jean-Marc Zingg, fornendo:
 
 - **API `showImage()` unificata** come unico entry-point one-shot di
-  stampa immagine, con hibernate automatico opzionale. Due overload:
-  descrittore generico (output dello script Python) e bitmap raw 1bpp
-  B/N (formato [image2cpp](https://javl.github.io/image2cpp/));
-- **2 API siblings uniformi** `writeImageBlack` / `writeImageRed` per
-  scrittura single-channel sui due piani del controller, per il compositing
-  manuale fuori dal loop paged (vedi [sezione dedicata](#3-il-template-a-due-canali-e-le-scritture-out-of-band));
+  stampa immagine: wrapper di `GxEPD2_3C::drawInvertedBitmap()` che rende i
+  piani rosso e nero di un descrittore (output dello script Python) o di una
+  bitmap raw 1bpp B/N (formato [image2cpp](https://javl.github.io/image2cpp/),
+  con la macro `GXEPD_BW_IMAGE`);
+- **un frame intero in una chiamata**, `GxEPDFrame::render()`, sopra il loop
+  paged: refresh differenziale armato, rifacimento in pieno e salto del frame
+  invariato (vedi [§3.2](#32-il-refresh-differenziale-il-partial-dentro-il-loop-paged));
+- **esito del BUSY**, `busyFault()` e `lastUpdateMs()`, per accorgersi di un
+  pannello che non risponde (vedi [Guasti del BUSY](#guasti-del-busy));
+- **API opt-in del partial e siblings single-channel** (`writeImageBlack` /
+  `writeImageRed`, `drawImagePartial()` e le altre) che non stanno nel driver
+  ma nella sottoclasse `GxEPD2_SOLUM_097c_PartialProbe` dell'esempio
+  `panel_diagnostic` (vedi [sezione dedicata](#3-il-template-a-due-canali-e-le-scritture-out-of-band));
 - **sistema di descrittori universali** (`GxEPDImage::Descriptor`) che
   porta con sè formato e dimensioni dell'immagine (BW / BWR / BWRY, di cui
   `showImage` rende i primi due piani);
 - **nessuna API per un quarto colore**: su questo pannello non esiste, e la
-  misura lo ha chiuso — vedi
+  misura lo ha chiuso, vedi
   [§0.10](#010-il-4-colore-non-esiste-questione-chiusa).
 
 Per un esempio d'uso completo (sketch, moduli Weather/Calendar, flussi di
@@ -219,11 +243,11 @@ datasheet stesso: nel modello table della linea PRO *ogni* taglia da 1.6" a
 12.2" è elencata come `...W4A`, cioè la cifra `4` è costante su tutta la linea.
 Che non sia un dato per unità lo dimostrano le serigrafie sul vetro della
 generazione F6: `EL097F6W4A` porta `NEWTON PRO 9.7" BWRY Normal`, ma
-`EL116F6W4A` e `EL122H6W4A` — stessa cifra `4` — portano `BWR normal`. Il campo
+`EL116F6W4A` e `EL122H6W4A`, con la stessa cifra `4`, portano `BWR normal`. Il campo
 colore distingue la **linea** (PRO nominalmente a 4 colori, Core `R` a 3), non
 il film montato. Il set colori resta un'opzione di build dello stesso modulo: la pagina Newton Core 4COLOR 9.7"
 dichiara `BW / BWR / BWRY` e la tabella di famiglia del Newton Pro (formati
-1.6"–11.6") dichiara `BW / BWR / BWY`. Lo stesso 672 × 960 viene quindi prodotto
+da 1.6" a 11.6") dichiara `BW / BWR / BWY`. Lo stesso 672 × 960 viene quindi prodotto
 con due, uno o nessun colore d'accento, e solo una prova sul pannello dice quale
 si ha in mano: vedi [§0.10](#010-il-4-colore-non-esiste-questione-chiusa).
 
@@ -247,8 +271,8 @@ correzione di aspect ratio nè in `epd_image_converter.pyw` nè in `showImage`.
 
 Il controller indirizza il pannello come **960 source × 672 gate**: nel driver
 `WIDTH = 960` è l'asse X della RAM (comando `0x44`) e `HEIGHT = 672` l'asse Y
-(comando `0x45`). Il modulo è montato in portrait — per questo il catalogo
-riporta "672 × 960" — e con `setRotation(0)` il layer GFX lavora in landscape
+(comando `0x45`). Il modulo è montato in portrait, per questo il catalogo
+riporta "672 × 960", e con `setRotation(0)` il layer GFX lavora in landscape
 960w × 672h.
 
 **Il MUX era ereditato dall'upstream.** Fino alla correzione,
@@ -256,19 +280,21 @@ riporta "672 × 960" — e con `setRotation(0)` il layer GFX lavora in landscape
 679, cioè **680 gate lines**: il valore del pannello GDEM133Z91
 (`HEIGHT = 680`), preso tale e quale. Questo pannello ne ha 672, e infatti
 `_setPartialRamArea` imposta la finestra Y su `0..671`: il controller scandiva
-8 gate lines inesistenti a ogni refresh — nessun artefatto visibile (sotto non
+8 gate lines inesistenti a ogni refresh: nessun artefatto visibile (sotto non
 c'è film), ma ~1,2% del tempo di refresh, circa 280 ms sui 24 s misurati.
 
 Ora il MUX è `0x9F 0x02 0x00` = 671 → **672 gate lines**. L'immagine attesa è
 identica (la finestra RAM era già `0..671`), il refresh dovrebbe accorciarsi di
 quei ~260 ms; ridurre le gate line scandite accorcia anche il tempo di frame
-della waveform, quindi lo scarto di impulso è dell'ordine dell'1% — sotto la
+della waveform, quindi lo scarto di impulso è dell'ordine dell'1%, sotto la
 soglia percepibile, ma **la verifica su hardware non è ancora stata fatta**.
-Sul valore di `full_refresh_time` c'era un'imprecisione, ora corretta: **non è
-il timeout di attesa del BUSY**. `GxEPD2_EPD::_waitWhileBusy` lo riceve come
-parametro `busy_time` e lo usa soltanto come `delay()` di fallback quando il pin
-BUSY non è cablato; con il BUSY presente il timeout che conta è `_busy_timeout`,
-il sesto argomento del costruttore. Vedi [§0.8](#08-tempi-di-refresh).
+`full_refresh_time` **non è il timeout di attesa del BUSY**.
+`GxEPD2_EPD::_waitWhileBusy` lo riceve come parametro `busy_time` e lo usa
+soltanto come `delay()` di fallback quando il pin BUSY non è cablato; con il
+BUSY presente il timeout che conta è `_busy_timeout`, che il driver tiene a
+`BUSY_TIMEOUT_US` (120 s, sesto argomento del costruttore della base) per
+l'attesa dei refresh e porta a `SHORT_BUSY_TIMEOUT_US` (5 s) per le attese
+brevi. Vedi [§0.8](#08-tempi-di-refresh).
 Insieme al MUX è stato corretto anche il commento
 `// Set MUX as 527`, sbagliato e anch'esso ereditato dall'upstream.
 
@@ -369,7 +395,7 @@ controller no). Anche il driver 12.2" parte da 10 MHz, per la stessa ragione.
 | 1 piano full-screen (960 × 672 / 8) | 80.640 | ~73 ms | ~121 ms |
 | 1 page, 1 piano (960 × 84 / 8) | 10.080 | ~9 ms | ~15 ms |
 | loop paged completo B+R (8 page × 2 piani) | 161.280 | ~145 ms | ~242 ms |
-| riempire un piano col pattern hardware `0x47` / `0x46` | 1 | **8-9 ms** | — |
+| riempire un piano col pattern hardware `0x47` / `0x46` | 1 | **8-9 ms** | n/a |
 
 I piani sono **due**, `0x24` e `0x26`, quindi il loop paged completo è anche il
 volume massimo di un refresh: non esistono righe da tre o quattro piani.
@@ -389,21 +415,26 @@ della board è senza PSRAM).
 | `full_refresh_time` | 60.000 ms | solo `delay()` di fallback per `busy < 0`, **non** il timeout reale |
 | `partial_refresh_time` | 2.000 ms | idem, con margine sui 640 misurati |
 | `power_on_time` / `power_off_time` | 100 / 250 ms | misurati 82 e 221, anch'essi solo fallback |
-| `busy_timeout` | 120.000.000 µs (120 s) | sesto argomento di `GxEPD2_EPD`, **è il timeout che conta** |
-| reset duration | 2 ms | `display.init(115200, true, 2, false)` nello sketch |
-| SWRESET | 2 ms di BUSY | misurato; il driver attende comunque 200 ms fissi |
+| `BUSY_TIMEOUT_US` | 120.000.000 µs (120 s) | attesa dei refresh; è il `_busy_timeout`, sesto argomento di `GxEPD2_EPD`, **il timeout che conta** |
+| `SHORT_BUSY_TIMEOUT_US` | 5.000.000 µs (5 s) | attese brevi, tutte sotto il secondo: power on e off, SWRESET, pattern hardware |
+| `MIN_PLAUSIBLE_FULL_REFRESH_MS` | 5.000 ms | sotto questa durata un refresh pieno non è plausibile e `busyFault()` vale `TooShort` |
+| `MIN_PLAUSIBLE_PARTIAL_REFRESH_MS` | 300 ms | come sopra per il partial, che misura 640 ms |
+| reset duration | 2 ms | terzo argomento di `display.init(115200, true, 2, false, hspi, ...)` nello sketch |
+| SWRESET | 2 ms di BUSY | misurato; il driver lo attende sul BUSY con `SHORT_BUSY_TIMEOUT_US`, poi 10 ms di margine. I 200 ms sono solo il `delay()` di fallback per `busy < 0` |
 
-**Perchè `busy_timeout` è a 120 s.** Non è sovradimensionato: la waveform
+**Perchè `BUSY_TIMEOUT_US` è a 120 s.** Non è sovradimensionato: la waveform
 dell'OTP si allunga al freddo, e con la temperatura forzata a 0 °C il refresh
-misura 59.060 ms, cioè due volte e mezzo il caso ambiente. Allo scadere
-`_waitWhileBusy` stampa `Busy Timeout!` ed esce, `_Update_Full` torna con il
-pannello ancora in pilotaggio e `hibernate()` manda `0x10` a metà waveform,
-lasciando il frame troncato. È una guardia, non un'attesa: se il BUSY scende
-prima, il valore non costa niente.
+misura 59.060 ms, cioè due volte e mezzo il caso ambiente. Un timeout più corto
+farebbe uscire `_Update_Full` con il pannello ancora in pilotaggio, e
+`hibernate()` manderebbe `0x10` a metà waveform, lasciando il frame troncato.
+Allo scadere il driver alza il guasto `Timeout` (vedi
+[Guasti del BUSY](#guasti-del-busy)). È una guardia, non un'attesa: se il BUSY
+scende prima, il valore non costa niente.
 
 **Il fast partial in bianco e nero ESISTE, ed è il più veloce della sua
-famiglia.** Non passa dal template ma da API opt-in del driver, e la ragione è
-in [§3](#3-il-template-a-due-canali-e-le-scritture-out-of-band). Il confronto
+famiglia.** Non passa dal template ma dal refresh differenziale o da API
+opt-in della sottoclasse `GxEPD2_SOLUM_097c_PartialProbe`, e la ragione è in
+[§3](#3-il-template-a-due-canali-e-le-scritture-out-of-band). Il confronto
 che serve a giudicarlo sono i cinque driver a tre colori di GxEPD2 che espongono
 un B/N differenziale con `refresh_bw()`, con la misura che ciascuno dichiara:
 
@@ -426,13 +457,13 @@ dell'area.
 E la LUT scritta dall'MCU non è una scelta di stile: il `GDEY042Z98` il suo
 1,46 s lo ottiene con `0x22 = 0xDC`, che è il nostro `0xCC` **più il bit 4**,
 cioè si fa dare dall'OTP il banco di Mode 2. Su questo pannello quel banco **non
-esiste** — le sequenze di Mode 2 escono in 85-225 ms senza toccare il vetro, e
-la schermata della sonda che gira `0xFF` non è mai comparsa — quindi la via
+esiste**: le sequenze di Mode 2 escono in 85-225 ms senza toccare il vetro, e
+la schermata della sonda che gira `0xFF` non è mai comparsa, quindi la via
 dell'OTP è chiusa e resta solo la waveform dell'MCU.
 
 Corollario: il tempo sta nella waveform, non nei dati. **Non inviare il piano
 accent non accorcia il refresh**, risparmia solo i ~73 ms di SPI di quel piano
-(tabella in §0.7) — che il dirty-tracking di §5 già incassa.
+(tabella in §0.7), che il dirty-tracking di §5 già incassa.
 
 ### 0.9 Cosa i cataloghi SOLUM non dicono
 
@@ -451,13 +482,13 @@ silicio: non dice quante DISPLAY Mode l'OTP contenga nè come sarebbe strutturat
 una LUT a 4 colori, e soprattutto **la copia in `docs/` è la Rev 1.0 del 2018,
 più vecchia del chip**. L'indizio: l'init di fabbrica della 9.7"
 (`docs/openepaperlink/nrf52811_tag_fw/unissd.cpp`) scrive `0x21` con **due**
-parametri, mentre la Rev 1.0 lo definisce con uno solo — la forma a due byte è
+parametri, mentre la Rev 1.0 lo definisce con uno solo: la forma a due byte è
 quella del SSD1683, dove il secondo porta il bit di cascade. Lo conferma un
 reference SSD1677 di terzi (<https://github.com/bigbag/papyrix-reader>,
 `docs/ssd1677-driver.md`), che scrive anch'esso `0x21` a due byte, `0x40 0x00`,
 e commenta il secondo con **"single chip"**. Nella stessa direzione va il pin
 table: `M/S#` è dato *"reserved pin, should be connected to VDDIO"* e `CL` è
-dichiarato **I/O** pur essendo *"left open in application"* — sono i due pin
+dichiarato **I/O** pur essendo *"left open in application"*: sono i due pin
 della cascade dell'SSD1683, presenti nel silicio e non documentati. "Non è nel
 datasheet" quindi non equivale a "non esiste nel chip". E non c'è una revisione
 più recente da cercare: le copie pubbliche dell'SSD1677 reperibili altrove sono
@@ -477,7 +508,7 @@ modello dell'unità**, letto sul case: `EL097R2CRN`, pratica FCC
 `2AFWN-EL097R2CRN`, certificazione KC `R-R-SLU-EL097R2CRN`. Il campo colore
 display è `R`, che nella nomenclatura SOLUM vale **BWR**; la linea PRO a quattro
 colori porta la cifra `4`. Non è quindi il donor `EL097F5C4C` di cui parlano le
-sezioni sopra, ma la generazione **R2**, precedente — la stessa della pratica
+sezioni sopra, ma la generazione precedente **R2**, la stessa della pratica
 FCC `2AFWN-EL097R2WRN` già elencata in [docs/fonti_esterne.md](docs/fonti_esterne.md).
 Il datasheet SOLUM che dichiara `PIXEL COLORS = BWRY` per la taglia 9.7"
 riguarda la linea PRO e non questa unità.
@@ -511,7 +542,7 @@ L'ipotesi alternativa più solida è che il 4° colore stia nella **combinazione
 | bianco | 1 | 0 |
 | nero | 0 | 0 |
 | rosso | 1 | 1 |
-| — | 0 | 1 |
+| (nessuno) | 0 | 1 |
 
 La quarta combinazione **non viene mai generata**.
 
@@ -545,7 +576,7 @@ Nota su un discriminante che sembrava esserci e non c'è: il fratello a 4 colori
 di questa taglia è l'**SSD2677** (960 × 680, RAM a **2 bit/pixel**, command set
 in stile UC, preset di risoluzione `960 × 680 / 960 × 672 / 960 × 640 /
 880 × 528`, archiviato in `docs/`). Verrebbe da concludere "il nostro parla
-SSD16xx, quindi è BWR" — ma la Table 6-4 mostra che anche l'SSD1677 le quattro
+SSD16xx, quindi è BWR", ma la Table 6-4 mostra che anche l'SSD1677 le quattro
 combinazioni ce le ha. Il tipo di chip non decide il numero di colori.
 
 Il controller non è interrogabile **dal connettore della board**: sul FPC a 24
@@ -553,7 +584,7 @@ pin il pin 12 è SDI e basta (vedi
 [§0.6](#06-interfaccia-elettrica-dallo-schematico-waveshare-v3)), quindi `0x27`
 read RAM, `0x2E` User ID read e `0x2F` status sono inutilizzabili. Il limite è
 del connettore, non del pannello: il tag di fabbrica una linea di lettura ce
-l'ha, ed è il pin che il suo HAL chiama `VPP` — se è lo stesso VPP del pin 16
+l'ha, ed è il pin che il suo HAL chiama `VPP`: se è lo stesso VPP del pin 16
 dello schematico, la lettura si può ricavare su una coda cablata a mano, e
 `0x2E` chiuderebbe l'identificazione del modulo. L'unica
 diagnostica possibile è scrivere un pattern e guardare il pannello: lo fa
@@ -579,8 +610,8 @@ scriverlo out-of-band.
 L'ultimo test possibile su questa unità è la **tensione**, non una coppia di
 bit: la Table 6-4 dice che LUT2 e LUT3 sono aliasate *dalla waveform*, non che
 il film abbia tre pigmenti. La sonda carica quindi via `0x32` una waveform in
-cui LUT2 va a VSH1 e LUT3 a VSH2 — tensioni dell'OTP, perchè quelle stanno ai
-byte 105..109 della LUT e `0x32` scrive solo 0..104 — e stampa le due bande
+cui LUT2 va a VSH1 e LUT3 a VSH2 (tensioni dell'OTP, perchè quelle stanno ai
+byte 105..109 della LUT e `0x32` scrive solo 0..104) e stampa le due bande
 adiacenti. Colori diversi vorrebbero dire quarto pigmento; colori identici sono
 la prova diretta che ne esistono tre.
 
@@ -597,7 +628,7 @@ pannello SOLUM 9.7" su controller SSD1677:
 
 - soft-reset (`0x12`)
 - soft-start (`0x0C`)
-- MUX per 672 gate lines (`0x01 = 0x9F 0x02 0x00`) — corretto rispetto alle
+- MUX per 672 gate lines (`0x01 = 0x9F 0x02 0x00`), corretto rispetto alle
   680 dell'upstream, vedi [§0.3](#03-source-gate-e-mux)
 - bordo bianco (`0x3C = 0x01`)
 - sensore di temperatura interno (`0x18 = 0x80`)
@@ -609,15 +640,17 @@ pannello SOLUM 9.7" su controller SSD1677:
 Rispetto ai driver stock di GxEPD2 per pannelli simili, questa versione
 introduce:
 
-## 1. `GxEPDImage::showImage()` — unico entry-point pubblico
+## 1. `GxEPDImage::showImage()`: unico entry-point pubblico
 
-Free function template nel namespace `GxEPDImage` (vive nel driver `.h`):
+Free function template nel namespace `GxEPDImage` (vive in
+[`src/GxEPDImage.h`](src/GxEPDImage.h)):
 
 ```cpp
 template<typename DisplayT>
 void GxEPDImage::showImage(DisplayT& display,
                            const GxEPDImage::Descriptor& d,
-                           int16_t x = 0, int16_t y = 0);
+                           int16_t x = 0, int16_t y = 0,
+                           GxEPDImage::Paint paint = GxEPDImage::Paint::Opaque);
 ```
 
 È **l'unica funzione pubblica per stampare un'immagine** sul pannello.
@@ -625,6 +658,18 @@ Va chiamata **dentro** un loop `firstPage()`/`nextPage()` del template
 `GxEPD2_3C`, dopo `fillScreen()` e prima di `nextPage()`. Accetta tutti
 e 3 i formati del descrittore (BW / BWR / BWRY) e rende i piani black e red:
 di un descrittore a tre piani, `data2` non viene toccato.
+
+È un wrapper di `GxEPD2_3C::drawInvertedBitmap()`: il piano rosso si disegna
+per primo e il nero sopra, così dove entrambi sono accesi vince il nero. Le
+righe sopra la pagina corrente si saltano con il page-hint del driver.
+`Paint::Opaque` (default) fa precedere ai due piani un `fillRect()` bianco sulle
+stesse righe, `Paint::InkOnly` dipinge solo nero e rosso, per un'immagine su
+fondo bianco. In nessuno dei due casi resta ghosting del frame precedente:
+`GxEPD2_3C` sbianca il buffer a ogni pagina e manda al controller i due piani
+interi, quindi un bianco non dipinto non lascia traccia, e `Opaque` serve solo
+a coprire ciò che la stessa pagina ha già disegnato sotto l'immagine. Al display
+servono `pageHeight()`, `getRotation()`, `height()`, `fillRect()` e
+`drawInvertedBitmap()`; al driver `setPaged()` e `showImagePageHint()`.
 
 Pattern minimale one-shot:
 
@@ -662,12 +707,12 @@ del meccanismo.
 |---|---|---|---|
 | 1 | Bitmap **B/N raw** (image2cpp) | `const unsigned char img_xxx[] PROGMEM = { … };` | `GxEPDImage::showImage(display, GXEPD_BW_IMAGE(img_xxx, w, h));` |
 | 2 | **BWR** da `epd_image_converter.pyw` | `const GxEPDImage::Descriptor img_xxx_desc;` *(auto-generato)* | `GxEPDImage::showImage(display, img_xxx_desc);` |
-| 3 | **BWRY** da `epd_image_converter.pyw` | `const GxEPDImage::Descriptor img_xxx_desc;` *(auto-generato)* | `GxEPDImage::showImage(display, img_xxx_desc);` — rende i piani black e red, `data2` non viene toccato |
+| 3 | **BWRY** da `epd_image_converter.pyw` | `const GxEPDImage::Descriptor img_xxx_desc;` *(auto-generato)* | `GxEPDImage::showImage(display, img_xxx_desc);`, che rende i piani black e red senza toccare `data2` |
 | 4 | **BWR raw inline** (2 piani separati) | `const unsigned char img_b[], img_r[] PROGMEM = { … };` | `GxEPDImage::showImage(display, GXEPD_BWR_IMAGE(img_b, img_r, w, h));` |
-| 5 | **BWRY raw inline** (3 piani separati) | `const unsigned char img_b[], img_r[], img_y[] PROGMEM = { … };` | `GxEPDImage::showImage(display, GXEPD_BWRY_IMAGE(img_b, img_r, img_y, w, h));` — come il caso 3 |
-| 6 | **Single-channel diretto** (no GFX) | `const unsigned char img_b[], img_r[] PROGMEM = { … };` | `display.epd2.writeImageBlack(img_b, x, y, w, h, true);` + `…Red(…)` + `display.epd2.refresh(false);` |
+| 5 | **BWRY raw inline** (3 piani separati) | `const unsigned char img_b[], img_r[], img_y[] PROGMEM = { … };` | `GxEPDImage::showImage(display, GXEPD_BWRY_IMAGE(img_b, img_r, img_y, w, h));`, come il caso 3 |
+| 6 | **Single-channel diretto** (no GFX, con la sottoclasse `GxEPD2_SOLUM_097c_PartialProbe` di [§2](#2-due-api-siblings-single-channel-uniformi)) | `const unsigned char img_b[], img_r[] PROGMEM = { … };` | `display.epd2.writeImageBlack(img_b, x, y, w, h, true);` + `…Red(…)` + `display.epd2.refresh(false);` |
 
-Casi **1–5** vanno chiamati dentro un loop `firstPage()` / `nextPage()`
+Casi **1-5** vanno chiamati dentro un loop `firstPage()` / `nextPage()`
 con `fillScreen()` prima, e seguiti da `display.hibernate()` se si vuole
 spegnere il pannello. Il caso **6** sta fuori dal loop paged.
 
@@ -675,13 +720,18 @@ spegnere il pannello. Il caso **6** sta fuori dal loop paged.
   pannello ha due piani, e `showImage` rende `data0` e `data1`. Il descrittore
   resta valido, non serve rigenerare gli asset.
 - Il caso **6** bypassa il template GFX e si chiama standalone, `refresh()`
-  esplicito compreso. Non va mescolato a un loop paged nello stesso frame: il
-  template riscrive entrambi i piani e la scrittura manuale andrebbe persa.
+  esplicito compreso, su un display costruito con la sottoclasse: le due
+  primitive non stanno nel driver. Non va mescolato a un loop paged nello
+  stesso frame: il template riscrive entrambi i piani e la scrittura manuale
+  andrebbe persa.
 
 ## 2. Due API siblings single-channel uniformi
 
-I due piani immagine del controller SSD1677 sono esposti con shape identica per
-scritture single-channel (no refresh):
+I due piani immagine del controller SSD1677 hanno scritture single-channel con
+shape identica (no refresh), che il driver non espone: stanno nella sottoclasse
+`GxEPD2_SOLUM_097c_PartialProbe` di
+[`examples/097c/panel_diagnostic/PartialProbeDriver.h`](examples/097c/panel_diagnostic/PartialProbeDriver.h),
+insieme alle altre API opt-in del partial di [§3.1](#31-il-partial-in-bianco-e-nero-640-ms-e-come-ci-si-scrive-dentro):
 
 ```cpp
 void writeImageBlack(const uint8_t* bitmap, int16_t x, int16_t y,
@@ -689,6 +739,21 @@ void writeImageBlack(const uint8_t* bitmap, int16_t x, int16_t y,
 void writeImageRed  (const uint8_t* bitmap, int16_t x, int16_t y,
                      int16_t w, int16_t h, bool pgm = true);  // cmd 0x26
 ```
+
+`GxEPD2_3C` va istanziato con il tipo della sottoclasse, quindi chi vuole queste
+API costruisce il display con quella classe al posto del driver:
+
+```cpp
+#include "PartialProbeDriver.h"        // dall'esempio panel_diagnostic
+
+GxEPD2_3C<GxEPD2_SOLUM_097c_PartialProbe, GxEPD2_SOLUM_097c_PartialProbe::HEIGHT / 8>
+    display(GxEPD2_SOLUM_097c_PartialProbe(GxEPD2_SOLUM_Pins{ 15, 27, 26, 25 }));
+```
+
+Il firmware non le chiama e usa solo il refresh differenziale dentro il loop
+paged. I punti aperti di queste API, e di due sequenze del driver da misurare
+sul vetro, sono in `ISSUES.md` del repo padre ePaper-weather-dashboard, che
+include questa libreria come submodule.
 
 Convenzione bitmap input: bit=1 dove il pixel **non** appartiene a quel
 canale (formato compatibile con lo script Python e image2cpp). Per l'accent
@@ -724,7 +789,8 @@ due soli metodi, `setPaged()` e `showImagePageHint()`.
 
 **Il meccanismo out-of-band resta, ma per altro.** Una scrittura "out-of-band"
 è semplicemente una scrittura sulla RAM del controller fatta **fuori** dal loop
-paged, con le API siblings di [§2](#2-due-api-siblings-single-channel-uniformi):
+paged, con le API siblings di [§2](#2-due-api-siblings-single-channel-uniformi),
+che il driver 9.7" tiene solo nella sottoclasse `GxEPD2_SOLUM_097c_PartialProbe`:
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -764,6 +830,14 @@ pieno stanno nella tabella di
 ma il **frame precedente** in polarità B/N: è tutto il contratto, e da lì
 discende che un frame aggiornato in partial è **senza rosso**.
 
+Le API opt-in non stanno nel driver: sono nella sottoclasse
+`GxEPD2_SOLUM_097c_PartialProbe` di
+[`examples/097c/panel_diagnostic/PartialProbeDriver.h`](examples/097c/panel_diagnostic/PartialProbeDriver.h),
+con le firme tabellate sotto. Del partial il driver tiene solo ciò che serve al
+refresh differenziale e al refresh pieno: la passata (`_Update_Part()`), la LUT
+e il suo caricamento. Il firmware usa solo il refresh differenziale dentro il
+loop paged.
+
 **Perchè non passa dal template**, che pure avrebbe `displayWindowBW()` e
 `nextPageBW()` per il B/N sui pannelli a colori. Tre ragioni, tutte lette nel
 sorgente di 1.6.9:
@@ -783,7 +857,9 @@ sorgente di 1.6.9:
 **Come ci si scrive testo e forme.** Non serve comporre la bitmap a mano:
 Adafruit_GFX ha già `GFXcanvas1`, una tela a 1 bit con tutte le primitive di
 disegno. La tela mette a 1 i pixel disegnati mentre in `0x24` il bit 1 è il
-bianco, quindi si passa `invert = true` e la si prende così com'è.
+bianco, quindi si passa `invert = true` e la si prende così com'è. La ricetta
+vale con il display costruito sulla sottoclasse (vedi
+[§2](#2-due-api-siblings-single-channel-uniformi)).
 
 ```cpp
 GFXcanvas1 tela(320, 64);            // larghezza multipla di 8
@@ -830,6 +906,9 @@ chiamata in poi non serve nessuna preparazione.
    quindi non serve un refresh pieno per proteggerle; serve invece per azzerare
    il pavimento di grigio dell'**area di lavoro**, e la letteratura sui BWR ne
    raccomanda uno ogni 5-10 passate.
+
+Tutte della sottoclasse `GxEPD2_SOLUM_097c_PartialProbe`, come `writeImageBlack()`
+e `writeImageRed()` di [§2](#2-due-api-siblings-single-channel-uniformi):
 
 | API del partial | cosa fa |
 |---|---|
@@ -893,11 +972,91 @@ if (!fired) {                                        // pieno, anche dopo un rif
   spegne il riferimento;
 - finchè esiste un riferimento valido `hibernate()` non manda il deep sleep (che
   perde la RAM) ma lascia il controller in Sleep, 25-40 µA con la RAM accessibile
-  (datasheet SSD1677, p. 42);
+  (datasheet SSD1677, p. 42). `hibernateDeep()` butta il riferimento e forza il
+  deep sleep: il frame dopo è un refresh pieno, e serve a chi sa che il pannello
+  resterà fermo a lungo. Come `hibernate()`, il deep sleep c'è solo con RST
+  cablato;
 - qualunque scrittura della RAM che non venga dal frame in corso spegne il
-  riferimento, e un refresh che finisce con il BUSY ancora alto non lo convalida;
+  riferimento, e un refresh che finisce con un guasto del BUSY, ancora alto o
+  troppo breve, non lo convalida ([Guasti del BUSY](#guasti-del-busy));
 - dopo un partial `0x26` contiene B/N e non un accent: una pulizia lo riporta
   allo stato giusto prima di un refresh pieno.
+
+#### Un frame in una chiamata: `GxEPDFrame::render()`
+
+Il protocollo qui sopra lo incapsula `GxEPDFrame::render()`, in
+[`src/GxEPDFrame.h`](src/GxEPDFrame.h), che `GxEPD2_SOLUM.h` include. Lo sketch
+scrive solo il disegno di una pagina e la politica che decide se provare il
+partial:
+
+```cpp
+GxEPDFrame::setDifferential(display.epd2, true);      // una volta
+GxEPDFrame::setSkipUnchanged(display.epd2, true);     // una volta, facoltativo
+
+// a ogni frame:
+const GxEPDFrame::Outcome outcome = GxEPDFrame::render(
+    display,
+    [&](uint16_t pageIndex) { /* disegno della pagina */ },
+    tryPartial);
+```
+
+`render(display, drawPage, tryPartial)` chiama `setFullWindow()`, arma il
+differenziale se `tryPartial` è vero e il driver ha un riferimento valido, ed
+esegue il loop paged chiamando `drawPage(pageIndex)`. Nella passata armata esce
+alla prima pagina rifiutata, perchè le pagine dopo non cambierebbero l'esito; se
+il partial è rifiutato rifà il frame in pieno, e salta il refresh di un frame
+invariato. `drawPage` parte da un buffer bianco e può essere chiamata due volte
+per pagina, una per passata; senza un riferimento valido il primo disegno è già
+pieno.
+
+Le API del driver che usa sono facoltative e si rilevano dal tipo
+(`SupportsDifferential`, `SupportsSkip`, `SupportsBusyFault`, con `if constexpr`,
+quindi serve C++17): un driver che non le dichiara fa un refresh pieno a ogni
+frame. Con un driver senza l'API `setDifferential()` e `setSkipUnchanged()` non
+fanno niente, e `chain()`, i partial consecutivi dall'ultimo refresh pieno,
+ritorna 0.
+
+| Campo di `Outcome` | cosa dice |
+|---|---|
+| `result` | `Full`: refresh pieno senza tentativo di partial. `Partial`: partial B/N partito. `Skipped`: frame identico a quello sul vetro, nessun refresh. `Refused`: partial tentato e non partito, frame rifatto in pieno; se il frame rifatto risulta invariato il risultato è `Skipped` |
+| `armed` | vero se il frame è partito armato, cioè con un riferimento valido |
+| `refusedPages` | pagine in cui il rosso è cambiato, un bit per pagina; 0 se il partial non è partito per un altro motivo. Con l'uscita alla prima pagina rifiutata la mask arriva solo fino a quella pagina |
+| `busyFault` | guasto del BUSY dell'ultimo refresh del driver |
+| `updateMs` | durata in ms dell'ultimo refresh del driver |
+
+#### Guasti del BUSY
+
+Ogni attesa del BUSY del driver controlla l'esito, che si legge con
+`busyFault()` (`GxEPD2_SOLUM_BusyFault`, in
+[`src/GxEPD2_SOLUM_BusyFault.h`](src/GxEPD2_SOLUM_BusyFault.h), senza
+dipendenze):
+
+| Valore | cosa dice |
+|---|---|
+| `None` | nessun guasto |
+| `TooShort` | il BUSY è sceso prima della durata minima plausibile del refresh, `MIN_PLAUSIBLE_FULL_REFRESH_MS` (5000 ms) o `MIN_PLAUSIBLE_PARTIAL_REFRESH_MS` (300 ms): il controller non ha eseguito la waveform |
+| `Timeout` | il BUSY è ancora alto allo scadere dell'attesa: `BUSY_TIMEOUT_US` (120 s) per i refresh, `SHORT_BUSY_TIMEOUT_US` (5 s) per le attese brevi, cioè power on e off, SWRESET e pattern hardware |
+
+Un guasto alza un latch che salta le attese seguenti, perchè un controller che
+non risponde non va aspettato ancora, e lo `0x20` dei refresh: `refresh(false)`
+non lo manda e non convalida nè il frame mostrato nè il riferimento del
+differenziale, che si butta. Il latch si azzera in `setPaged()` e all'inizio
+delle API pubbliche che scrivono e rinfrescano fuori dal loop paged
+(`clearScreen()`, `drawImage*()`, `drawNative()`, `refresh(x, y, w, h)`).
+
+| API | cosa fa |
+|---|---|
+| `busyFault()` | esito dell'attesa del BUSY dall'ultimo azzeramento; `None` se tutto è andato bene |
+| `lastUpdateMs()` | durata in ms dell'ultimo refresh, dall'invio di `0x20` al BUSY basso; 0 se non è partito |
+
+La soglia del refresh pieno sta sotto il minimo misurato, 22.961 ms col banco
+caldo forzato contro i 24 s a 20 °C e i 59 s a 0 °C, e un falso positivo costa
+al più un refresh pieno in più. Quella del partial sta sotto i 639 ms misurati,
+che non dipendono dalla temperatura perchè `0xCC` non ricarica nè temperatura nè
+LUT: una LUT custom sotto gli 11 frame scende sotto la soglia. Il driver non
+scrive su `Serial`: l'esito si legge solo da `busyFault()`, e l'unica riga sulla
+seriale è il `Busy Timeout!` che la base stampa allo scadere del timeout. Chi
+vede un guasto può rifare il frame in pieno.
 
 #### Salto del refresh a frame invariato
 
@@ -1016,9 +1175,8 @@ qui sotto.
 |---|---|---|---|
 | Init RAM | solo B+R (0x24, 0x26) | solo B+R (0x24, 0x26) | = parità: sono i due piani che il pannello ha |
 | `delay(1)` ESP8266 WDT in hot path | presente in `_writeImage`/`_writeImagePart` | rimosso (target ESP32, task WDT 5 s) | ✓ migliore |
-| Delay dopo SWRESET | 10 ms (sotto-stimato) | 200 ms (datasheet SSD1677 ~100-300 ms) | ✓ migliore |
 | Entry-mode `0x11` | inviato a ogni `_setPartialRamArea` | inviato 1 volta in `_InitDisplay` | ✓ migliore |
-| Cleanup accent dirty-tracking | n/a (cleanup sempre o mai) | flag `_color_dirty` + `_cleanColorIfDirty()` | ✓ ottimizzato |
+| Cleanup accent dirty-tracking | n/a (cleanup sempre o mai) | stato `Ram26` (`Clean`, `Accent`, `Previous`) + `_cleanRam26()` | ✓ ottimizzato |
 | Polarity cleanup accent | n/a | `0x00` esplicito (= accent spento, polarity nativa) | ✓ corretto vs. bug latente `0xFF` |
 | `hibernate()` guard idempotente | scrive 0x10 sempre, anche su re-entry | early return se già `_hibernating` | ✓ migliore |
 | `_init_display_done` reset on hibernate | sì | sì | = parità |
@@ -1026,7 +1184,7 @@ qui sotto.
 | Cleanup accent in `writeImage(bitmap, ...)` BW | non fa | sì (0x26 dirty-checked) | ✓ migliore |
 | Cleanup accent in `writeImagePart(bitmap, ...)` BW | non fa | sì (allineato a `writeImage` per simmetria) | ✓ migliore |
 | Attesa dopo SWRESET | `delay(10)` fisso | attesa sul BUSY, misurato 2 ms, con 200 ms di fallback se il pin non è cablato | ✓ ~190 ms recuperati per init |
-| **Partial refresh** | **assente**: nessuno dei tre driver a 3 colori di GxEPD2 su SSD1677 ce l'ha | **640 ms** con LUT scritta dall'MCU via `0x32`, come API opt-in | ✓ capacità nuova, vedi [§3.1](#31-il-partial-in-bianco-e-nero-640-ms-e-come-ci-si-scrive-dentro) |
+| **Partial refresh** | **assente**: nessuno dei tre driver a 3 colori di GxEPD2 su SSD1677 ce l'ha | **640 ms** con LUT scritta dall'MCU via `0x32`, come refresh differenziale dentro il loop paged e come API opt-in della sottoclasse `GxEPD2_SOLUM_097c_PartialProbe` | ✓ capacità nuova, vedi [§3.1](#31-il-partial-in-bianco-e-nero-640-ms-e-come-ci-si-scrive-dentro) |
 | Terzo byte di `0x01` (bit SM) | `0x00` | `0x00`, e la ragione è sul vetro: la variante che mette SM = 1, come i due driver SSD1677 recenti, esce a righe alternate. Attribuzione per eliminazione, perchè SM è il solo campo la cui funzione documentata produca quel sintomo | ✓ confermato dal vetro |
 | `0x21` Display Update Control 1 | mai scritto | mai scritto, ed è obbligatorio su un pannello a 3 colori: quel comando **funziona**, e l'idioma del refresh pieno dei driver recenti, `{40 00}`, bypassa la RED RAM e **fa sparire l'accent** | ✓ misurato sul vetro |
 | Loop pixel di `showImage` | itera tutti i pixel × tutte le 8 page (drawPixel early-return) | row-skip rotation-aware via page-hint counter (1/8 delle iterazioni) | ✓ ottimizzato (~170 ms/refresh) |
@@ -1037,17 +1195,30 @@ qui sotto.
 
 - **`_setPartialRamArea()`** non riscrive più l'entry-mode ad ogni draw
   (spostato una tantum in `_InitDisplay`).
-- **Dirty-flag `_color_dirty`**: il cleanup di 0x26 in `writeImage(bw)` viene
-  saltato se il flag è zero, evitando SPI inutile quando si concatenano frame
-  B/N. Il cleanup stesso passa dal pattern hardware, 8-9 ms invece di 70-72
-  (vedi [§0.7](#07-spi-e-volumi-di-transfer)).
-- **Helper `_cleanColorIfDirty()`** centralizza la pulizia scrivendo `0x00`
-  (polarity nativa SSD1677 = accent spento), corretto rispetto al precedente
-  `0xFF` che scriveva "accent ON ovunque" — bug latente mascherato da
-  hibernate+SWRESET ad ogni wake.
+- **Stato di `0x26` (`Ram26`)**: l'enum `Clean` / `Accent` / `Previous` dice
+  cosa contiene la RAM accent. Il cleanup di 0x26 in `writeImage(bw)` viene
+  saltato se lo stato è `Clean`, evitando SPI inutile quando si concatenano frame
+  B/N; `Previous` è il frame precedente del partial, che un refresh pieno
+  rileggerebbe come rosso. Il cleanup stesso passa dal pattern hardware, 8-9 ms
+  invece di 70-72 (vedi [§0.7](#07-spi-e-volumi-di-transfer)).
+- **Helper `_cleanRam26(onlyIfPrevious)`**, l'unica pulizia, scrive `0x00`
+  (polarity nativa SSD1677 = accent spento: `0xFF` vorrebbe dire "accent ON
+  ovunque"). Con `onlyIfPrevious` pulisce solo se c'è un frame precedente del
+  partial, ed è la forma di `_Update_Full()` e di `setPaged()`; senza, pulisce
+  ogni volta che la RAM non è `Clean`, ed è la forma delle scritture a canale
+  singolo, che non devono lasciare rosso sotto il B/N.
+- **Helper `_writeAccent()`**, l'unico punto di scrittura dell'accent: ripulisce
+  un eventuale frame precedente del partial, scrive con la polarity nativa
+  (bitmap con bit a 1 = non accent, quindi invertita) e porta lo stato ad
+  `Accent`. `writeScreenBuffer(black, color)` lascia lo stato `Accent` se
+  `color != 0x00`, così un disegno a canale singolo successivo ripulisce invece
+  di dipingere tutto di rosso.
 - **`hibernate()`** protetto contro chiamate multiple (early return se
-  `_hibernating == true`); resetta il dirty-flag perchè il SWRESET successivo
-  riporta la RAM controller a stato noto.
+  `_hibernating == true`). Il deep sleep non ritiene la RAM, quindi porta lo
+  stato di `0x26` a `Clean` e butta il riferimento del differenziale; al
+  risveglio `_InitDisplay()` riarma `_initial_write` e la prima scrittura
+  ripulisce i due piani. Con un riferimento valido del differenziale resta
+  invece in Sleep; `hibernateDeep()` forza il deep sleep.
 - **`writeImagePart(bitmap, ...)` BW** allineato a `writeImage(bitmap, ...)`:
   pulisce gli accent dirty prima di scrivere il piano `0x24`, evitando
   che red/yellow residui di un draw colorato precedente trasparissero
@@ -1076,22 +1247,22 @@ qui sotto.
   fuori dal loop interno e fallback al loop completo per rotation 1/3
   (90°, dove la skip-by-row non si applica perchè le righe sorgente
   mappano sull'asse x dell'output).
-- **Bulk SPI transfer**: i tre hot path SPI (`_writeImage`,
-  `_writeImagePart`, `_writeScreenBuffer`) usano `_pSPIx->writeBytes(buf, n)`
-  invece di `_transfer(uint8_t)` per-byte. Il base class `GxEPD2_EPD`
+- **Bulk SPI transfer**: i due hot path SPI (`_writeImagePart`, a cui
+  `_writeImage` inoltra, e `_writeScreenBuffer`) usano
+  `_pSPIx->writeBytes(buf, n)` invece di `_transfer(uint8_t)` per-byte. Il base class `GxEPD2_EPD`
   espone `_pSPIx` come `protected`, quindi il subclass può chiamarlo
   direttamente. Il loop interno popola un buffer di stack
   (120 byte/riga per le immagini, 256 byte di chunk per la scrittura
   costante) e lo scarica con `writeBytes`, che usa la FIFO 64-byte
   dell'ESP32 e arriva **all'89% del limite del clock SPI**
   (0,90 μs/byte misurati a 10 MHz, contro ~1,5 μs/byte della transfer per-byte
-  upstream — `_writeData(buf, n)` di `GxEPD2_EPD` è anch'esso un loop per-byte
+  upstream; `_writeData(buf, n)` di `GxEPD2_EPD` è anch'esso un loop per-byte
   di `transfer()`, NON un bulk vero, vedi
   [GxEPD2_EPD.cpp:197-207](https://github.com/ZinggJM/GxEPD2/blob/1.6.9/src/GxEPD2_EPD.cpp#L197-L207)).
   Su un refresh completo (161.280 byte, cioè il loop paged sui due piani) il
   transfer SPI passa da ~242 ms a ~145 ms: **risparmio ~97 ms per refresh**
   (derivazione in [§0.7](#07-spi-e-volumi-di-transfer)). Stack temporaneo aggiunto:
-  ~120 byte per `_writeImage`/`_writeImagePart`, ~256 byte per
+  ~120 byte per `_writeImagePart`, ~256 byte per
   `_writeScreenBuffer`. API pubblica invariata, ottimizzazione
   trasparente.
 
@@ -1102,18 +1273,23 @@ ereditati dalla base class è in
 [drawImage_overloads_it.md](drawImage_overloads_it.md) (o la versione
 inglese [drawImage_overloads.md](drawImage_overloads.md)).
 Sono override di virtual del base class `GxEPD2_EPD` necessari al
-contratto della libreria — non sono pensati per uso diretto: lo sketch
+contratto della libreria e non sono pensati per uso diretto: lo sketch
 chiama `showImage()` per immagini singole, oppure il template
 `GxEPD2_3C` invoca `writeImage(black, color)` a ogni `nextPage()` nel flusso
 paged full-window (`writeImagePart` solo con `setPartialWindow`).
 
-Fuori da quella lista stanno le due famiglie **opt-in** del driver 9.7", che lo
-sketch chiama direttamente e che il template non conosce: le siblings
-single-channel di [§2](#2-due-api-siblings-single-channel-uniformi), le sei API
-del partial in bianco e nero, tabellate in fondo a
-[§3.1](#31-il-partial-in-bianco-e-nero-640-ms-e-come-ci-si-scrive-dentro), e le
-chiamate del refresh differenziale di
-[§3.2](#32-il-refresh-differenziale-il-partial-dentro-il-loop-paged).
+Fuori da quella lista stanno le API che lo sketch chiama direttamente e che il
+template non conosce. Le **opt-in** non sono nel driver 9.7" ma nella sottoclasse
+`GxEPD2_SOLUM_097c_PartialProbe`: le siblings single-channel di
+[§2](#2-due-api-siblings-single-channel-uniformi) e le sei API del partial in
+bianco e nero, tabellate in fondo a
+[§3.1](#31-il-partial-in-bianco-e-nero-640-ms-e-come-ci-si-scrive-dentro). Del
+driver sono invece le chiamate del refresh differenziale di
+[§3.2](#32-il-refresh-differenziale-il-partial-dentro-il-loop-paged), con
+`GxEPDFrame::render()` che le raccoglie, il salto del frame invariato,
+`busyFault()` e `lastUpdateMs()` ([Guasti del BUSY](#guasti-del-busy)) e
+`hibernateDeep()`, che forza il deep sleep anche con un riferimento valido del
+differenziale.
 
 ---
 

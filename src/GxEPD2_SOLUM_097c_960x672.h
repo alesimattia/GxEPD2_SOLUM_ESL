@@ -1,6 +1,6 @@
 // =============================================================================
-// Driver custom per pannello e-paper SOLUM 9.7" 672w x 960h (native portrait) su ESP32.
-// Convenzione: NwxMh = N px larghezza (X) x M px altezza (Y).
+// Driver custom per pannello e-paper SOLUM 9.7" 960w x 672h su ESP32.
+// Convenzione: NwxMh = N px larghezza (X) x M px altezza (Y), dopo la rotazione.
 //
 // Origine:
 //   - Libreria base: GxEPD2 (https://github.com/ZinggJM/GxEPD2).
@@ -10,7 +10,9 @@
 //
 // Pannello pilotato (personalizzazione rispetto all'originale):
 //   - Produttore: SOLUM (modulo ESL 9.7" riusato).
-//   - Risoluzione: 672w x 960h native portrait (usato in landscape 960w x 672h dopo setRotation(0)).
+//   - Risoluzione: il vetro è 672 x 960 nel datasheet e il driver lo usa come
+//     960w x 672h: WIDTH e HEIGHT dichiarano già il landscape, quindi
+//     setRotation(0) è l'orientamento nativo del driver e non serve ruotare.
 //   - Colori: bianco, nero e rosso, tutti e tre misurati sul pannello e
 //     pilotati dai comandi 0x24 (BW plane) e 0x26 (accent) del controller
 //     SSD1677. Un quarto colore non esiste: vedi la sezione sotto.
@@ -28,7 +30,7 @@
 //     - full_refresh_time 60000 ms: è solo il delay() di fallback per un
 //       display costruito senza pin BUSY, e deve coprire il banco freddo, che
 //       misura 59067 ms.
-//     - _busy_timeout 120 s, passato al costruttore. Non è sovradimensionato:
+//     - BUSY_TIMEOUT_US 120 s, passato al costruttore come _busy_timeout. Non è sovradimensionato:
 //       il refresh con temperatura forzata a 0 °C dura 59067 ms, cioè più del
 //       doppio dei 24 s a temperatura ambiente e ben oltre i 40 s che stavano
 //       qui prima, e allo scadere del timeout il frame esce troncato. È una
@@ -78,6 +80,11 @@
 //   La waveform è quella del GDEH116T91 (stesso SSD1677, stessi 960 source),
 //   caricata via 0x32, e gira con 0x22 = 0xCC: DISPLAY Mode 2 e bit 4 spento
 //   perchè l'OTP non sovrascriva la LUT custom.
+//   Il driver tiene del partial solo ciò che serve al refresh differenziale e al
+//   refresh pieno: la passata (_Update_Part), la LUT e il suo caricamento. Le API
+//   opt-in che lo usano fuori dal template (drawImagePartial() e le altre) sono
+//   nella sottoclasse GxEPD2_SOLUM_097c_PartialProbe dell'esempio
+//   examples/097c/panel_diagnostic/PartialProbeDriver.h.
 //
 //   DOVE SI COLLOCA, perchè senza il confronto il grigio residuo di cui sotto
 //   sembra un difetto e non un compromesso. In GxEPD2 sono cinque i driver a
@@ -146,8 +153,8 @@
 //   L'INDICE DI LUT È (bit di 0x26, bit di 0x24) = (FRAME PRECEDENTE, FRAME
 //   NUOVO), sempre: Table 6-4 e Table 6-5 indicizzano entrambe così, e fra le
 //   due cambia solo l'aliasing che la waveform di fabbrica mette nelle LUT.
-//   Quindi 0x26 cambia significato, ed è tutto il contratto dell'API. Vedi
-//   writeImageToPrevious() e drawImagePartial().
+//   Quindi 0x26 cambia significato, ed è tutto il contratto delle API opt-in
+//   di PartialProbeDriver.h (writeImageToPrevious(), drawImagePartial()).
 //   Tre conseguenze che si pagano se ignorate:
 //     - un frame aggiornato in partial è per forza SENZA ROSSO, perchè 0x26 sta
 //       facendo il frame precedente e non l'accent. La scelta è per frame e non
@@ -247,12 +254,15 @@
 //       fuori da un frame spegne il riferimento;
 //     - finchè c'è un riferimento valido il controller resta in Sleep (25-40 µA,
 //       RAM accessibile, datasheet p. 42) e non va in deep sleep, che perde la
-//       RAM: hibernate() lo rispetta;
+//       RAM: hibernate() lo rispetta, e hibernateDeep() lo butta per forzare il
+//       deep sleep;
 //     - qualunque scrittura della RAM che non venga dal frame in corso spegne il
 //       riferimento (_diffInternalWrite e le tre primitive di scrittura), e un
-//       refresh che finisce con il BUSY ancora alto non lo convalida;
+//       refresh che finisce con un guasto del BUSY, ancora alto o troppo breve,
+//       non lo convalida (busyFault());
 //     - la RAM 0x26 contiene B/N dopo un partial: _markPreviousInColorRam() la
-//       fa ripulire prima che un refresh pieno la rilegga come accent.
+//       porta allo stato Previous, che _cleanRam26() ripulisce prima che un
+//       refresh pieno la rilegga come accent.
 //   Mai misurati sul vetro: l'orientamento scambiato, il power off 0xC3 fra due
 //   passate e un sonno di minuti in Sleep. Li prova l'esempio
 //   examples/097c/differential_check con questo stesso codice.
@@ -323,7 +333,7 @@
 //
 //   Conseguenza pratica per chi compone immagini: poichè LUT2 = LUT3, sotto un
 //   pixel di accent il valore del piano BW è INDIFFERENTE. Scrivere l'accent
-//   non richiede di mascherare 0x24, e writeImageRed() non lo fa.
+//   non richiede di mascherare 0x24, e nessuna scrittura dell'accent lo fa.
 //
 //   Un residuo da non riaprire per errore: il datasheet SOLUM della linea PRO
 //   dichiara PIXEL COLORS = BWRY per la taglia 9.7", ma riguarda la linea PRO
@@ -347,9 +357,11 @@
 //     descrittori BW / BWR e va chiamata dentro un loop paged
 //     firstPage()/nextPage() del template GxEPD2_3C. Un descrittore a tre
 //     piani è accettato e ne rende i primi due.
-//   - 2 API siblings writeImageBlack / writeImageRed per scrittura
-//     single-channel diretta sul controller (no GFX), per compositing manuale
-//     fuori dal loop paged.
+//   - busyFault() e lastUpdateMs(): l'esito dell'attesa del BUSY e la durata
+//     dell'ultimo refresh, per chi deve accorgersi di un pannello che non risponde.
+//   - Le API opt-in a canale singolo (writeImageBlack, writeImageRed) e quelle del
+//     partial fuori dal template sono nella sottoclasse
+//     GxEPD2_SOLUM_097c_PartialProbe di examples/097c/panel_diagnostic.
 //
 // display.drawPixel(x, y, GxEPD_YELLOW) FINISCE SUL ROSSO, ED È CORRETTO:
 //   il template upstream GxEPD2_3C tratta GxEPD_YELLOW come GxEPD_RED, in
@@ -398,6 +410,9 @@
 // Stato e regole del refresh differenziale, senza I/O: vedi quel file.
 #include "GxEPD2_SOLUM_Differential.h"
 #include "GxEPD2_SOLUM_FrameCrc.h"
+
+// Esito dell'attesa del BUSY di un refresh.
+#include "GxEPD2_SOLUM_BusyFault.h"
 
 // Sistema di descrittori immagine e showImage(): condivisi con gli altri driver
 // della libreria, vedi src/GxEPDImage.h.
@@ -518,14 +533,17 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
     static const GxEPD2::Panel panel = GxEPD2::GDEM133Z91;
     static const bool hasColor = true;
     static const bool hasPartialUpdate = true; // has partial window addressing, but uses full window refresh
-    /** Il partial esiste ed è nel driver, ma non passa dal template. Il flag è
-     *  consultato in UN solo punto di GxEPD2_3C (riga 355) e fa una cosa sola:
-     *  ripetere l'intero loop paged dopo il refresh, riscrivendo i due piani
-     *  senza rinfrescare e senza riallineare 0x26, cioè lavoro buttato.
+    /** Il partial esiste ed è nel driver, ma non passa dal template: lo usa il
+     *  refresh differenziale dentro il loop paged, e le API opt-in che lo
+     *  chiamano fuori dal template sono nell'esempio panel_diagnostic
+     *  (PartialProbeDriver.h). Il flag è consultato in UN solo punto di
+     *  GxEPD2_3C (riga 355) e fa una cosa sola: ripetere l'intero loop paged
+     *  dopo il refresh, riscrivendo i due piani senza rinfrescare e senza
+     *  riallineare 0x26, cioè lavoro buttato.
      *  Da non confondere con la scrittura dell'accent dentro 0x26, che in
      *  modalità finestra parziale avviene a prescindere da questo flag: da
      *  quella protegge refresh(x, y, w, h), che fa un refresh pieno.
-     *  Vedi la sezione PARTIAL in testa e drawImagePartial(). */
+     *  Vedi la sezione PARTIAL in testa. */
     static const bool hasFastPartialUpdate = false;
     /** Il driver espone il refresh differenziale B/N (setDifferentialRefresh() e le
      *  tre chiamate sotto): lo sketch lo rileva con questo membro, i pannelli che
@@ -537,9 +555,9 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
      *  ambiente, vedi examples/097c/panel_diagnostic.
      *  Attenzione: _waitWhileBusy usa questo valore soltanto come delay() di
      *  fallback quando il pin BUSY non è cablato (busy < 0). Con il BUSY
-     *  presente il timeout che conta è _busy_timeout, passato al costruttore.
+     *  presente il timeout che conta è BUSY_TIMEOUT_US, passato al costruttore.
      *  60000 perchè il fallback deve coprire lo stesso banco di waveform freddo
-     *  del _busy_timeout: a 0 °C forzati il refresh misura 59067 ms. Il tipo è
+     *  del timeout: a 0 °C forzati il refresh misura 59067 ms. Il tipo è
      *  uint16_t, quindi 65535 è il massimo esprimibile. */
     static const uint16_t full_refresh_time = 60000;
     /** Durata del partial di _Update_Part(): 639 ms misurati, qui con margine.
@@ -550,10 +568,24 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
      *  solo da delay() di fallback per un display senza pin BUSY, e va
      *  riallineato se si cambia la lunghezza della LUT. */
     static const uint16_t partial_refresh_time = 2000;
-    /** Lunghezza del waveform setting che setPartialLut() pretende: i 105 byte
-     *  di 0x32 più i cinque delle tensioni. Vedi il commento della costante
+    /** Lunghezza del waveform setting della LUT del partial: i 105 byte di 0x32
+     *  più i cinque delle tensioni. Vedi il commento della costante
      *  GxEPD2_SOLUM_097c_lut_partial. */
     static const uint16_t LUT_PARTIAL_BYTES = 110;
+    /** Timeout dell'attesa del BUSY di un refresh, in microsecondi: è il
+     *  _busy_timeout della base. Il perchè del valore è nel costruttore. */
+    static constexpr uint32_t BUSY_TIMEOUT_US = 120000000UL;
+    /** Timeout delle attese brevi (power on e off, SWRESET, pattern, tutte sotto il
+     *  secondo): con il BUSY bloccato alto falliscono in 5 s invece di 120. */
+    static constexpr uint32_t SHORT_BUSY_TIMEOUT_US = 5000000UL;
+    /** Sotto questa durata un refresh pieno non è plausibile e busyFault() segna
+     *  TooShort. Il minimo misurato è 22961 ms col banco caldo forzato, 24 s a
+     *  20 °C e 59 s a 0 °C; un falso positivo costa al più un refresh pieno in più. */
+    static constexpr uint32_t MIN_PLAUSIBLE_FULL_REFRESH_MS = 5000;
+    /** Come la precedente per il partial, che misura 639 ms con la LUT del
+     *  firmware e non dipende dalla temperatura, perchè 0xCC non ricarica nè
+     *  temperatura nè LUT. Una LUT custom sotto gli 11 frame scende sotto la soglia. */
+    static constexpr uint32_t MIN_PLAUSIBLE_PARTIAL_REFRESH_MS = 300;
     // constructor
     GxEPD2_SOLUM_097c_960x672(int16_t cs, int16_t dc, int16_t rst, int16_t busy);
     /**
@@ -592,162 +624,25 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
     void refresh(bool partial_update_mode = false); // screen refresh from controller memory to full screen
     void refresh(int16_t x, int16_t y, int16_t w, int16_t h); // screen refresh from controller memory, partial screen
     void powerOff(); // turns off generation of panel driving voltages, avoids screen fading over time
-    void hibernate(); // turns powerOff() and sets controller to deep sleep for minimum power use, ONLY if wakeable by RST (rst >= 0)
+    // powerOff(), poi deep sleep (solo con RST cablato, rst >= 0) oppure, con un riferimento valido del
+    // differenziale, Sleep con le RAM conservate.
+    void hibernate();
 
-    // ------------------------------------------------------------------
-    // API siblings per scrittura single-channel (senza refresh).
-    //
-    // Stesso shape per i due piani del controller:
-    //   writeImageBlack -> cmd 0x24 (black/white plane, no invert)
-    //   writeImageRed   -> cmd 0x26 (accent, invert applicato)
-    //
-    // Convenzione bitmap input: bit=1 dove il pixel NON appartiene a quel
-    // canale (stesso formato prodotto da epd_image_converter.pyw e
-    // image2cpp). Il driver applica ~data prima del transfer per l'accent
-    // per allinearsi alla polarity del controller (bit=1 nativo = accent ON).
-    //
-    // Servono al compositing manuale fuori dal loop paged, dove il template
-    // GxEPD2_3C non arriva. NON chiamano refresh: è responsabilità del
-    // chiamante.
-    // ------------------------------------------------------------------
-    void writeImageBlack (const uint8_t* bitmap, int16_t x, int16_t y,
-                          int16_t w, int16_t h, bool pgm = true);
-    void writeImageRed   (const uint8_t* bitmap, int16_t x, int16_t y,
-                          int16_t w, int16_t h, bool pgm = true);
-
-    // ------------------------------------------------------------------
-    // API del partial in bianco e nero, 639 ms contro i 24015 del refresh
-    // pieno. Stanno fuori dal template GxEPD2_3C e vanno chiamate fuori da un
-    // loop paged: il perchè è nella sezione PARTIAL in testa al file.
-    //
-    // CONTRATTO, ed è dove si sbaglia: sotto la LUT custom la RAM 0x26 non è
-    // l'accent ma il FRAME PRECEDENTE in polarità BW, cioè deve contenere
-    // quello che sta sul vetro adesso. Dopo un _Update_Full() ci sta invece
-    // l'accent, quindi il PRIMO partial di una catena va preceduto
-    // dall'allineamento di 0x26. In pratica la regola operativa è più semplice
-    // di come suona: basta portare **0x26 uguale a 0x24**, perchè così i pixel
-    // fuori dall'area che cambia finiscono su LUT0 o LUT3, che sono a zero, e
-    // non vengono pilotati qualunque cosa mostri il vetro. Su un fondo uniforme
-    // è una sola chiamata a writeScreenBufferPrevious() (9 ms, nessun buffer);
-    // su un fondo qualsiasi la si completa con writeImageToPrevious() sulle sole
-    // aree che differiscono dal fondo. Dal secondo partial in poi ci pensa
-    // drawImagePartial(), che riallinea 0x26 da sè.
-    //
-    // Un frame aggiornato in partial non scrive rosso, e quello già sul vetro
-    // resta fermo. Le aree mai pilotate non degradano lungo la catena (undici
-    // passate consecutive non hanno toccato nè i testimoni nè il fondo), mentre
-    // nell'area di lavoro si accumula un pavimento di grigio che solo un
-    // refresh pieno azzera, uno ogni 5-10 passate: vedi la sezione PARTIAL in
-    // testa al file.
-    //
-    // USCIRE dalla catena NON richiede nessun passo esplicito, e la trappola
-    // che c'era è chiusa nel driver. Alla fine di una catena 0x26 contiene il
-    // frame precedente in polarità BW, cioè bit a 1 dove il vetro è bianco, e
-    // un refresh pieno quella RAM la rilegge come ACCENT: 0xFF vuol dire rosso.
-    // Una refresh(false) nuda dipingerebbe quindi lo schermo di rosso, e un
-    // frame a colori dal loop paged uscirebbe con sette ottavi di rosso spurio,
-    // perchè il template riscrive 0x26 una page alla volta. Ci pensa
-    // _cleanColorIfPrevious(), chiamata da _Update_Full(), da setPaged() e da
-    // ogni scrittura di un accent vero (writeImage(black, color),
-    // writeImagePart(black, color), writeImageRed()), così anche un frame a
-    // colori scritto senza loop paged non viene azzerato dal refresh. Vedi il
-    // commento di _previous_in_color_ram per il perchè quella pulizia non può
-    // mai cancellare un accent legittimo.
-    //
-    // Dentro una catena di partial NON vanno usate writeImage(bitmap, ...),
-    // writeImagePart(bitmap, ...) nè le drawImage() che ci passano sopra: sono
-    // le API a canale singolo che chiamano _cleanColorIfDirty(), e siccome
-    // writeImageToPrevious() alza il dirty flag azzererebbero 0x26, cioè proprio
-    // il frame precedente. Per il piano BW dentro la catena c'è
-    // writeImageBlack(), che il dirty flag non lo guarda. writeImageBlack() e
-    // writeImageToPrevious() passano da _ensurePartialRamDefined(), quindi
-    // possono aprire una catena anche subito dopo un init o un hibernate.
-    // ------------------------------------------------------------------
-
-    /** Riempie tutta la RAM 0x26 con un valore costante in polarità BW
-     *  (0xFF = frame precedente tutto bianco) usando il pattern hardware del
-     *  controller: 9 ms e nessun buffer, contro gli 80.640 byte che servirebbero
-     *  a writeImageToPrevious() a schermo pieno. È il modo normale di aprire una
-     *  catena di partial. */
-    void writeScreenBufferPrevious(uint8_t value = 0xFF);
-
-    /** Override del virtuale nativo di GxEPD2_EPD: scrive la RAM 0x26 come
-     *  frame precedente, in polarità BW (bit=1 = bianco), come fanno i driver
-     *  SSD1677 di GxEPD2. Alza il dirty flag e quello di frame precedente: il
-     *  prossimo disegno a colori, e qualunque refresh pieno, ripuliscono 0x26. */
-    void writeImageToPrevious(const uint8_t bitmap[], int16_t x, int16_t y, int16_t w, int16_t h,
-                              bool invert = false, bool mirror_y = false, bool pgm = false) override;
-
-    /** Passata di partial sulla RAM già scritta. Senza coordinate, e non è una
-     *  semplificazione: la finestra di 0x44/0x45 non confina il refresh, il
-     *  pannello viene scandito tutto e a limitare l'area ridipinta è la LUT,
-     *  che non pilota i pixel il cui bit è uguale nelle due RAM. */
-    void refreshPartial();
-
-    /** Overload con il rettangolo, per simmetria con refresh(x, y, w, h). Le
-     *  coordinate sono DICHIARATIVE e vengono ignorate, per la stessa misura
-     *  citata sopra: una fascia scritta in RAM ma mai compresa in nessuna
-     *  finestra di refresh è comparsa lo stesso. Esiste perchè un chiamante che
-     *  ragiona per aree possa dire quale intende, senza credere che il driver
-     *  stia confinando qualcosa. */
-    void refreshPartial(int16_t x, int16_t y, int16_t w, int16_t h);
-
-    /** Il ciclo completo su una bitmap B/N: la scrive in 0x24, fa la passata di
-     *  partial e la ricopia in 0x26, così il frame precedente resta allineato
-     *  al vetro e il partial successivo non ha bisogno di preparazione.
-     *  È drawImage() più writeImageAgain() del GxEPD2_1160_T91.
-     *
-     *  invert è la chiave per scriverci TESTO E FORME senza comporre la bitmap
-     *  a mano: Adafruit_GFX ha già GFXcanvas1, una tela a 1 bit con tutte le
-     *  primitive di disegno, che però mette a 1 i pixel disegnati mentre in
-     *  0x24 il bit 1 è il BIANCO. Con invert = true e pgm = false il buffer
-     *  della tela entra così com'è. La ricetta completa sta nel README della
-     *  libreria.
-     *
-     *  x E w VANNO MULTIPLI DI 8, ed è un vincolo del controller e non una
-     *  preferenza: sull'asse source la finestra lavora per byte. Una x non
-     *  allineata viene arrotondata per DIFETTO, quindi l'immagine atterra fino
-     *  a sette pixel più a sinistra senza che nessuno lo segnali; una w non
-     *  allineata viene arrotondata per eccesso, e i pixel di riempimento della
-     *  tela finiscono sul vetro. */
-    void drawImagePartial(const uint8_t* bitmap, int16_t x, int16_t y,
-                          int16_t w, int16_t h, bool invert = false, bool pgm = true);
-
-    /** Come drawImagePartial() ma su un rettangolo di una bitmap più grande,
-     *  con la stessa forma di writeImagePart(): serve a ridipingere un riquadro
-     *  preso da una tela unica senza doverla ritagliare. Valgono gli stessi
-     *  vincoli di allineamento della gemella, su x, w e x_part. */
-    void drawImagePartialPart(const uint8_t* bitmap,
-                              int16_t x_part, int16_t y_part,
-                              int16_t w_bitmap, int16_t h_bitmap,
-                              int16_t x, int16_t y, int16_t w, int16_t h,
-                              bool invert = false, bool pgm = true);
-
-    /**
-     * Sostituisce la waveform del partial con una fornita dal chiamante.
-     * Il buffer deve essere di LUT_PARTIAL_BYTES byte nel layout del waveform
-     * setting SSD1677: 0..104 per 0x32, 105 VGH, 106..108 VSH1/VSH2/VSL,
-     * 109 VCOM. Il driver ne manda 0..104 e le tensioni di sorgente, come con
-     * la LUT di default; VGH e VCOM restano dell'OTP.
-     * Memorizza il puntatore, che deve restare valido, e abbassa
-     * _using_partial_mode così che la prossima passata la ricarichi. nullptr
-     * torna alla LUT di default.
-     * La taratura di examples/097c/panel_diagnostic rispecchia questa stessa
-     * sequenza a SPI diretta, e ne misura le varianti sul vetro.
-     */
-    void setPartialLut(const uint8_t* lut);
+    /** Come hibernate() ma forza il deep sleep anche quando il differenziale tiene
+     *  un riferimento valido: lo butta e perde le RAM del controller, quindi il
+     *  frame dopo è un refresh pieno. Serve a chi sa che il pannello resterà
+     *  fermo a lungo. Come hibernate(), il deep sleep c'è solo con RST cablato. */
+    void hibernateDeep();
 
     // ------------------------------------------------------------------
     // Refresh differenziale B/N, DENTRO il loop paged del template.
     //
-    // A differenza delle API del partial qui sopra, che lavorano fuori dal
-    // template, questa passa da firstPage()/nextPage(): il firmware disegna il
-    // frame come sempre e il driver, che riceve i due piani una pagina alla
-    // volta, confronta il CRC del piano rosso con quello dell'ultimo frame
-    // pieno. Se il rosso è identico scrive il B/N nuovo nella RAM libera e
-    // lancia il partial (~0,64 s); altrimenti non tocca il pannello e il
-    // chiamante rifà il frame in pieno. Il meccanismo è nella sezione
-    // REFRESH DIFFERENZIALE in testa al file.
+    // Passa da firstPage()/nextPage(): il firmware disegna il frame come sempre
+    // e il driver, che riceve i due piani una pagina alla volta, confronta il CRC
+    // del piano rosso con quello dell'ultimo frame pieno. Se il rosso è identico
+    // scrive il B/N nuovo nella RAM libera e lancia il partial (~0,64 s);
+    // altrimenti non tocca il pannello e il chiamante rifà il frame in pieno. Il
+    // meccanismo è nella sezione REFRESH DIFFERENZIALE in testa al file.
     //
     // Uso: setDifferentialRefresh(true) una volta; a ogni frame
     // beginDifferentialFrame() PRIMA di firstPage() (che chiama setPaged()),
@@ -789,20 +684,37 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
     /** Vero se l'ultimo frame del loop paged è stato saltato perchè invariato. */
     bool frameSkipped() const { return _frameSkipped; }
 
+    // ------------------------------------------------------------------
+    // Esito del BUSY, per accorgersi di un pannello che non risponde.
+    //
+    // Ogni attesa del BUSY del driver lo controlla: ancora alto allo scadere del
+    // timeout è Timeout, sceso prima della durata minima plausibile di un refresh
+    // è TooShort. L'esito resta alto, e le attese successive escono subito, fino
+    // all'inizio del frame dopo (setPaged()) o alla prossima API pubblica che
+    // scrive e rinfresca fuori dal loop paged. Con un guasto refresh(false) non
+    // manda 0x20 e non convalida nè il frame nè il riferimento del differenziale.
+    // ------------------------------------------------------------------
+
+    /** Esito dell'attesa del BUSY dall'ultimo azzeramento; None se tutto è andato bene. */
+    GxEPD2_SOLUM_BusyFault busyFault() const { return _busyFault; }
+
+    /** Durata in ms dell'ultimo refresh, dall'invio di 0x20 al BUSY basso; 0 se non è partito. */
+    uint32_t lastUpdateMs() const { return _lastUpdateMs; }
+
     // L'entry-point pubblico di stampa immagine è la free function template
     // GxEPDImage::showImage(display, desc) definita nel namespace sopra.
     // Va chiamata dentro un loop firstPage()/nextPage() del template GFX.
 
     // Hook virtual chiamato da GxEPD2_3C::firstPage() (vedi GxEPD2_3C.h:323)
     // all'inizio di ogni loop paged. Override del no-op base in GxEPD2_EPD.h:92.
-    // Reset del page-hint per allinearlo a _current_page del template che
-    // viene riportato a 0 in firstPage.
+    // Riallinea il page-hint a _current_page del template, che viene riportato a
+    // 0 in firstPage, e azzera l'esito del BUSY.
     //
     // Qui sta anche l'unico punto in cui si può ripulire 0x26 quando contiene
     // un frame precedente: firstPage() riempie solo il buffer locale e non ha
     // ancora scritto niente sul controller, mentre nextPage() riscriverebbe
     // 0x26 una page alla volta lasciando sette ottavi di frame precedente
-    // riletti come accent. Costa 9 ms e solo quando il flag è alto.
+    // riletti come accent. Costa 9 ms e solo quando 0x26 contiene quel frame.
     //
     // Con il differenziale attivo riparte anche il conteggio delle pagine, e un
     // frame pieno forza reset e init del controller come senza differenziale,
@@ -815,38 +727,85 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
     // Permette a showImage di skippare a priori le righe sorgente fuori dalla
     // page corrente, riducendo il loop pixel a 1/8 delle iterazioni.
     int16_t showImagePageHint() const { return _show_image_page_hint; }
-  private:
-    // Pulizia del piano accent: se _color_dirty è attivo scrive 0x00 ovunque
-    // (polarity nativa SSD1677 = "accent spento") e resetta il flag.
-    // Centralizza la semantica "clean accent" per evitare il bug latente
-    // 0xFF (= accent ON ovunque) che esisteva in versioni precedenti.
-    void _cleanColorIfDirty();
 
-    /** Gemella della precedente per il caso del partial: se in 0x26 c'è un
-     *  frame precedente lo cancella scrivendo 0x00 ovunque, cioè accent spento,
-     *  col pattern hardware (9 ms). Chiamata da _Update_Full() e da setPaged(),
-     *  cioè nei due soli punti da cui quella RAM può essere riletta come
-     *  accent. Se il display non è inizializzato non c'è niente da pulire,
-     *  perchè il deep sleep ha già perduto la RAM. */
-    void _cleanColorIfPrevious();
+  protected:
+    /** Cosa contiene la RAM 0x26. Clean: accent spento. Accent: sporca, con un
+     *  accent o con contenuto che un refresh pieno rileggerebbe come rosso.
+     *  Previous: il frame precedente del partial, che è anche sporco. */
+    enum class Ram26 : uint8_t { Clean, Accent, Previous };
 
-    /** Porta le due RAM a uno stato definito prima della PRIMA passata di
-     *  partial, e va chiamata da ogni porta che può aprire una catena. Senza,
-     *  _writeImage() chiamerebbe writeScreenBuffer(), che azzera 0x26 a 0x00
-     *  cioè frame precedente tutto NERO, e ogni pixel bianco cadrebbe su LUT1
-     *  facendo pilotare tutto lo schermo.
-     *  I due piani si scrivono SEPARATAMENTE di proposito: se il chiamante ha
-     *  già allineato 0x26 senza toccare 0x24, una writeScreenBuffer() gli
-     *  cancellerebbe quel lavoro sostituendolo col caso peggiore. */
-    void _ensurePartialRamDefined();
+    /** Pulizia di 0x26: scrive 0x00 ovunque (polarità nativa, accent spento) col
+     *  pattern hardware, 8-9 ms. Con onlyIfPrevious pulisce solo se c'è un frame
+     *  precedente del partial, che un refresh pieno rileggerebbe come accent e che
+     *  non può mai essere un accent legittimo: è la forma di _Update_Full() e di
+     *  setPaged(). Senza, pulisce ogni volta che la RAM non è Clean, ed è la forma
+     *  delle scritture a canale singolo, che non devono lasciare rosso sotto il
+     *  B/N. Con il display non inizializzato e il controller in deep sleep non c'è
+     *  niente da pulire, perchè la RAM è già persa. */
+    void _cleanRam26(bool onlyIfPrevious);
 
-    /** Da chiamare dopo ogni scrittura in 0x26 fatta come FRAME PRECEDENTE:
-     *  alza i due flag, così un refresh pieno o l'inizio di un loop paged
-     *  ripuliscono quella RAM prima che venga riletta come accent. */
-    void _markPreviousInColorRam() { _color_dirty = true; _previous_in_color_ram = true; }
+    /** Scrive il piano accent in 0x26 con la polarità nativa (bit a 1 = accent):
+     *  la bitmap arriva con bit a 1 = non accent, quindi si inverte rispetto a
+     *  invert. Prima ripulisce un eventuale frame precedente del partial, e dopo
+     *  lascia 0x26 come accent sporco. Gli argomenti sono quelli di
+     *  _writeImagePart(); per un rettangolo pieno x_part e y_part valgono 0. */
+    void _writeAccent(const uint8_t* bitmap, int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
+                      int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm);
+
+    /** Da chiamare dopo ogni scrittura in 0x26 fatta come FRAME PRECEDENTE: così
+     *  un refresh pieno o l'inizio di un loop paged ripuliscono quella RAM prima
+     *  che venga riletta come accent. */
+    void _markPreviousInColorRam() { _ram26 = Ram26::Previous; }
 
     void _writeScreenBuffer(uint8_t command, uint8_t value);
 
+    /** Ritorna true se ha davvero scritto: false quando il rettangolo, dopo
+     *  il taglio sullo schermo, non ha superficie. Serve a chi non deve lanciare
+     *  un refresh per un rettangolo che nessuno dipinge (le drawImagePartial*()
+     *  di PartialProbeDriver.h). Gli altri chiamanti lo ignorano. */
+    bool _writeImage(uint8_t command, const uint8_t bitmap[], int16_t x, int16_t y, int16_t w, int16_t h, bool invert = false, bool mirror_y = false, bool pgm = false);
+    /** Come _writeImage(), che gli si appoggia: true se ha scritto, false se non
+     *  c'era niente da scrivere. */
+    bool _writeImagePart(uint8_t command, const uint8_t bitmap[], int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
+                         int16_t x, int16_t y, int16_t w, int16_t h, bool invert = false, bool mirror_y = false, bool pgm = false);
+    void _PowerOff();
+    void _InitDisplay();
+
+    /** Passata di partial: la sequenza cronometrata dalla sonda, 639 ms. La LUT si
+     *  ricarica anche quando è già quella del partial ma con l'orientamento
+     *  opposto. */
+    void _Update_Part(bool swapped = false);
+
+    /** Azzera l'esito del BUSY: la prima istruzione delle API pubbliche che
+     *  scrivono e rinfrescano fuori dal loop paged. */
+    void _clearBusyFault() { _busyFault = GxEPD2_SOLUM_BusyFault::None; }
+
+    // _using_partial_mode è il membro della base GxEPD2_EPD, come nei driver
+    // nativi: è alto quando nel controller c'è la LUT custom del partial al
+    // posto di quella dell'OTP. Lo abbassano init() della base, _InitDisplay(),
+    // perchè il SWRESET rimette l'OTP, _Update_Full() e la sostituzione della LUT.
+
+    /** Stato della RAM 0x26. Permette di saltare la pulizia pre-draw quando non
+     *  serve, tipicamente in una catena di immagini B/N consecutive, e di sapere
+     *  se quella RAM contiene un frame precedente che un refresh pieno
+     *  rileggerebbe come accent. Lo porta a Previous soltanto chi scrive un
+     *  frame precedente (_markPreviousInColorRam()), quindi quando è Previous
+     *  l'ultima scrittura è davvero un frame precedente e cancellarlo non può
+     *  distruggere un accent legittimo: qualunque punto che scrive un accent
+     *  vero lo porta ad Accent. */
+    Ram26 _ram26 = Ram26::Clean;
+
+    /** Waveform del partial in uso: la costante del driver, oppure quella
+     *  impostata da una sottoclasse. Mai nullptr. */
+    const uint8_t* _lut_partial = GxEPD2_SOLUM_097c_lut_partial;
+
+    /** Stato del refresh differenziale: riferimento, CRC, ruoli delle RAM. */
+    GxEPD2_SOLUM_Differential _diff;
+
+    /** Esito dell'attesa del BUSY: vedi busyFault(). */
+    GxEPD2_SOLUM_BusyFault _busyFault = GxEPD2_SOLUM_BusyFault::None;
+
+  private:
     /** Riempimento di un piano immagine tramite i comandi Auto Write RAM for
      *  Regular Pattern del SSD1677 (0x47 per 0x24, 0x46 per 0x26): il pattern
      *  lo genera il controller, quindi sul bus va un solo byte invece di
@@ -856,39 +815,43 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
      *  Ritorna false quando il piano o il valore non sono esprimibili come
      *  pattern, e il chiamante ripiega sul transfer SPI. */
     bool _fillPlaneByPattern(uint8_t command, uint8_t value);
-    /** Ritorna true se ha davvero scritto: false quando il rettangolo, dopo
-     *  il taglio sullo schermo, non ha superficie. Serve alle due
-     *  drawImagePartial*(), che senza lancerebbero una passata da 640 ms per
-     *  un rettangolo che nessuno dipinge. Gli altri chiamanti lo ignorano. */
-    bool _writeImage(uint8_t command, const uint8_t bitmap[], int16_t x, int16_t y, int16_t w, int16_t h, bool invert = false, bool mirror_y = false, bool pgm = false);
-    /** Come _writeImage(): true se ha scritto, false se non c'era niente da
-     *  scrivere. */
-    bool _writeImagePart(uint8_t command, const uint8_t bitmap[], int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
-                         int16_t x, int16_t y, int16_t w, int16_t h, bool invert = false, bool mirror_y = false, bool pgm = false);
     void _setPartialRamArea(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
     void _PowerOn();
-    void _PowerOff();
-    void _InitDisplay();
     void _Update_Full();
 
     /** Carica la waveform custom, tensioni di sorgente comprese, e mette il
      *  border in HiZ. Con swapped le righe VS di LUT1 e LUT2 vanno scambiate:
      *  serve quando il frame nuovo sta in 0x26 e il precedente in 0x24, cioè
-     *  l'indice (0x26, 0x24) = (nuovo, precedente). Le API opt-in del partial,
-     *  che presuppongono 0x26 = precedente, usano il default false. */
+     *  l'indice (0x26, 0x24) = (nuovo, precedente). Le API opt-in di
+     *  PartialProbeDriver.h (nell'esempio panel_diagnostic), che presuppongono
+     *  0x26 = precedente, usano il default false. */
     void _Init_Part(bool swapped = false);
-    /** Passata di partial: la sequenza cronometrata dalla sonda, 639 ms. La LUT si
-     *  ricarica anche quando è già quella del partial ma con l'orientamento
-     *  opposto. */
-    void _Update_Part(bool swapped = false);
 
     /** Pagina del loop paged con il differenziale attivo: CRC del piano colore e
      *  scrittura secondo l'esito della macchina a stati. */
     void _writeImageDifferential(const uint8_t* black, const uint8_t* color, int16_t y, int16_t h);
 
+    /** Refresh pieno senza coordinate: il differenziale non lo conosce, quindi il
+     *  riferimento si butta e un frame armato in corso si disarma. È il corpo di
+     *  refresh(x, y, w, h) e il refresh delle draw*(), che azzerano l'esito del
+     *  BUSY prima di scrivere e qui lo devono ritrovare. */
+    void _refreshWindow();
+
     /** Vero se il BUSY è ancora attivo: dopo _waitWhileBusy() vuol dire che è
      *  scaduto il timeout, che la base segnala solo sulla seriale. */
     bool _busyStillActive() const { return _busy >= 0 && digitalRead(_busy) == _busy_level; }
+
+    /** Attesa del BUSY con esito. Con un guasto già alzato esce subito, perchè un
+     *  controller che non risponde non va aspettato ancora. Un refresh (isUpdate)
+     *  attende fino a BUSY_TIMEOUT_US; le attese brevi, che durano meno di un
+     *  secondo, fino a SHORT_BUSY_TIMEOUT_US. Se il BUSY è ancora alto all'uscita
+     *  alza Timeout. */
+    void _waitBusy(const char* comment, uint16_t busy_time, bool isUpdate);
+
+    /** Dopo un refresh: se l'esito è ancora None e la durata misurata è sotto il
+     *  minimo plausibile del suo tipo alza TooShort, cioè il BUSY è sceso prima
+     *  che la waveform potesse girare. */
+    void _checkUpdateDuration(uint32_t minPlausibleMs);
 
     /** Alza _diffInternalWrite per la durata di una scrittura che il driver fa
      *  da sè, così le primitive non la scambiano per una scrittura estranea. */
@@ -899,36 +862,6 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
       explicit _InternalWriteGuard(bool& f) : flag(f), previous(f) { flag = true; }
       ~_InternalWriteGuard() { flag = previous; }
     };
-
-    // _using_partial_mode è il membro della base GxEPD2_EPD, come nei driver
-    // nativi: è alto quando nel controller c'è la LUT custom del partial al
-    // posto di quella dell'OTP. Lo abbassano init() della base, _InitDisplay(),
-    // perchè il SWRESET rimette l'OTP, _Update_Full() e setPartialLut().
-
-    // Dirty flag del piano accent: traccia quando la RAM 0x26 contiene dati
-    // non puliti dall'ultima writeScreenBuffer(). Permette di saltare il
-    // clean pre-draw quando non serve, tipicamente in una catena di immagini
-    // B/N consecutive. Il clean costa 8-9 ms misurati, perchè lo fa il
-    // pattern hardware del controller e non il bus.
-    bool _color_dirty = false;   // 0x26 (accent)
-
-    /** Alto quando in 0x26 c'è un FRAME PRECEDENTE del partial e non un
-     *  accent. È un flag distinto da _color_dirty, e la distinzione è ciò che
-     *  rende la pulizia automatica sempre corretta: lo alzano soltanto
-     *  writeScreenBufferPrevious() e writeImageToPrevious(), quindi quando è alto
-     *  l'ultima scrittura in quella RAM È un frame precedente, e un refresh
-     *  pieno non ha nessun uso possibile per quel contenuto perchè lo
-     *  rileggerebbe come accent. Cancellarlo non può quindi mai distruggere un
-     *  accent legittimo: qualunque punto che scrive un accent vero abbassa il
-     *  flag. */
-    bool _previous_in_color_ram = false;   // 0x26 (frame precedente)
-
-    /** Waveform del partial in uso: la costante del driver, oppure quella
-     *  passata da setPartialLut(). Mai nullptr. */
-    const uint8_t* _lut_partial = GxEPD2_SOLUM_097c_lut_partial;
-
-    /** Stato del refresh differenziale: riferimento, CRC, ruoli delle RAM. */
-    GxEPD2_SOLUM_Differential _diff;
 
     /** Alto mentre il driver scrive per conto del frame (pagine del loop paged,
      *  pulizie, init): le primitive di scrittura invalidano il riferimento solo
@@ -947,13 +880,18 @@ class GxEPD2_SOLUM_097c_960x672 : public GxEPD2_EPD
     /** Orientamento della LUT che il controller ha in questo momento. */
     bool _lutSwappedLoaded = false;
 
+    /** Durata dell'ultimo refresh, in ms: vedi lastUpdateMs(). */
+    uint32_t _lastUpdateMs = 0;
+
     // Counter usato da GxEPDImage::showImage per dedurre la page corrente del
     // template GxEPD2_3C, che mantiene _current_page private senza getter.
-    // Avanzamento: dentro writeImage(black, color, ...), che il template chiama
-    // ESATTAMENTE una volta per page in nextPage() (full-window mode).
-    // Reset:
-    //   - setPaged() (chiamato da firstPage() del template) → riallinea
-    //   - _Update_Full() (al refresh finale) → simmetria difensiva
+    // Avanzamento: writeImage(black, color, ...) a due piani, che il template
+    // chiama ESATTAMENTE una volta per page in nextPage() (full-window mode); con
+    // il differenziale attivo l'incremento sta in _writeImageDifferential(), dove
+    // quella chiamata passa.
+    // Reset: setPaged() all'inizio del loop paged, poi a fine refresh in
+    // _Update_Full(), in _Update_Part() e nel salto di refresh(false), per frame
+    // invariato o per guasto del BUSY.
     int16_t _show_image_page_hint = 0;
 };
 
@@ -979,10 +917,11 @@ inline GxEPD2_SOLUM_097c_960x672::GxEPD2_SOLUM_097c_960x672(int16_t cs, int16_t 
    *  cronometrato 59067 ms, cioè due volte e mezzo il caso caldo e ben oltre i
    *  40 s che stavano qui prima: quel valore non copriva il pannello che lavora
    *  al freddo, che è il caso d'uso di una dashboard meteo.
-   *  120 s sono una guardia e non un'attesa: se il BUSY scende prima
-   *  _waitWhileBusy esce sul pin e il valore non costa niente. Restano poco
-   *  più del doppio del banco più lento misurato. */
-  GxEPD2_EPD(cs, dc, rst, busy, HIGH, 120000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate)
+   *  120 s (BUSY_TIMEOUT_US) sono una guardia e non un'attesa: se il BUSY scende
+   *  prima _waitWhileBusy esce sul pin e il valore non costa niente. Restano poco
+   *  più del doppio del banco più lento misurato. Allo scadere _waitBusy() alza
+   *  il guasto Timeout, che si legge con busyFault(). */
+  GxEPD2_EPD(cs, dc, rst, busy, HIGH, BUSY_TIMEOUT_US, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate)
 {
 }
 
@@ -998,6 +937,9 @@ inline void GxEPD2_SOLUM_097c_960x672::clearScreen(uint8_t value)
 
 inline void GxEPD2_SOLUM_097c_960x672::clearScreen(uint8_t black_value, uint8_t color_value)
 {
+  // Scrive e rinfresca fuori dal loop paged: l'esito del BUSY riparte da qui, e
+  // refresh(false) vede i guasti delle scritture appena fatte.
+  _clearBusyFault();
   writeScreenBuffer(black_value, color_value);
   refresh(false);
 }
@@ -1017,10 +959,11 @@ inline void GxEPD2_SOLUM_097c_960x672::writeScreenBuffer(uint8_t black_value, ui
   _writeScreenBuffer(0x24, black_value);   // set black/white
   _writeScreenBuffer(0x26, color_value);   // set accent
   _initial_write = false; // initial full screen buffer clean done
-  // Dopo una pulizia completa dei buffer il piano accent è "clean" per definizione,
-  // e non ci può più essere un frame precedente del partial.
-  _color_dirty = false;
-  _previous_in_color_ram = false;
+  // Il piano accent è pulito solo se si è scritto 0x00: con un valore diverso
+  // resta sporco, così un disegno a canale singolo successivo lo ripulisce
+  // invece di dipingere tutto di rosso. Non può esserci un frame precedente del
+  // partial, perchè i due piani sono stati riscritti per intero.
+  _ram26 = color_value != 0x00 ? Ram26::Accent : Ram26::Clean;
 }
 
 // Riempie un piano a schermo pieno con un valore costante. Se il controller
@@ -1078,26 +1021,52 @@ inline bool GxEPD2_SOLUM_097c_960x672::_fillPlaneByPattern(uint8_t command, uint
   _writeCommand(pattern_command);
   _writeData(value ? 0xF7 : 0x77);
   // Il controller alza BUSY per tutta la generazione del pattern.
-  _waitWhileBusy("_fillPlaneByPattern", 50);
+  _waitBusy("_fillPlaneByPattern", 50, false);
   return true;
 }
 
 // Scrive una bitmap B/W sul canale nero (0x24) lasciando l'accent pulito.
 // Al primo write _writeImage richiama writeScreenBuffer() che azzera già
-// tutto; nei draw successivi 0x26 si pulisce SOLO se il flag dirty è attivo
+// tutto; nei draw successivi 0x26 si pulisce SOLO se non è già Clean
 // (risparmio SPI quando si incatenano draw B/N).
 inline void GxEPD2_SOLUM_097c_960x672::writeImage(const uint8_t bitmap[], int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
-  if (!_initial_write) _cleanColorIfDirty();
+  if (!_initial_write) _cleanRam26(false);
   _writeImage(0x24, bitmap, x, y, w, h, invert, mirror_y, pgm);
 }
 
+// Un rettangolo pieno di bitmap è una scrittura parziale con l'origine a zero:
+// i due percorsi condividono così il taglio sullo schermo e l'indicizzazione.
 inline bool GxEPD2_SOLUM_097c_960x672::_writeImage(uint8_t command, const uint8_t bitmap[], int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
+  return _writeImagePart(command, bitmap, 0, 0, w, h, x, y, w, h, invert, mirror_y, pgm);
+}
+
+// Allineato al fratello writeImage(bitmap[], ...): pulisce l'accent sporco
+// prima di scrivere il piano BW, altrimenti il rosso residuo di un draw
+// colorato precedente trasparirebbe sotto la zona BW disegnata in part.
+inline void GxEPD2_SOLUM_097c_960x672::writeImagePart(const uint8_t bitmap[], int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
+    int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
+{
+  if (!_initial_write) _cleanRam26(false);
+  _writeImagePart(0x24, bitmap, x_part, y_part, w_bitmap, h_bitmap, x, y, w, h, invert, mirror_y, pgm);
+}
+
+// Scrittura di un piano sul controller, da cui passa ogni percorso di scrittura
+// del driver: il loop paged a schermo pieno è l'hot path.
+inline bool GxEPD2_SOLUM_097c_960x672::_writeImagePart(uint8_t command, const uint8_t bitmap[], int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
+    int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
+{
   // Note: delay(1) yield WDT rimosso (target ESP32 task WDT 5s, refresh <30ms)
-  uint16_t wb = (w + 7) / 8; // width bytes, bitmaps are padded
+  if ((w_bitmap < 0) || (h_bitmap < 0) || (w < 0) || (h < 0)) return false;
+  if ((x_part < 0) || (x_part >= w_bitmap)) return false;
+  if ((y_part < 0) || (y_part >= h_bitmap)) return false;
+  uint16_t wb_bitmap = (w_bitmap + 7) / 8; // width bytes, bitmaps are padded
+  x_part -= x_part % 8; // byte boundary
+  w = w_bitmap - x_part < w ? w_bitmap - x_part : w; // limit
+  h = h_bitmap - y_part < h ? h_bitmap - y_part : h; // limit
   x -= x % 8; // byte boundary
-  w = wb * 8; // byte boundary
+  w = 8 * ((w + 7) / 8); // byte boundary, bitmaps are padded
   int16_t x1 = x < 0 ? 0 : x; // limit
   int16_t y1 = y < 0 ? 0 : y; // limit
   int16_t w1 = x + w < int16_t(WIDTH) ? w : int16_t(WIDTH) - x; // limit
@@ -1132,77 +1101,6 @@ inline bool GxEPD2_SOLUM_097c_960x672::_writeImage(uint8_t command, const uint8_
   // Buffer dimensionato per la WIDTH max del pannello.
   const int16_t rowBytes = w1 / 8;
   uint8_t rowBuf[120]; // WIDTH(960)/8 = 120
-  for (int16_t i = 0; i < h1; i++)
-  {
-    for (int16_t j = 0; j < rowBytes; j++)
-    {
-      uint8_t data;
-      // use wb, h of bitmap for index!
-      uint32_t idx = mirror_y ? j + dx / 8 + uint32_t((h - 1 - (i + dy))) * wb : j + dx / 8 + uint32_t(i + dy) * wb;
-      if (pgm)
-      {
-        data = pgm_read_byte(&bitmap[idx]);
-      }
-      else
-      {
-        data = bitmap[idx];
-      }
-      if (invert) data = ~data;
-      rowBuf[j] = data;
-    }
-    _pSPIx->writeBytes(rowBuf, rowBytes);
-  }
-  _endTransfer();
-  return true;
-}
-
-// Allineato al fratello writeImage(bitmap[], ...): pulisce l'accent dirty
-// prima di scrivere il piano BW, altrimenti il rosso residuo di un draw
-// colorato precedente trasparirebbe sotto la zona BW disegnata in part.
-inline void GxEPD2_SOLUM_097c_960x672::writeImagePart(const uint8_t bitmap[], int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
-    int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
-{
-  if (!_initial_write) _cleanColorIfDirty();
-  _writeImagePart(0x24, bitmap, x_part, y_part, w_bitmap, h_bitmap, x, y, w, h, invert, mirror_y, pgm);
-}
-
-inline bool GxEPD2_SOLUM_097c_960x672::_writeImagePart(uint8_t command, const uint8_t bitmap[], int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
-    int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
-{
-  // Note: delay(1) yield WDT rimosso (target ESP32 task WDT 5s, refresh <30ms)
-  if ((w_bitmap < 0) || (h_bitmap < 0) || (w < 0) || (h < 0)) return false;
-  if ((x_part < 0) || (x_part >= w_bitmap)) return false;
-  if ((y_part < 0) || (y_part >= h_bitmap)) return false;
-  uint16_t wb_bitmap = (w_bitmap + 7) / 8; // width bytes, bitmaps are padded
-  x_part -= x_part % 8; // byte boundary
-  w = w_bitmap - x_part < w ? w_bitmap - x_part : w; // limit
-  h = h_bitmap - y_part < h ? h_bitmap - y_part : h; // limit
-  x -= x % 8; // byte boundary
-  w = 8 * ((w + 7) / 8); // byte boundary, bitmaps are padded
-  int16_t x1 = x < 0 ? 0 : x; // limit
-  int16_t y1 = y < 0 ? 0 : y; // limit
-  int16_t w1 = x + w < int16_t(WIDTH) ? w : int16_t(WIDTH) - x; // limit
-  int16_t h1 = y + h < int16_t(HEIGHT) ? h : int16_t(HEIGHT) - y; // limit
-  int16_t dx = x1 - x;
-  int16_t dy = y1 - y;
-  w1 -= dx;
-  h1 -= dy;
-  if ((w1 <= 0) || (h1 <= 0)) return false;
-  if (!_diffInternalWrite) _diff.invalidate();
-  if (!_init_display_done) _InitDisplay();
-  // Stesso ordine di _writeImage, e per la stessa ragione: vedi il commento lì.
-  if (_initial_write) writeScreenBuffer(); // initial full screen buffer clean
-  _setPartialRamArea(x1, y1, w1, h1);
-  _writeCommand(command);
-  _startTransfer();
-  // Bulk SPI: stesso pattern di _writeImage (vedi commento sopra). Buffer
-  // di riga di max WIDTH/8 = 120 byte, flush via writeBytes una volta per
-  // riga invece di per-byte transfer().
-  // Nota: nel progetto attuale il template GxEPD2_3C usa solo full-window
-  // mode (setFullWindow), quindi questo overload non è in hot path. Lo
-  // refactoriamo per simmetria con _writeImage.
-  const int16_t rowBytes = w1 / 8;
-  uint8_t rowBuf[120];
   for (int16_t i = 0; i < h1; i++)
   {
     for (int16_t j = 0; j < rowBytes; j++)
@@ -1254,12 +1152,7 @@ inline void GxEPD2_SOLUM_097c_960x672::writeImage(const uint8_t* black, const ui
     return;
   }
   if (black) _writeImage(0x24, black, x, y, w, h, invert, mirror_y, pgm);
-  if (color)
-  {
-    _cleanColorIfPrevious();
-    _writeImage(0x26, color, x, y, w, h, !invert, mirror_y, pgm);
-    _color_dirty = true;
-  }
+  if (color) _writeAccent(color, 0, 0, w, h, x, y, w, h, invert, mirror_y, pgm);
   // GxEPD2_3C::nextPage() ha appena flushato la page corrente sul controller
   // chiamando questo overload (vedi commento sopra). Avanza il page-hint per
   // allinearlo alla prossima iterazione del loop paged: showImage usa il hint
@@ -1279,11 +1172,9 @@ inline void GxEPD2_SOLUM_097c_960x672::writeImagePart(const uint8_t* black, cons
     // Scrittura d'area sull'accent: quello che resta fuori dall'area va
     // ripulito, altrimenti un frame precedente del partial ancora in 0x26
     // verrebbe riletto come rosso. Dentro il loop paged ci ha già pensato
-    // setPaged(), e qui la chiamata è un no-op; serve a chi usa questa API
-    // fuori dal template.
-    _cleanColorIfPrevious();
-    _writeImagePart(0x26, color, x_part, y_part, w_bitmap, h_bitmap, x, y, w, h, !invert, mirror_y, pgm);
-    _color_dirty = true;
+    // setPaged(), e la pulizia dell'helper è un no-op; serve a chi usa questa
+    // API fuori dal template.
+    _writeAccent(color, x_part, y_part, w_bitmap, h_bitmap, x, y, w, h, invert, mirror_y, pgm);
   }
 }
 
@@ -1297,60 +1188,69 @@ inline void GxEPD2_SOLUM_097c_960x672::writeNative(const uint8_t* data1, const u
 
 inline void GxEPD2_SOLUM_097c_960x672::drawImage(const uint8_t bitmap[], int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
+  _clearBusyFault();
   writeImage(bitmap, x, y, w, h, invert, mirror_y, pgm);
-  refresh(x, y, w, h);
+  _refreshWindow();
 }
 
 inline void GxEPD2_SOLUM_097c_960x672::drawImagePart(const uint8_t bitmap[], int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
     int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
+  _clearBusyFault();
   writeImagePart(bitmap, x_part, y_part, w_bitmap, h_bitmap, x, y, w, h, invert, mirror_y, pgm);
-  refresh(x, y, w, h);
+  _refreshWindow();
 }
 
 inline void GxEPD2_SOLUM_097c_960x672::drawImage(const uint8_t* black, const uint8_t* color, int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
+  _clearBusyFault();
   writeImage(black, color, x, y, w, h, invert, mirror_y, pgm);
-  refresh(x, y, w, h);
+  _refreshWindow();
 }
 
 inline void GxEPD2_SOLUM_097c_960x672::drawImagePart(const uint8_t* black, const uint8_t* color, int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
     int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
+  _clearBusyFault();
   writeImagePart(black, color, x_part, y_part, w_bitmap, h_bitmap, x, y, w, h, invert, mirror_y, pgm);
-  refresh(x, y, w, h);
+  _refreshWindow();
 }
 
 inline void GxEPD2_SOLUM_097c_960x672::drawNative(const uint8_t* data1, const uint8_t* data2, int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
 {
+  _clearBusyFault();
   writeNative(data1, data2, x, y, w, h, invert, mirror_y, pgm);
-  refresh(x, y, w, h);
+  _refreshWindow();
 }
 
-// Entrambi gli overload passano da _Update_Full, e quello con le coordinate le
-// ignora: la finestra RAM non confina l'area ridipinta (vedi _Update_Full) e non
-// accorcia la waveform — misurata identica su una fascia di 168 righe, sulla
-// stessa ristretta anche in X e su 48 righe con Mode 1 — quindi un refresh
-// d'area non avrebbe niente da guadagnare.
-// Il partial vero è un'altra cosa e ha un'altra porta: drawImagePartial(). Qui
-// non entra di proposito, perchè GxEPD2_3C::nextPage() in setPartialWindow
-// arriva su questo overload e lo farebbe girare con 0x26 pieno di accent.
-//
-// Con il differenziale attivo questo è il punto in cui un frame del loop paged
-// diventa partial o pieno. Armato lancia il partial solo se la macchina a stati
-// lo consente e non tocca il pannello altrimenti; non armato fa il refresh
-// pieno e ne registra i CRC come nuovo riferimento. In entrambi i casi, se il
-// BUSY è ancora alto dopo l'attesa il refresh non è finito e il riferimento si
-// butta. Un frame armato si disarma sempre qui.
-//
-// Prima di tutto questo, un frame identico a quello già sul vetro non lancia
-// niente: né partial né pieno, con o senza differenziale. Le pagine sono già
-// state scritte nelle RAM, e con un frame armato i ruoli delle RAM non si
-// scambiano senza refresh, quindi lo stato resta coerente; con un frame non
-// armato il riferimento del differenziale è già spento dalle pagine, e il
-// frame dopo, se cambia, sarà pieno.
+// refresh(bool) è il punto in cui un frame del loop paged diventa partial, pieno
+// o niente. Con un guasto del BUSY già alzato da questo frame, per esempio
+// nell'init o nel riempimento dei piani, non manda 0x20 e non convalida nè il
+// frame nè il riferimento del differenziale, che si butta: il chiamante legge
+// busyFault() e rifà il frame.
+// Altrimenti un frame identico a quello già sul vetro non lancia niente, nè
+// partial nè pieno, con o senza differenziale. Le pagine sono già state scritte
+// nelle RAM, e con un frame armato i ruoli delle RAM non si scambiano senza
+// refresh, quindi lo stato resta coerente; con un frame non armato il
+// riferimento del differenziale è già spento dalle pagine, e il frame dopo, se
+// cambia, sarà pieno.
+// Con il differenziale attivo, armato lancia il partial solo se la macchina a
+// stati lo consente e non tocca il pannello altrimenti; non armato fa il
+// refresh pieno e ne registra i CRC come nuovo riferimento. In entrambi i casi
+// un refresh che finisce con un guasto del BUSY, cioè ancora alto o troppo
+// breve, non convalida niente e il riferimento si butta. Un frame armato si
+// disarma sempre qui.
 inline void GxEPD2_SOLUM_097c_960x672::refresh(bool /*partial_update_mode*/)
 {
+  if (_busyFault != GxEPD2_SOLUM_BusyFault::None)
+  {
+    _diff.invalidate();
+    _diff.disarm();
+    _frame.invalidateShown();
+    _frame.endFrame();
+    _show_image_page_hint = 0;   // simmetrico al ciclo di rendering, come _Update_*
+    return;
+  }
   if (_frame.unchanged(int16_t(HEIGHT)))
   {
     _frameSkipped = true;
@@ -1362,7 +1262,7 @@ inline void GxEPD2_SOLUM_097c_960x672::refresh(bool /*partial_update_mode*/)
   if (!_diff.enabled())
   {
     _Update_Full(); // always uses full window refresh
-    if (!_busyStillActive()) _frame.commit(int16_t(HEIGHT));
+    if (_busyFault == GxEPD2_SOLUM_BusyFault::None) _frame.commit(int16_t(HEIGHT));
     return;
   }
   if (_diff.armed())
@@ -1370,7 +1270,7 @@ inline void GxEPD2_SOLUM_097c_960x672::refresh(bool /*partial_update_mode*/)
     if (_diff.canFire(int16_t(HEIGHT)))
     {
       _Update_Part(_diff.lutSwapped());
-      if (_busyStillActive())
+      if (_busyFault != GxEPD2_SOLUM_BusyFault::None)
       {
         _diff.invalidate();
       }
@@ -1392,7 +1292,7 @@ inline void GxEPD2_SOLUM_097c_960x672::refresh(bool /*partial_update_mode*/)
     _InternalWriteGuard guard(_diffInternalWrite);
     _Update_Full();
   }
-  if (_busyStillActive())
+  if (_busyFault != GxEPD2_SOLUM_BusyFault::None)
   {
     _diff.invalidate();
   }
@@ -1403,9 +1303,23 @@ inline void GxEPD2_SOLUM_097c_960x672::refresh(bool /*partial_update_mode*/)
   }
 }
 
+// refresh(x, y, w, h) ignora le coordinate: la finestra RAM non confina l'area
+// ridipinta (vedi _Update_Full) e non accorcia la waveform, misurata identica su
+// una fascia di 168 righe, sulla stessa ristretta anche in X e su 48 righe con
+// Mode 1, quindi un refresh d'area non avrebbe niente da guadagnare. È un
+// refresh pieno fuori dal loop paged e riparte dall'esito del BUSY azzerato.
+// Il partial vero ha un'altra porta, le API opt-in di PartialProbeDriver.h: qui
+// non entra di proposito, perchè GxEPD2_3C::nextPage() in setPartialWindow arriva
+// su questo overload e lo farebbe girare con 0x26 pieno di accent.
+inline void GxEPD2_SOLUM_097c_960x672::refresh(int16_t /*x*/, int16_t /*y*/, int16_t /*w*/, int16_t /*h*/)
+{
+  _clearBusyFault();
+  _refreshWindow();
+}
+
 // Un refresh d'area fuori dal loop paged: il differenziale non lo conosce, quindi
 // il riferimento si butta e un frame armato in corso si disarma.
-inline void GxEPD2_SOLUM_097c_960x672::refresh(int16_t /*x*/, int16_t /*y*/, int16_t /*w*/, int16_t /*h*/)
+inline void GxEPD2_SOLUM_097c_960x672::_refreshWindow()
 {
   _diff.invalidate();
   _diff.disarm();
@@ -1441,14 +1355,15 @@ inline bool GxEPD2_SOLUM_097c_960x672::endDifferentialFrame()
   return _differentialFired;
 }
 
-// Inizio del loop paged. Un frame armato non pulisce 0x26, che può contenere il
-// riferimento. Un frame pieno con il differenziale attivo riparte da un
-// controller reinizializzato, come senza differenziale: HW reset e init alla
-// prima scrittura e piani ripuliti da _initial_write. Così uno stato anomalo del
-// controller non sopravvive oltre il frame pieno successivo, e i partial usano
-// lo stato persistente solo per una catena.
+// Inizio del loop paged: azzera l'esito del BUSY. Un frame armato non pulisce
+// 0x26, che può contenere il riferimento. Un frame pieno con il differenziale
+// attivo riparte da un controller reinizializzato, come senza differenziale: HW
+// reset e init alla prima scrittura e piani ripuliti da _initial_write. Così uno
+// stato anomalo del controller non sopravvive oltre il frame pieno successivo, e
+// i partial usano lo stato persistente solo per una catena.
 inline void GxEPD2_SOLUM_097c_960x672::setPaged()
 {
+  _clearBusyFault();
   _diff.beginFrame();
   _frame.beginFrame();
   _frameSkipped = false;
@@ -1462,7 +1377,7 @@ inline void GxEPD2_SOLUM_097c_960x672::setPaged()
   if (!_diff.armed())
   {
     _InternalWriteGuard guard(_diffInternalWrite);
-    _cleanColorIfPrevious();
+    _cleanRam26(true);
   }
   _show_image_page_hint = 0;
 }
@@ -1481,9 +1396,7 @@ inline void GxEPD2_SOLUM_097c_960x672::_writeImageDifferential(const uint8_t* bl
   {
     case GxEPD2_SOLUM_Differential::PageAction::WriteFull:
       _writeImage(0x24, black, 0, y, WIDTH, h, false, false, false);
-      _cleanColorIfPrevious();
-      _writeImage(0x26, color, 0, y, WIDTH, h, true, false, false);
-      _color_dirty = true;
+      _writeAccent(color, 0, 0, WIDTH, h, 0, y, WIDTH, h, false, false, false);
       break;
     case GxEPD2_SOLUM_Differential::PageAction::WriteNew:
       if (_initial_write || !_init_display_done)
@@ -1507,10 +1420,12 @@ inline void GxEPD2_SOLUM_097c_960x672::_writeImageDifferential(const uint8_t* bl
   _show_image_page_hint++;
 }
 
-// Porta il controller in deep sleep. Protetto contro chiamate multiple:
-// se è già _hibernating la funzione non invia nuovamente la sequenza 0x10.
-// Il flag dirty viene azzerato perchè al prossimo wake _InitDisplay()
-// invocherà SWRESET che riporta la RAM del controller a uno stato noto.
+// Spegne l'analog e mette il controller in Sleep con le RAM conservate, se il
+// differenziale tiene un riferimento valido, altrimenti in deep sleep, che le
+// perde. Protetto contro chiamate multiple: se è già _hibernating la funzione
+// non invia nuovamente la sequenza 0x10. Dopo il deep sleep lo stato di 0x26 è
+// Clean e al risveglio _InitDisplay() riarma _initial_write: il SWRESET non
+// tocca la RAM, e a ripulirla è la prima scrittura.
 inline void GxEPD2_SOLUM_097c_960x672::hibernate()
 {
   if (_hibernating) return;
@@ -1551,10 +1466,17 @@ inline void GxEPD2_SOLUM_097c_960x672::hibernate()
     // Il deep sleep non ritiene la RAM del controller, quindi nè un accent
     // sporco nè un frame precedente del partial sopravvivono al risveglio, e
     // nemmeno il riferimento del differenziale.
-    _color_dirty = false;
-    _previous_in_color_ram = false;
+    _ram26 = Ram26::Clean;
     _diff.invalidate();
   }
+}
+
+// Come hibernate() ma col deep sleep forzato: il riferimento si butta prima, così
+// hibernate() non lo trova più valido e prende il ramo del deep sleep.
+inline void GxEPD2_SOLUM_097c_960x672::hibernateDeep()
+{
+  _diff.invalidate();
+  hibernate();
 }
 
 // Imposta l'area RAM parziale del controller SSD1677.
@@ -1587,7 +1509,7 @@ inline void GxEPD2_SOLUM_097c_960x672::_PowerOn()
     _writeCommand(0x22);
     _writeData(0xc0);
     _writeCommand(0x20);
-    _waitWhileBusy("_PowerOn", power_on_time);
+    _waitBusy("_PowerOn", power_on_time, false);
   }
   _power_is_on = true;
 }
@@ -1599,7 +1521,7 @@ inline void GxEPD2_SOLUM_097c_960x672::_PowerOff()
     _writeCommand(0x22);
     _writeData(0xc3);
     _writeCommand(0x20);
-    _waitWhileBusy("_PowerOff", power_off_time);
+    _waitBusy("_PowerOff", power_off_time, false);
   }
   _power_is_on = false;
 }
@@ -1618,11 +1540,10 @@ inline void GxEPD2_SOLUM_097c_960x672::_InitDisplay()
   //_waitWhileBusy("_InitDisplay", power_on_time);
   _writeCommand(0x12); //SWRESET
   /** Il SWRESET si attende sul BUSY, che il pannello alza e riabbassa in 2 ms
-   *  misurati: al posto dei 200 ms fissi che c'erano prima, in gran parte
-   *  attesa a vuoto. I 10 ms che seguono sono il margine dopo la discesa, ed
-   *  è la stessa forma che usa il driver GDEM133T91 di GxEPD2 sullo stesso
-   *  silicio. Il timeout passato qui vale solo se il BUSY non è cablato. */
-  _waitWhileBusy("_InitDisplay SWRESET", 200);
+   *  misurati. I 10 ms che seguono sono il margine dopo la discesa, ed è la
+   *  stessa forma che usa il driver GDEM133T91 di GxEPD2 sullo stesso silicio.
+   *  Il timeout passato qui vale solo se il BUSY non è cablato. */
+  _waitBusy("_InitDisplay SWRESET", 200, false);
   delay(10);
   /** Soft start. L'ultimo byte è 0x80 e non 0x40 come in GxEPD2 GDEH116T91:
    *  0x80 è il valore dell'init di fabbrica SOLUM ed è anche quello che Good
@@ -1727,6 +1648,10 @@ inline void GxEPD2_SOLUM_097c_960x672::_InitDisplay()
 // La finestra piena resta dichiarata qui perchè normalizza area e cursore per
 // le scritture che seguono — all'ingresso è quella lasciata dall'ultima page
 // del loop paged — e costa 250 us su 24 s.
+//
+// La durata dell'attesa finisce in lastUpdateMs(), e una sotto
+// MIN_PLAUSIBLE_FULL_REFRESH_MS alza TooShort: il BUSY non è salito, quindi il
+// controller non ha eseguito la waveform.
 inline void GxEPD2_SOLUM_097c_960x672::_Update_Full()
 {
   // Il vetro sta per cambiare: il frame che si credeva mostrato non lo è più.
@@ -1735,59 +1660,38 @@ inline void GxEPD2_SOLUM_097c_960x672::_Update_Full()
   // Se in 0x26 c'è un frame precedente del partial, questo refresh lo
   // rileggerebbe come accent e dipingerebbe di rosso tutto quello che sul vetro
   // è bianco. Costa 9 ms e solo in quel caso.
-  _cleanColorIfPrevious();
+  _cleanRam26(true);
   // Rimette il border sulla waveform di produzione a ogni refresh pieno, non
-  // solo dopo una passata di partial: setPartialLut() abbassa
-  // _using_partial_mode con il border ancora in HiZ. La LUT dell'OTP, e con
-  // essa le tensioni che _Init_Part() ha scritto con 0x04, le ricarica il
-  // bit 4 di 0xF7. Costa due transazioni SPI su 24 s.
+  // solo dopo una passata di partial: un cambio di LUT del partial (il
+  // setPartialLut() della sottoclasse opt-in) abbassa _using_partial_mode con il
+  // border ancora in HiZ. La LUT dell'OTP, e con essa le tensioni che
+  // _Init_Part() ha scritto con 0x04, le ricarica il bit 4 di 0xF7. Costa due
+  // transazioni SPI su 24 s.
   _writeCommand(0x3C);
   _writeData(0x01); // LUT1, for white
   _using_partial_mode = false;
   _setPartialRamArea(0, 0, WIDTH, HEIGHT);
+  // Con un guasto del BUSY già alzato, anche dalla pulizia qui sopra, il
+  // controller non risponde e 0x20 non si manda.
+  if (_busyFault != GxEPD2_SOLUM_BusyFault::None)
+  {
+    _lastUpdateMs = 0;
+    _show_image_page_hint = 0;
+    return;
+  }
   _writeCommand(0x22); // Display Update Sequence Options
   _writeData(0xF7);    //
   _writeCommand(0x20); // Master Activation
-  _waitWhileBusy("_Update_Full", full_refresh_time);
+  const uint32_t startMs = millis();
+  _waitBusy("_Update_Full", full_refresh_time, true);
+  _lastUpdateMs = millis() - startMs;
+  _checkUpdateDuration(MIN_PLAUSIBLE_FULL_REFRESH_MS);
   _power_is_on = false;
   _show_image_page_hint = 0;   // simmetrico al ciclo di rendering
 }
 
 // ---------------------------------------------------------------------------
-// API siblings single-channel: scrivono un solo piano del controller con la
-// stessa shape. Non chiamano refresh. Convenzione bitmap identica a
-// writeImage(black, color): bit=1 = pixel NON in quel canale; il driver
-// applica ~data (invert=true) sull'accent in modo che la polarity nativa
-// SSD1677 (bit=1 = accent ON) combaci.
-// ---------------------------------------------------------------------------
-inline void GxEPD2_SOLUM_097c_960x672::writeImageBlack(const uint8_t* bitmap,
-    int16_t x, int16_t y, int16_t w, int16_t h, bool pgm)
-{
-  if (!bitmap) return;
-  // Dopo un init o un hibernate _writeImage() riempirebbe 0x26 di 0x00, cioè
-  // frame precedente tutto nero, e la prossima passata di partial pilotrebbe
-  // tutto lo schermo: la guardia porta prima le due RAM al bianco.
-  _ensurePartialRamDefined();
-  _writeImage(0x24, bitmap, x, y, w, h, false, false, pgm);
-  // canale black non ha dirty flag: viene sempre riscritto a ogni frame.
-}
-
-/** Scrive il piano accent. Non maschera 0x24 sotto i pixel accesi, e non
- *  serve: la Table 6-4 dà LUT2 = LUT3 e la misura sul pannello lo conferma,
- *  cioè con l'accent a 1 il valore del piano BW non cambia il colore reso.
- *  Ripulisce prima 0x26 se ci trova un frame precedente del partial: è una
- *  scrittura d'area, e quello che resta fuori verrebbe riletto come rosso. */
-inline void GxEPD2_SOLUM_097c_960x672::writeImageRed(const uint8_t* bitmap,
-    int16_t x, int16_t y, int16_t w, int16_t h, bool pgm)
-{
-  if (!bitmap) return;
-  _cleanColorIfPrevious();
-  _writeImage(0x26, bitmap, x, y, w, h, true, false, pgm);
-  _color_dirty = true;
-}
-
-// ---------------------------------------------------------------------------
-// Pulizia del piano accent.
+// Pulizia del piano accent e scrittura dell'accent.
 //
 // SSD1677 RAM polarity (datasheet Rev 1.0, tabella comandi, verbatim):
 //   cmd 0x24 Write RAM (Black White): bit=1 -> pixel white, bit=0 -> black
@@ -1796,38 +1700,25 @@ inline void GxEPD2_SOLUM_097c_960x672::writeImageRed(const uint8_t* bitmap,
 // Le bitmap in input alle API writeImage* adottano convenzione inversa
 // (bit=1 = NOT color) per comodità visiva e compatibilità con il formato
 // dello script python / image2cpp; il driver applica ~data prima del
-// transfer SPI sull'accent. Il cleanup scrive invece DIRETTAMENTE 0x00 =
-// polarity nativa "accent spento", senza invert. Era 0xFF in versioni
-// precedenti -> equivaleva a "accent ON ovunque", bug latente mascherato dal
-// fatto che il deep sleep perde la RAM del controller.
+// transfer SPI sull'accent. La pulizia scrive invece DIRETTAMENTE 0x00 =
+// polarity nativa "accent spento", senza invert: 0xFF vorrebbe dire accent
+// acceso ovunque.
 // ---------------------------------------------------------------------------
-inline void GxEPD2_SOLUM_097c_960x672::_cleanColorIfDirty()
-{
-  if (_color_dirty)
-  {
-    _writeScreenBuffer(0x26, 0x00);
-    _color_dirty = false;
-    // La RAM è stata riscritta per intero, quindi non ci può più essere un
-    // frame precedente del partial.
-    _previous_in_color_ram = false;
-  }
-}
 
-// Gemella della precedente per il frame precedente del partial. La pulizia è
-// sempre corretta e non serve nessuna euristica: il flag lo alzano soltanto
-// writeScreenBufferPrevious() e writeImageToPrevious(), quindi se è alto in 0x26
-// c'è un frame precedente e non un accent, e un refresh pieno quel contenuto lo
-// rileggerebbe come rosso. Vedi il commento di _previous_in_color_ram.
-inline void GxEPD2_SOLUM_097c_960x672::_cleanColorIfPrevious()
+// Una sola pulizia per entrambe le forme. Con onlyIfPrevious pulisce solo se in
+// 0x26 c'è il frame precedente del partial, che un refresh pieno rileggerebbe
+// come rosso e che non può mai essere un accent legittimo; senza, pulisce ogni
+// volta che la RAM non è Clean. Con il controller in deep sleep la RAM è già
+// persa e non c'è niente da pulire: un frame precedente non c'è più, ma il suo
+// contenuto resta inaffidabile e lo stato diventa Accent.
+inline void GxEPD2_SOLUM_097c_960x672::_cleanRam26(bool onlyIfPrevious)
 {
-  if (!_previous_in_color_ram) return;
+  if (onlyIfPrevious ? _ram26 != Ram26::Previous : _ram26 == Ram26::Clean) return;
   if (!_init_display_done)
   {
     if (_hibernating)
     {
-      // Il deep sleep ha perduto la RAM: niente da pulire, solo lo stato da
-      // riallineare.
-      _previous_in_color_ram = false;
+      if (_ram26 == Ram26::Previous) _ram26 = Ram26::Accent;
       return;
     }
     // Display non inizializzato ma controller sveglio, per esempio dopo init()
@@ -1836,8 +1727,39 @@ inline void GxEPD2_SOLUM_097c_960x672::_cleanColorIfPrevious()
     _InitDisplay();
   }
   _writeScreenBuffer(0x26, 0x00);
-  _previous_in_color_ram = false;
-  _color_dirty = false;
+  _ram26 = Ram26::Clean;
+}
+
+// Scrittura dell'accent con la sua polarità nativa, comune a tutte le scritture
+// del piano rosso: prima la pulizia del frame precedente del partial, che altrimenti
+// un refresh pieno rileggerebbe come rosso, poi la scrittura con !invert e infine
+// lo stato Accent, anche quando il rettangolo, tagliato sullo schermo, è vuoto.
+inline void GxEPD2_SOLUM_097c_960x672::_writeAccent(const uint8_t* bitmap, int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
+    int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
+{
+  _cleanRam26(true);
+  _writeImagePart(0x26, bitmap, x_part, y_part, w_bitmap, h_bitmap, x, y, w, h, !invert, mirror_y, pgm);
+  _ram26 = Ram26::Accent;
+}
+
+// Attesa del BUSY con esito: vedi la dichiarazione. Il timeout è quello della
+// base e si imposta per la durata dell'attesa, poi torna al valore dei refresh.
+inline void GxEPD2_SOLUM_097c_960x672::_waitBusy(const char* comment, uint16_t busy_time, bool isUpdate)
+{
+  if (_busyFault != GxEPD2_SOLUM_BusyFault::None) return;
+  _busy_timeout = isUpdate ? BUSY_TIMEOUT_US : SHORT_BUSY_TIMEOUT_US;
+  _waitWhileBusy(comment, busy_time);
+  _busy_timeout = BUSY_TIMEOUT_US;
+  if (_busyStillActive()) _busyFault = GxEPD2_SOLUM_BusyFault::Timeout;
+}
+
+// Un refresh che dura meno del minimo plausibile non ha eseguito la waveform: il
+// controller non ha risposto a 0x20 e il BUSY non è mai salito. Un Timeout già
+// alzato non si sovrascrive.
+inline void GxEPD2_SOLUM_097c_960x672::_checkUpdateDuration(uint32_t minPlausibleMs)
+{
+  if (_busyFault == GxEPD2_SOLUM_BusyFault::None && _lastUpdateMs < minPlausibleMs)
+    _busyFault = GxEPD2_SOLUM_BusyFault::TooShort;
 }
 
 /** Prepara il controller al partial, e sono tre cose:
@@ -1894,20 +1816,6 @@ inline void GxEPD2_SOLUM_097c_960x672::_Init_Part(bool swapped)
   _lutSwappedLoaded = swapped;
 }
 
-// Sostituisce la waveform del partial. Vedi la dichiarazione per il contratto.
-inline void GxEPD2_SOLUM_097c_960x672::setPartialLut(const uint8_t* lut)
-{
-  _lut_partial = lut ? lut : GxEPD2_SOLUM_097c_lut_partial;
-  // La waveform nel controller è quella vecchia: la prossima passata deve
-  // ripassare da _Init_Part().
-  _using_partial_mode = false;
-  // E il booster va fatto riscendere, altrimenti le tensioni della nuova
-  // waveform vengono scritte ad analog già acceso e _PowerOn() salta: la
-  // passata girerebbe con quelle di prima. Costa 250 ms, e solo a chi cambia
-  // waveform a sessione aperta.
-  if (_power_is_on) _PowerOff();
-}
-
 /** Passata di partial, 639 ms di BUSY misurati. Riproduce la sequenza che la
  *  sonda ha cronometrato, nell'ordine:
  *    0x22 = 0xC0 + 0x20   power on esplicito. Le sequenze senza i bit 1 e 0 non
@@ -1920,148 +1828,31 @@ inline void GxEPD2_SOLUM_097c_960x672::setPartialLut(const uint8_t* lut)
  *                         sopravvive fino al refresh.
  *  0xCC non ha i bit 1 e 0, quindi clock e analog restano accesi all'uscita e
  *  _power_is_on resta alto: al contrario di _Update_Full(), qui il pannello va
- *  spento da chi chiama, con powerOff() o hibernate(). */
+ *  spento da chi chiama, con powerOff() o hibernate().
+ *  La durata dell'attesa finisce in lastUpdateMs(), e una sotto
+ *  MIN_PLAUSIBLE_PARTIAL_REFRESH_MS alza TooShort. */
 inline void GxEPD2_SOLUM_097c_960x672::_Update_Part(bool swapped)
 {
   _frame.invalidateShown();   // come _Update_Full(): il vetro sta per cambiare
   if (!_using_partial_mode || _lutSwappedLoaded != swapped) _Init_Part(swapped);
   _PowerOn();
   _setPartialRamArea(0, 0, WIDTH, HEIGHT);
+  // Con un guasto del BUSY già alzato, anche dal power on qui sopra, il
+  // controller non risponde e 0x20 non si manda.
+  if (_busyFault != GxEPD2_SOLUM_BusyFault::None)
+  {
+    _lastUpdateMs = 0;
+    _show_image_page_hint = 0;
+    return;
+  }
   _writeCommand(0x22); // Display Update Sequence Options
   _writeData(0xCC);    // Mode 2, senza ricarica di LUT e temperatura
   _writeCommand(0x20); // Master Activation
-  _waitWhileBusy("_Update_Part", partial_refresh_time);
+  const uint32_t startMs = millis();
+  _waitBusy("_Update_Part", partial_refresh_time, true);
+  _lastUpdateMs = millis() - startMs;
+  _checkUpdateDuration(MIN_PLAUSIBLE_PARTIAL_REFRESH_MS);
   _show_image_page_hint = 0;   // simmetrico al ciclo di rendering
-}
-
-// Scrive il frame precedente in 0x26. Nessun invert, al contrario di
-// writeImageRed(): sotto la LUT del partial quella RAM non è l'accent ma il
-// piano BW del frame che sta sul vetro, quindi vale la stessa convenzione di
-// writeImageBlack() (bit=1 = bianco).
-inline void GxEPD2_SOLUM_097c_960x672::writeScreenBufferPrevious(uint8_t value)
-{
-  // Non basta l'init: dopo un hibernate _InitDisplay() riarma _initial_write e
-  // questo metodo, che non passa da _writeImage(), non lo consumerebbe mai. La
-  // prima scrittura successiva farebbe allora scattare writeScreenBuffer(),
-  // che azzera 0x26 a 0x00 cioè frame precedente tutto NERO, cancellando
-  // proprio l'allineamento appena fatto.
-  _ensurePartialRamDefined();
-  _writeScreenBuffer(0x26, value);
-  // Vale come per writeImageToPrevious(): in 0x26 non c'è più un accent pulito,
-  // ma un frame precedente. Il secondo flag è quello che fa ripulire quella RAM
-  // a un refresh pieno o all'inizio di un loop paged.
-  _markPreviousInColorRam();
-}
-
-inline void GxEPD2_SOLUM_097c_960x672::writeImageToPrevious(const uint8_t bitmap[],
-    int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
-{
-  if (!bitmap) return;
-  // Stessa guardia di writeImageBlack(): può essere la prima scrittura dopo un
-  // init o un hibernate.
-  _ensurePartialRamDefined();
-  _writeImage(0x26, bitmap, x, y, w, h, invert, mirror_y, pgm);
-  // In 0x26 non c'è più un accent pulito: il prossimo disegno a colori deve
-  // ripulirla prima di usarla come piano rosso.
-  _markPreviousInColorRam();
-}
-
-// La guardia definisce la RAM, non solo il display: il solo init, dopo un
-// hibernate, riarmerebbe _initial_write senza consumarlo e la passata girerebbe
-// contro due piani indefiniti. Così invece i piani partono bianco e bianco,
-// ogni pixel cade su LUT3 che è a zero, e una chiamata fuori posto diventa un
-// no-op invece di pilotare tutto lo schermo. In una catena normale il flag è
-// già basso e l'helper esce subito.
-// Il no-op però NON è gratis, ed è misurato: la passata parte davvero e costa
-// 787 ms fra i 639 di BUSY, il power on e il power off. La guardia rende
-// innocua una chiamata fuori posto, non la intercetta.
-inline void GxEPD2_SOLUM_097c_960x672::refreshPartial()
-{
-  _ensurePartialRamDefined();
-  // Questa API presuppone 0x26 = frame precedente e cambia il vetro fuori dal
-  // differenziale, che quindi perde il suo riferimento.
-  _diff.invalidate();
-  _Update_Part(false);
-}
-
-// Le coordinate sono dichiarative: vedi il commento della dichiarazione.
-inline void GxEPD2_SOLUM_097c_960x672::refreshPartial(int16_t /*x*/, int16_t /*y*/,
-                                                      int16_t /*w*/, int16_t /*h*/)
-{
-  refreshPartial();
-}
-
-// Stato definito prima della prima passata di partial: vedi il commento della
-// dichiarazione per il perchè i due piani si scrivono separatamente.
-// Il frame nuovo va scritto perchè la RAM vergine è indefinita, e 0x24 = bianco
-// codifica la premessa di questa strada: il vetro è bianco, cioè lo stato in
-// cui lo lascia una clearScreen(). Un vetro non bianco richiede al chiamante di
-// scrivere 0x24 per intero, cosa che azzera già _initial_write e fa saltare
-// questa guardia.
-inline void GxEPD2_SOLUM_097c_960x672::_ensurePartialRamDefined()
-{
-  // L'init va PRIMA del controllo del flag, e l'ordine non è indifferente: è
-  // _InitDisplay() a riarmare _initial_write quando si arriva da un hibernate,
-  // perchè il deep sleep lascia la RAM indefinita. Controllando il flag prima,
-  // una catena aperta subito dopo un risveglio troverebbe la guardia già
-  // passata e girerebbe contro due piani di contenuto casuale.
-  if (!_init_display_done) _InitDisplay();
-  if (!_initial_write) return;
-  /** Abbassato PRIMA delle scritture. Da qui si entra nelle primitive che
-   *  definiscono i due piani, e writeScreenBufferPrevious() passa a sua volta
-   *  di qui: col flag ancora alto la rientranza non terminerebbe. Le due
-   *  scritture sotto usano quindi le primitive PRIVATE, che non rientrano. */
-  _initial_write = false;
-  _writeScreenBuffer(0x24, 0xFF);                                // frame nuovo bianco
-  if (!_previous_in_color_ram)
-  {
-    _writeScreenBuffer(0x26, 0xFF);                              // precedente bianco
-    _markPreviousInColorRam();
-  }
-}
-
-// Il ciclo completo su una fascia B/N. La ricopia finale in 0x26 costa il push
-// SPI dell'area (18 ms su una fascia di 168 righe, 73 a schermo pieno) e serve
-// a lasciare il frame precedente allineato al vetro: senza, il partial
-// successivo confronterebbe il nuovo frame con quello di due passate fa e
-// ripilotarebbe pixel che non sono cambiati.
-//
-// Il ping-pong hardware delle due RAM (0x37, bit F[6]) farebbe la ricopia nel
-// controller, ma non conviene: alterna i ruoli delle due RAM a ogni passata,
-// mentre questa LUT non è simmetrica (LUT1 diverso da LUT2), quindi
-// servirebbero due waveform alternate per risparmiare 18 ms.
-//
-// Non passa da writeImageBlack() e writeImageToPrevious() ma scrive i due piani
-// direttamente, perchè quelle due firme non hanno invert e cambiargliela
-// romperebbe i chiamanti che passano pgm per posizione.
-inline void GxEPD2_SOLUM_097c_960x672::drawImagePartial(const uint8_t* bitmap,
-    int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool pgm)
-{
-  if (!bitmap) return;
-  _ensurePartialRamDefined();
-  // Se il rettangolo non ha superficie sullo schermo non si lancia la passata:
-  // costerebbe 640 ms per niente e alzerebbe i flag di 0x26 a vuoto.
-  if (!_writeImage(0x24, bitmap, x, y, w, h, invert, false, pgm)) return;
-  refreshPartial();
-  _writeImage(0x26, bitmap, x, y, w, h, invert, false, pgm);   // ora è il precedente
-  _markPreviousInColorRam();
-}
-
-// Gemella della precedente su un rettangolo di una bitmap più grande. Stessa
-// sequenza e stessa invariante, con _writeImagePart al posto di _writeImage.
-inline void GxEPD2_SOLUM_097c_960x672::drawImagePartialPart(const uint8_t* bitmap,
-    int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
-    int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool pgm)
-{
-  if (!bitmap) return;
-  _ensurePartialRamDefined();
-  // Come nella gemella: niente passata per un rettangolo che nessuno dipinge.
-  if (!_writeImagePart(0x24, bitmap, x_part, y_part, w_bitmap, h_bitmap,
-                       x, y, w, h, invert, false, pgm)) return;
-  refreshPartial();
-  _writeImagePart(0x26, bitmap, x_part, y_part, w_bitmap, h_bitmap,
-                  x, y, w, h, invert, false, pgm);             // ora è il precedente
-  _markPreviousInColorRam();
 }
 
 #endif

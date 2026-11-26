@@ -24,7 +24,8 @@
  *   - cs2 / busy2: secondo controller. Li usa il 12.2"; sul 9.7" restano -1.
  *
  * I pin del bus SPI non stanno qui: nessun driver apre il bus, lo apre lo
- * sketch sui pin della propria board e lo passa con selectSPI() prima di init().
+ * sketch sui pin della propria board con GxEPD2_SOLUM::beginBus() e lo passa
+ * con l'overload di init() che riceve bus e impostazioni.
  *
  * L'inizializzazione per lista rispetta l'ordine di dichiarazione dei campi:
  *

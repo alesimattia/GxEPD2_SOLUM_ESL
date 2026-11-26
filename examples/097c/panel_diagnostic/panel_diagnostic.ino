@@ -18,7 +18,9 @@
 // riproducono le SEQUENZE, comando per comando, e Controller.h dice quale
 // metodo ciascuna primitiva rispecchia. L'unica cosa che arriva dalla libreria
 // è la costante della waveform del partial, perchè la taratura deve
-// confrontare i byte che andrebbero in produzione.
+// confrontare i byte che andrebbero in produzione. PartialProbeDriver.h, con le
+// API opt-in del partial del driver, si include per tenerlo compilato e non si
+// istanzia.
 //
 // UNA SOLA COMPILAZIONE. Nessun #define cambia il comportamento: sonde,
 // profondità, verbosità, parametri di misura, sequenza di init e waveform si
@@ -55,6 +57,7 @@
 #include "Report.h"
 #include "Graphics.h"
 #include "Controller.h"
+#include "PartialProbeDriver.h"
 #include "ProbesBase.h"
 #include "ProbesUpstream.h"
 #include "ProbesWaveform.h"
@@ -161,7 +164,7 @@ static void printDriverSheet()
   if (chain) { snprintf(v, sizeof(v), "%ld ms con 0x04", (long)chain->ms);
                drvLine("_Update_Part 0xCC", v, chain); }
   const Measurement* clean = findMeasurement("USCITA SENZA PULIRE");
-  if (clean) drvLine("_cleanColorIfPrevious", clean->seen == 'o' ? "serve: senza esce rosso"
+  if (clean) drvLine("_cleanRam26(true)", clean->seen == 'o' ? "serve: senza esce rosso"
                                                                  : "da rivedere", clean);
   const Measurement* fast = findMeasurement("WAVEFORM 370 AREA A NERO");
   if (fast && fast->ms > 0)

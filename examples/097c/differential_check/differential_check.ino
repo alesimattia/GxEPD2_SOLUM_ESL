@@ -199,9 +199,8 @@ void setup()
 {
   Serial.begin(115200);
   delay(500);
-  hspi.begin(13, 12, 14, 15);                                  // SCK, MISO, MOSI, SS
-  display.epd2.selectSPI(hspi, SPISettings(10000000, MSBFIRST, SPI_MODE0));
-  display.init(115200, true, 2, false);
+  display.init(115200, true, 2, false, hspi,
+               GxEPD2_SOLUM::beginBus(hspi, 13, 12, 14, 15, 10000000));  // SCK, MISO, MOSI, SS, Hz
   display.setRotation(0);                                      // 960w x 672h landscape
   display.setFullWindow();
   display.epd2.setDifferentialRefresh(true);

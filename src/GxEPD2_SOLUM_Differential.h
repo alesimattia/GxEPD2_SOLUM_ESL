@@ -102,7 +102,9 @@ class GxEPD2_SOLUM_Differential
      * Le pagine devono arrivare contigue dall'alto: una pagina fuori ordine
      * non è un loop paged e il riferimento non è più affidabile. In armato
      * confronta con il riferimento e continua a confrontare anche dopo il
-     * primo rifiuto, così la mask dice dove il rosso è cambiato.
+     * primo rifiuto, così la mask dice dove il rosso è cambiato. Un chiamante
+     * che esce dal loop alla prima pagina rifiutata ottiene però una mask solo
+     * fino a quella pagina, perchè le pagine successive non arrivano mai qui.
      */
     PageAction onPage(uint32_t crc, int16_t y, int16_t h)
     {

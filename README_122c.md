@@ -1,4 +1,4 @@
-# GxEPD2_SOLUM_122c_960x768 — driver custom
+# GxEPD2_SOLUM_122c_960x768: driver custom
 
 > **Stato: una banda validata, le due bande insieme no.** Il command set del
 > driver è della famiglia **SSD16xx**, con un die che non coincide con nessun
@@ -49,7 +49,7 @@ da 960×384 ciascuno) su **ESP32**. Estende
   con il driver 9.7", di cui qui sono utili i formati BW e BWR;
 - **dispatch dual-controller master/slave** trasparente al chiamante: le due
   metà del pannello sono bande da 960×384 sull'asse corto e il codice le
-  spartisce per righe, traslando lo slave di `y - M.HEIGHT` — vedi
+  spartisce per righe, traslando lo slave di `y - M.HEIGHT`, vedi
   [§3](#3-architettura-dual-controller-masterslave).
 
 Il driver 9.7" della stessa libreria è documentato in [README.md](README.md).
@@ -79,16 +79,16 @@ GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS, SOLUM_MAX_HEIGHT(GxEPD2_SOLUM_DRIVER_CLASS)
 
 void setup()
 {
-  // Il bus lo apre lo sketch sui pin della propria board, prima di init().
-  hspi.begin(13, 12, 14, 15);                                  // SCK, MISO, MOSI, SS
-  display.epd2.selectSPI(hspi, SPISettings(10000000, MSBFIRST, SPI_MODE0));
-  display.init(115200, true, 10, false);
+  // beginBus() apre il bus sui pin della board e restituisce le SPISettings;
+  // l'overload nativo di init() le passa al driver con selectSPI() prima di init().
+  display.init(115200, true, 10, false, hspi,
+               GxEPD2_SOLUM::beginBus(hspi, 13, 12, 14, 15, 10000000));  // SCK, MISO, MOSI, SS, Hz
 }
 ```
 
 Sketch di esempio nella libreria:
 
-- `examples/12_2c/dual_panel_finder` — **unico example del 12.2", in due fasi
+- `examples/12_2c/dual_panel_finder`: **unico example del 12.2", in due fasi
   separabili**. La *fase probe* è una sonda a SPI diretta su una coda alla
   volta, che non usa nè questo driver nè GxEPD2: confronta tre candidate di
   init, misura le gate line reali col righello numerato, stabilisce il verso
@@ -101,11 +101,11 @@ Sketch di esempio nella libreria:
   Due sonde chiudono le domande che il resto non poteva porre, e lo fanno
   caricando una waveform via `0x32`, cioè scritta dall'MCU invece che presa
   dall'OTP: il **partial** con `0x22 = 0xCC` / `0xC4`, che hanno il bit 4
-  *load LUT* spento e quindi non sovrascrivono la LUT custom — le passate
+  *load LUT* spento e quindi non sovrascrivono la LUT custom (le passate
   `0xFC` e `0xF4` della sonda d'area ce l'hanno attivo, quindi misurano sempre
-  la waveform dell'OTP e non possono dire niente su una breve; e il **quarto
+  la waveform dell'OTP e non possono dire niente su una breve); e il **quarto
   colore per livello di sorgente**, che pilota LUT2 a VSH1 e LUT3 a VSH2 per
-  distinguere un film a tre pigmenti da una waveform che ne pilota solo tre —
+  distinguere un film a tre pigmenti da una waveform che ne pilota solo tre,
   distinzione che il frame a bande non fa, perchè la Table 6-4 aliasa LUT3 su
   LUT2. Nessuna delle due tocca le tensioni: stanno ai byte 105..109 della LUT,
   e `0x32` scrive solo 0..104.
@@ -120,7 +120,7 @@ Sketch di esempio nella libreria:
 
 - [Installazione](#installazione)
 - [Origine](#origine)
-- [1. `GxEPDImage::showImage()` — unico entry-point pubblico](#1-gxepdimageshowimage--unico-entry-point-pubblico)
+- [1. `GxEPDImage::showImage()`: unico entry-point pubblico](#1-gxepdimageshowimage-unico-entry-point-pubblico)
 - [2. Due API siblings single-channel uniformi](#2-due-api-siblings-single-channel-uniformi)
 - [3. Architettura dual-controller master/slave](#3-architettura-dual-controller-masterslave)
 - [4. Sistema di descrittori universali (`namespace GxEPDImage`)](#4-sistema-di-descrittori-universali-namespace-gxepdimage)
@@ -178,7 +178,7 @@ stesso silicio:
 > questo documento chiamava "sequenza UC8179" (`0x00` PSR, `0x06` BTST, `0x50`
 > CDI, `0x60` TCON, `0x61` TRES `= 480 × 768`, `0xE0`) è in realtà una sequenza
 > in stile **SSD2677**, il chip Solomon a 4 colori da 960 × 680 con command set
-> UC — archiviato in `docs/`. Non è il nostro: il pannello risponde a SSD16xx.
+> UC, archiviato in `docs/`. Non è il nostro: il pannello risponde a SSD16xx.
 
 | Cosa | Comando |
 |---|---|
@@ -202,14 +202,14 @@ introduce le ottimizzazioni descritte nelle sezioni successive.
 > Nota sulla scelta della base, con quello che si sa oggi: per un pannello a due
 > controller **SSD16xx in cascade** il modello upstream più vicino non è il
 > 1248c (UC8179, quattro CS separati) ma
-> [`GxEPD2_579c_GDEY0579Z93`](https://github.com/ZinggJM/GxEPD2/blob/1.6.9/src/gdey3c/GxEPD2_579c_GDEY0579Z93.cpp)
-> — Good Display 5.79" 792×272, due controller SSD1683 su **un solo CS**, con lo
+> [`GxEPD2_579c_GDEY0579Z93`](https://github.com/ZinggJM/GxEPD2/blob/1.6.9/src/gdey3c/GxEPD2_579c_GDEY0579Z93.cpp),
+> Good Display 5.79" 792×272, due controller SSD1683 su **un solo CS**, con lo
 > slave indirizzato da `opcode | 0x80` e il mirror di una metà fatto con l'entry
 > mode. Se il bring-up conferma la cascade è da lì che va ripreso il dispatch.
 
 ---
 
-## 1. `GxEPDImage::showImage()` — unico entry-point pubblico
+## 1. `GxEPDImage::showImage()`: unico entry-point pubblico
 
 Free function template nel namespace `GxEPDImage` (vive nel driver `.h`):
 
@@ -223,7 +223,7 @@ void GxEPDImage::showImage(DisplayT& display,
 È **l'unica funzione pubblica per stampare un'immagine** sul pannello.
 Va chiamata **dentro** un loop `firstPage()`/`nextPage()` del template
 `GxEPD2_3C`, dopo `fillScreen()` e prima di `nextPage()`. Supporta i 2
-formati del descrittore disponibili (BW / BWR — niente BWRY).
+formati del descrittore disponibili (BW / BWR, niente BWRY).
 
 Pattern minimale one-shot:
 
@@ -264,7 +264,7 @@ del meccanismo (identico al 9.7").
 | 3 | **BWR raw inline** (2 piani separati) | `const unsigned char img_b[], img_r[] PROGMEM = { … };` | `GxEPDImage::showImage(display, GXEPD_BWR_IMAGE(img_b, img_r, w, h));` |
 | 4 | **Single-channel diretto** (no GFX) | `const unsigned char img_b[], img_r[] PROGMEM = { … };` | `display.epd2.writeImageBlack(img_b, x, y, w, h, true);` + `…Red(…)` + `display.epd2.refresh(false);` |
 
-Casi **1–3** vanno chiamati dentro un loop `firstPage()` / `nextPage()`
+Casi **1-3** vanno chiamati dentro un loop `firstPage()` / `nextPage()`
 con `fillScreen()` prima, e seguiti da `display.hibernate()` se si vuole
 spegnere il pannello.
 
@@ -320,7 +320,7 @@ Ogni `ScreenPart` gestisce le scritture verso un singolo controller:
   `setMasterMirror()` / `setSlaveMirror()`, per ribaltare la banda che scandisce
   dal proprio bordo verso il centro nel verso opposto all'altra. Il
   ribaltamento è nel data path (ordine di righe, byte e bit), non nei registri:
-  è una scelta di implementazione, non un obbligo — il contatore di indirizzo
+  è una scelta di implementazione, non un obbligo: il contatore di indirizzo
   saprebbe decrementare da sè con `0x11`, ed è così che GxEPD2 tratta le due
   metà del GDEY0579Z93.
 
@@ -440,9 +440,9 @@ Stato punto per punto, con il valore che il codice usa oggi:
 
 | Punto | Nel codice oggi | Stato | Cosa fare |
 |---|---|---|---|
-| Controller IC | sequenza SSD16xx presa dal 9.7" | **chiuso** | — |
-| Split master/slave | slave righe 0..383, master (coda lunga) righe 384..767, `y - S.HEIGHT` al master | **chiuso** | — |
-| Geometria per controller | `0x01` MUX da `PART_HEIGHT` = 384, finestre `0x44`/`0x45` in pixel | **chiuso** | — |
+| Controller IC | sequenza SSD16xx presa dal 9.7" | **chiuso** | niente |
+| Split master/slave | slave righe 0..383, master (coda lunga) righe 384..767, `y - S.HEIGHT` al master | **chiuso** | niente |
+| Geometria per controller | `0x01` MUX da `PART_HEIGHT` = 384, finestre `0x44`/`0x45` in pixel | **chiuso** | niente |
 | Come si indirizza il secondo controller | runtime: `ADDRESSING_DUAL_CS` (default) o `ADDRESSING_CASCADE` (un CS, slave a `opcode \| 0x80`, init a una passata nuda più `0x91 = 03` e `0x21 = 00 10`) | **aperto, ed è il punto critico** | Lo decide la fase 0 di [cable_linking.html](docs/122c/cable_linking.html); nel firmware si sceglie con `SECOND_CONTROLLER_CASCADE` in `Layout_122c.h` |
 | Perchè la seconda coda non risponde | n/a | **aperto** | Esclusa la piedinatura standard con controller indipendente; restano slave in cascade, piedinatura diversa o enable, chip guasto, vedi [docs/fonti_esterne.md §4](docs/fonti_esterne.md) |
 | Perchè i controller sono due, e divisi per righe | `PART_HEIGHT` = 384 | **chiuso, per conto** | L'SSD1677 ha 960 source e **680 gate**. Nativi: 9.7" = 672 gate, 11.6" = 640, 12.2" = **768**. Il 12.2" sfora il limite di un chip solo, quindi due controller sono obbligati e lo split **deve** stare sull'asse gate: su quello source un chip solo basterebbe. Non è più un'osservazione, è una derivazione |
@@ -472,7 +472,7 @@ ignorato, e lo stesso firmware compila contro i due senza rami condizionali.
 
 La scelta del pannello si fa a monte, con il define di selezione che
 [`src/GxEPD2_SOLUM.h`](src/GxEPD2_SOLUM.h) traduce in include e nome della
-classe — vedi [Selezione del driver](README.md#selezione-del-driver). Anche
+classe, vedi [Selezione del driver](README.md#selezione-del-driver). Anche
 l'arità del costruttore è uniforme: entrambi i driver accettano la struct
 `GxEPD2_SOLUM_Pins`, e questo legge `cs2` / `busy2` per il secondo controller,
 campi che sul 9.7" restano a -1. Uno sketch che cambia pannello non riscrive nè
@@ -489,8 +489,9 @@ default impostato dai costruttori è l'oggetto `SPI` globale a 10 MHz; un
 `_cs`, `_dc`, `_rst` e `_busy` di `GxEPD2_EPD`. `init()` configura CS e BUSY
 dello slave, chiama `GxEPD2_EPD::init()` per flag, diagnostica, pin del master
 e impulso di reset. Il bus non lo tocca: lo sketch lo apre sui pin della propria
-board e lo passa con `selectSPI()` prima di `init()`, e il `begin()` della base
-su un bus già aperto non ne cambia i pin. Il default di `reset_duration` è quello
+board con `GxEPD2_SOLUM::beginBus()` e lo passa con l'overload di `init()` che
+riceve bus e impostazioni e fa `selectSPI()` prima di `init()`, e il `begin()`
+della base su un bus già aperto non ne cambia i pin. Il default di `reset_duration` è quello
 della base, 10 ms.
 
 ---
@@ -501,15 +502,15 @@ La lista degli overload `drawImage*` / `writeImage*` / `writeImagePart*`
 ereditati dalla base class è documentata in
 [drawImage_overloads_it.md](drawImage_overloads_it.md)
 (o la versione inglese
-[drawImage_overloads.md](drawImage_overloads.md))
-— le firme sono identiche per i 2 driver, cambia solo l'implementazione
+[drawImage_overloads.md](drawImage_overloads.md)):
+le firme sono identiche per i 2 driver, cambia solo l'implementazione
 sottostante (single-controller nel 9.7", dual-controller qui).
 
 Sono override di virtual del base class `GxEPD2_EPD` necessari al
-contratto della libreria — non sono pensati per uso diretto: lo sketch
-chiama `showImage()` per immagini singole, oppure il template
-`GxEPD2_3C` invoca `writeImagePart(black, color)` durante il flusso
-paged.
+contratto della libreria e non sono pensati per uso diretto: lo sketch
+chiama `showImage()` per immagini singole, mentre nel flusso paged il
+template `GxEPD2_3C` invoca `writeImage(black, color, ...)` una volta per
+pagina.
 
 Differenze API rispetto al 9.7":
 
@@ -521,8 +522,8 @@ Differenze API rispetto al 9.7":
 | `writeScreenBuffer(value)` | ✓ | ✓ |
 | `writeScreenBuffer(black, color)` | ✓ | ✓ |
 | `writeScreenBuffer(black, color, yellow)` | **assente** | **assente** |
-| `writeImageBlack` | ✓ (cmd 0x24) | ✓ (cmd 0x24) |
-| `writeImageRed` | ✓ (cmd 0x26) | ✓ (cmd 0x26) |
+| `writeImageBlack` | solo nella sottoclasse `GxEPD2_SOLUM_097c_PartialProbe` dell'esempio `panel_diagnostic` (cmd 0x24) | ✓ (cmd 0x24) |
+| `writeImageRed` | solo nella sottoclasse `GxEPD2_SOLUM_097c_PartialProbe` dell'esempio `panel_diagnostic` (cmd 0x26) | ✓ (cmd 0x26) |
 | `writeImageYellow` | **assente** (0x28 è VCOM Sense, misurato) | dichiarata, corpo vuoto |
 | `preserveYellow` / `isYellowPreserved` | **assenti** | dichiarate, corpo vuoto |
 | `setPaged()` override | ✓ | ✓ |
@@ -554,7 +555,7 @@ pilotarlo da un solo ESP32 servono 9 pin GPIO totali:
 `MISO` non è obbligatorio per il driver ma alcuni layout lo richiedono
 per leggere temperatura / OTP del controller.
 
-### Setup A — Waveshare E-Paper ESP32 Driver Board
+### Setup A: Waveshare E-Paper ESP32 Driver Board
 
 Riferimento:
 [prodotto Waveshare](https://www.waveshare.com/e-paper-esp32-driver-board.htm) ·
@@ -570,8 +571,8 @@ secondo connettore FFC esterno cablato a mano.
 | MOSI (DIN) | 14 | FFC interno + jumper | FFC #1 + FFC #2 | 🟧 condiviso |
 | DC | 27 | FFC interno + jumper | FFC #1 + FFC #2 | 🟧 condiviso |
 | RST | 26 | FFC interno + jumper | FFC #1 + FFC #2 | 🟧 condiviso |
-| VCI / VDDIO | — | EPD_3.3V (piazzola di C5/C6/C20), non il 3V3 di J3-1 | FFC #2 | 🟧 condiviso |
-| GND | — | GND di J3-14 | FFC #2 | 🟧 condiviso |
+| VCI / VDDIO | nessuno | EPD_3.3V (piazzola di C5/C6/C20), non il 3V3 di J3-1 | FFC #2 | 🟧 condiviso |
+| GND | nessuno | GND di J3-14 | FFC #2 | 🟧 condiviso |
 | **CS_M** | 15 | FFC interno della board | FFC #1 | 🟦 master |
 | **BUSY_M** | 25 | FFC interno della board | FFC #1 | 🟦 master |
 | **CS_S** | 32 | Pin header J3-7 | FFC #2 esterno | 🟪 slave |
@@ -613,16 +614,17 @@ GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS,
         /*busy2*/ 22 })); // J4-3, pull-down interno
 
 // Il bus HSPI della board (SCK 13, MISO 12, MOSI 14) lo apre lo sketch in setup(),
-// come nella sezione Installazione: hspi.begin(13, 12, 14, 15) e selectSPI(hspi, ...).
+// come nella sezione Installazione: GxEPD2_SOLUM::beginBus(hspi, 13, 12, 14, 15)
+// passato all'overload di init() che riceve bus e impostazioni.
 ```
 
 > ⚠️ **Caveat board Waveshare.** Il connettore FFC interno è 24-pin
 > standard Waveshare; i FFC del Solum 12.2" sono 21-pin. Verifica con
-> multimetro la corrispondenza pin-a-pin prima di alimentare —
+> multimetro la corrispondenza pin-a-pin prima di alimentare:
 > tipicamente serve un adattatore 24→21 pin tra la board e il FFC del
 > Solum.
 
-### Setup B — ESP32 Dev Board generica + 2 FFC breakout 0.5 mm
+### Setup B: ESP32 Dev Board generica + 2 FFC breakout 0.5 mm
 
 Per chi parte da una **ESP32 Dev Board nuda** (es. ESP32-WROOM-32 DevKitC,
 NodeMCU-32S, ecc.) e **2 FFC breakout 0.5 mm a 21 pin** (reperibili su
@@ -638,7 +640,7 @@ accessibili sui pin header DIP.
 | MISO | 19 (opzionale) | jumper a entrambi i breakout | 🟧 condiviso |
 | DC | 27 | jumper a entrambi i breakout | 🟧 condiviso |
 | RST | 26 | jumper a entrambi i breakout | 🟧 condiviso |
-| 3V3 / GND | — | rail breadboard a entrambi i breakout | 🟧 condiviso |
+| 3V3 / GND | nessuno | rail breadboard a entrambi i breakout | 🟧 condiviso |
 | **CS_M** | 15 | jumper al breakout #1 | 🟦 master |
 | **BUSY_M** | 25 | jumper al breakout #1 | 🟦 master |
 | **CS_S** | 33 | jumper al breakout #2 | 🟪 slave |
@@ -663,7 +665,7 @@ GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS,
 
 ### Strategia di bring-up step-by-step
 
-1. **Step 1 — una sola coda cablata: fatto.** Con il costruttore single-CS
+1. **Step 1, una sola coda cablata: fatto.** Con il costruttore single-CS
    ```cpp
    // cs2 e busy2 a -1: le scritture verso la metà slave vengono saltate.
    display(GxEPD2_SOLUM_DRIVER_CLASS(GxEPD2_SOLUM_Pins{ 15, 27, 26, 25 }));
@@ -671,7 +673,7 @@ GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS,
    una banda **960×384** si stampa correttamente: il controller risponde,
    BUSY viene rilasciato, la geometria per controller è quella. Da qui vengono
    le conclusioni su famiglia del controller e split.
-2. **Step 2 — seconda coda: non stampa nulla.** Lo stesso cablaggio spostato
+2. **Step 2, seconda coda: non stampa nulla.** Lo stesso cablaggio spostato
    sull'altro FFC non produce alcun aggiornamento. Da escludere in quest'ordine:
    - **ordine dei pin ribaltato** sulla seconda coda: le due code escono da
      bordi opposti, se sono la stessa parte la seconda è ruotata di 180° e il
@@ -684,7 +686,7 @@ GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS,
 
    **Spiegazione che le comprende tutte, ed è la più probabile**: quella coda è
    lo **slave di una coppia in cascade**, e da sola non può funzionare per
-   costruzione — niente oscillatore, niente booster, clock e tensioni dal
+   costruzione: niente oscillatore, niente booster, clock e tensioni dal
    master. Lo dicono il datasheet SSD1683 §6.12 e il tag di fabbrica, che ha
    l'elettronica analogica attorno a un solo connettore e l'altro nudo.
 
@@ -734,7 +736,7 @@ Connettore 24 pin del breakout (configurazione consigliata):
 triangolino bianco/blu sul ribbon. Allineamento standard: il pin 1 del FFC
 va sul pin 1 del connettore. Quindi **lascia liberi i pin in eccesso
 sull'estremità opposta**. Se la marcatura non è visibile, il pin 1 del FFC
-è quasi sempre `VCC` o `GND` — si capisce con multimetro.
+è quasi sempre `VCC` o `GND`: si capisce con multimetro.
 
 #### Procedura di verifica multimetro (obbligatoria)
 

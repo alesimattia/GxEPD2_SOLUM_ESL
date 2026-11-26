@@ -2,42 +2,45 @@
 
 Riferimento completo dei metodi pubblici del driver custom
 [GxEPD2_SOLUM_097c_960x672.h](src/GxEPD2_SOLUM_097c_960x672.h) per il
-pannello SOLUM 9.7" (672w × 960h native portrait, controller SSD1677, 4 colori nativi).
+pannello SOLUM 9.7" (672w × 960h native portrait, controller SSD1677, 3 colori: bianco, nero e rosso).
 
 ## API custom (livello applicativo)
 
 ### `GxEPDImage::showImage()` — entry-point unico
 
-Free function template nel namespace `GxEPDImage` (vive nel driver `.h`,
-non come metodo classe). È **l'unica funzione pubblica per stampare
-un'immagine** sul pannello SOLUM, riusabile da qualsiasi sketch:
+Free function template nel namespace `GxEPDImage` (vive in
+[`src/GxEPDImage.h`](src/GxEPDImage.h), non come metodo classe). È
+**l'unica funzione pubblica per stampare un'immagine** sui pannelli SOLUM,
+riusabile da qualsiasi sketch:
 
 ```cpp
 template<typename DisplayT>
 void GxEPDImage::showImage(DisplayT& display,
                            const GxEPDImage::Descriptor& d,
-                           int16_t x = 0, int16_t y = 0);
+                           int16_t x = 0, int16_t y = 0,
+                           GxEPDImage::Paint paint = GxEPDImage::Paint::Opaque);
 ```
 
 Va chiamata **dentro** un loop `firstPage()`/`nextPage()` del template
 `GxEPD2_3C`, dopo `fillScreen()` e prima di `nextPage()`. Supporta tutti
-e 3 i formati (BW / BWR / BWRY) — gestisce internamente il yellow
-out-of-band (`writeImageYellow` + `preserveYellow(true)`).
+e 3 i formati (BW / BWR / BWRY) e rende i piani black e red: `data2` di un
+descrittore a tre piani non viene toccato.
+
+È un wrapper di `GxEPD2_3C::drawInvertedBitmap()`: il piano rosso si disegna per
+primo e il nero sopra, così dove entrambi sono accesi vince il nero. Le righe
+sopra la pagina corrente si saltano con il page-hint del driver.
+`Paint::Opaque` (default) fa precedere ai due piani un `fillRect()` bianco sulle
+stesse righe, `Paint::InkOnly` dipinge solo l'inchiostro nero e rosso. In
+nessuno dei due casi resta ghosting del frame precedente: `GxEPD2_3C` sbianca il
+buffer a ogni pagina e manda al controller i due piani interi, quindi un bianco
+non dipinto non lascia traccia, e `Opaque` serve solo a coprire ciò che la
+stessa pagina ha già disegnato sotto l'immagine. Al display servono
+`pageHeight()`, `getRotation()`, `height()`, `fillRect()` e
+`drawInvertedBitmap()`; al driver `setPaged()` e `showImagePageHint()`.
 
 **Responsabilità del chiamante:**
 - Aprire il loop paged (`firstPage()` + `do { ... } while (nextPage())`)
 - Chiamare `display.hibernate()` se vuole spegnere il pannello
-
-Il reset di `preserveYellow(false)` per il caso BWRY è **automatico**
-dentro `refresh()` del driver, chiamato dal template alla fine del loop.
-
-**Idempotency canale yellow.** Per i descrittori BWRY, `showImage`
-chiama `writeImageYellow` al massimo una volta per loop paged: le
-iterazioni 2..8 di `nextPage()` trovano `showImagePageHint()` avanzato e
-saltano la riscrittura: 7 riscritture da 80.640 byte evitate, ~450 ms
-risparmiati per refresh con SPI a 10 MHz.
-Un yellow custom scritto dal chiamante PRIMA di `firstPage()` sopravvive,
-perchè `writeImageYellow` tocca solo la finestra RAM che imposta.
 
 Esempio one-shot full-screen:
 
@@ -56,50 +59,99 @@ Per bitmap raw image2cpp B/N usare la macro inline:
 GxEPDImage::showImage(display, GXEPD_BW_IMAGE(my_array, 960, 672));
 ```
 
-### `writeImageBlack` / `writeImageRed` / `writeImageYellow` — siblings single-channel
+### `writeImageBlack` / `writeImageRed` e le API opt-in del partial: siblings single-channel
 
-Scrivono un singolo canale del controller, **senza refresh**. Usate
-internamente da `showImage()` ma anche disponibili come API pubblica per
-compositing manuale. Stessa shape per i 3 canali:
+Non stanno nel driver: sono nella sottoclasse `GxEPD2_SOLUM_097c_PartialProbe` di
+[`examples/097c/panel_diagnostic/PartialProbeDriver.h`](examples/097c/panel_diagnostic/PartialProbeDriver.h),
+con le firme qui sotto. Chi le vuole usare costruisce il display con quella
+classe al posto del driver, perchè `GxEPD2_3C` va istanziato con il tipo della
+sottoclasse:
 
 ```cpp
-void writeImageBlack (const uint8_t* bitmap, int16_t x, int16_t y,
-                      int16_t w, int16_t h, bool pgm = true);  // cmd 0x24
-void writeImageRed   (const uint8_t* bitmap, int16_t x, int16_t y,
-                      int16_t w, int16_t h, bool pgm = true);  // cmd 0x26
-void writeImageYellow(const uint8_t* bitmap, int16_t x, int16_t y,
-                      int16_t w, int16_t h, bool pgm = true);  // cmd 0x28
+GxEPD2_3C<GxEPD2_SOLUM_097c_PartialProbe, GxEPD2_SOLUM_097c_PartialProbe::HEIGHT / 8>
+    display(GxEPD2_SOLUM_097c_PartialProbe(GxEPD2_SOLUM_Pins{ 15, 27, 26, 25 }));
+```
+
+Il firmware non le chiama e usa solo il refresh differenziale dentro il loop
+paged. I punti aperti di queste API, e di due sequenze del driver da misurare sul
+vetro, sono in `ISSUES.md` del repo padre (ePaper-weather-dashboard), che include
+questa libreria come submodule.
+
+`writeImageBlack` e `writeImageRed` scrivono un singolo piano del controller,
+**senza refresh**, per il compositing manuale:
+
+```cpp
+void writeImageBlack(const uint8_t* bitmap, int16_t x, int16_t y,
+                     int16_t w, int16_t h, bool pgm = true);  // cmd 0x24
+void writeImageRed  (const uint8_t* bitmap, int16_t x, int16_t y,
+                     int16_t w, int16_t h, bool pgm = true);  // cmd 0x26
 ```
 
 Convenzione bitmap input: `bit=1` dove il pixel **NON** appartiene a quel
-canale (formato compatibile con script Python e image2cpp). Il driver
-applica `~data` prima del transfer SPI per gli accent (red/yellow), per
-allinearsi alla polarity nativa SSD1677 (`bit=1` in RAM = colorante ON).
+canale (formato compatibile con script Python e image2cpp). La sottoclasse
+applica `~data` prima del transfer SPI per l'accent, per allinearsi alla polarity
+nativa SSD1677 (`bit=1` in RAM = colorante ON).
 
-Nessuno chiama `refresh()`. Il chiamante è responsabile di farlo (o usare
-`showImage()` che lo include).
+Nessuna delle due chiama `refresh()`: il chiamante è responsabile di farlo.
 
-### `preserveYellow(bool)` / `isYellowPreserved()` — protezione canale 0x28 in flusso paged
+Il partial vero e proprio (640 ms, solo bianco e nero) ha le sue porte. Sotto la
+sua LUT `0x26` non è l'accent ma il frame precedente in polarità B/N, quindi un
+frame aggiornato in partial è senza rosso:
 
 ```cpp
-void preserveYellow(bool preserve);
-bool isYellowPreserved() const;
+void writeScreenBufferPrevious(uint8_t value = 0xFF);
+void writeImageToPrevious(const uint8_t bitmap[], int16_t x, int16_t y,
+                          int16_t w, int16_t h,
+                          bool invert = false, bool mirror_y = false, bool pgm = false);
+void refreshPartial();
+void refreshPartial(int16_t x, int16_t y, int16_t w, int16_t h);  // coordinate dichiarative
+void drawImagePartial(const uint8_t* bitmap, int16_t x, int16_t y,
+                      int16_t w, int16_t h, bool invert = false, bool pgm = true);
+void drawImagePartialPart(const uint8_t* bitmap,
+                          int16_t x_part, int16_t y_part, int16_t w_bitmap, int16_t h_bitmap,
+                          int16_t x, int16_t y, int16_t w, int16_t h,
+                          bool invert = false, bool pgm = true);
+void setPartialLut(const uint8_t* lut);  // 110 byte, layout del waveform setting
 ```
 
-Quando `preserveYellow(true)`, il metodo `writeImagePart(black, color, ...)`
-chiamato dal template `GxEPD2_3C` durante `nextPage()` **non** azzera
-il canale 0x28. Permette di iniettare il giallo manualmente prima del
-loop paged e mantenerlo fino al refresh finale.
+`x` e `w` di `drawImagePartial*()` vanno multipli di 8. La ricetta per scrivere
+testo e forme con una `GFXcanvas1` e `drawImagePartial(..., invert = true,
+pgm = false)` è nel [README §3.1](README.md#31-il-partial-in-bianco-e-nero-640-ms-e-come-ci-si-scrive-dentro).
 
-Il flag viene **resettato automaticamente** dentro `refresh()` del
-driver al termine del loop paged: il chiamante non deve fare
-`preserveYellow(false)` manualmente.
+### `hibernateDeep()`
 
-Il getter `isYellowPreserved()` dice se un yellow out-of-band è già
-protetto per il loop paged corrente. L'idempotency di `showImage` sul
-canale 0x28 usa invece `showImagePageHint()`.
+```cpp
+void hibernateDeep();
+```
 
-Dettagli in [README §3 "Perchè il yellow è out-of-band"](README.md#3-perchè-il-yellow-è-out-of-band-nel-flusso-paged).
+Come `hibernate()`, ma forza il deep sleep anche quando `hibernate()` lo evita per
+tenere il riferimento del differenziale. Butta il riferimento e perde le RAM del
+controller, quindi il frame dopo è un refresh pieno. Serve a chi sa che il
+pannello resterà fermo a lungo, e come `hibernate()` il deep sleep c'è solo con
+RST cablato.
+
+### Guasti del BUSY: `busyFault()` e `lastUpdateMs()`
+
+```cpp
+GxEPD2_SOLUM_BusyFault busyFault() const;   // None, TooShort, Timeout
+uint32_t lastUpdateMs() const;
+```
+
+Ogni attesa del BUSY del driver ne controlla l'esito. `Timeout` vuol dire BUSY
+ancora alto allo scadere dell'attesa: `BUSY_TIMEOUT_US` (120 s) per i refresh,
+`SHORT_BUSY_TIMEOUT_US` (5 s) per le attese brevi (power on e off, SWRESET,
+pattern hardware). `TooShort` vuol dire che un refresh è finito prima della
+durata minima plausibile, `MIN_PLAUSIBLE_FULL_REFRESH_MS` (5000 ms) o
+`MIN_PLAUSIBLE_PARTIAL_REFRESH_MS` (300 ms), quindi il controller non ha
+eseguito la waveform.
+
+Un guasto alza un latch che salta le attese seguenti e il comando `0x20`, e
+`refresh(false)` non convalida nè il frame mostrato nè il riferimento del
+differenziale. Il latch si azzera in `setPaged()` e all'inizio delle API
+pubbliche che scrivono e rinfrescano fuori dal loop paged (`clearScreen()`,
+`drawImage*()`, `drawNative()`, `refresh(x, y, w, h)`). `lastUpdateMs()` è la
+durata in ms dell'ultimo refresh, dall'invio di `0x20` al BUSY basso, e 0 se non
+è partito. Il driver non scrive mai su `Serial`.
 
 ---
 
@@ -136,9 +188,11 @@ void writeImagePart(const uint8_t* black, const uint8_t* color,
                     bool invert = false, bool mirror_y = false, bool pgm = false);
 ```
 
-`writeImagePart(black, color, ...)` è il **HOT PATH** invocato 8 volte
+`writeImage(black, color, ...)` è il **HOT PATH** invocato 8 volte
 per refresh dal template `GxEPD2_3C` durante `nextPage()` (8 = numero
 di pagine, dato dal template `GxEPD2_3C<Driver, HEIGHT/8>`).
+`writeImagePart(black, color, ...)` è la scrittura d'area che chiama
+`GxEPD2_3C::displayWindow()`, una volta.
 
 ### Native (sprite raw del controller)
 
@@ -170,28 +224,38 @@ void powerOff();
 void hibernate();
 ```
 
-`refresh()` esegue sempre un full-window refresh (~24 s), in entrambi gli
-overload: è la porta da cui il template arriva con un frame **a colori**, e un
-partial in bianco e nero gli farebbe perdere il rosso. Un fast partial il
-pannello ce l'ha, 640 ms, ma vive nelle API opt-in del driver
-(`drawImagePartial()` e sorelle), non qui. `hibernate()` mette il controller in
-deep sleep e va invocato per ridurre i consumi tra refresh distanti
-(viene chiamato automaticamente da `showImage()` se `hibernateAfter=true`).
+`refresh(bool)` è il punto in cui un frame del loop paged diventa partial,
+refresh pieno o niente. Di default esegue un full-window refresh (~24 s), ed è
+ciò che serve al template con un frame **a colori**: un partial in bianco e nero
+gli farebbe perdere il rosso. Con il refresh differenziale attivo
+(`setDifferentialRefresh(true)`) un frame armato, il cui piano rosso è invariato,
+lancia invece il partial in bianco e nero (~0,64 s); con `setSkipUnchanged(true)`
+un frame identico a quello sul vetro non lancia niente e `frameSkipped()` vale
+`true`. `refresh(x, y, w, h)` ignora le coordinate e fa sempre un full-window
+refresh fuori dal loop paged. Le API opt-in del partial (`drawImagePartial()` e
+sorelle) stanno nella sottoclasse `GxEPD2_SOLUM_097c_PartialProbe`, non nel
+driver.
+
+`hibernate()` spegne l'analogico e mette il controller in deep sleep (solo con
+RST cablato, `rst >= 0`) oppure, quando il refresh differenziale tiene un
+riferimento valido, in Sleep con le RAM conservate. Va invocato per ridurre i
+consumi tra refresh distanti; `hibernateDeep()` è la variante che prende sempre
+il deep sleep.
 
 ### Buffer init
 
 ```cpp
 void clearScreen(uint8_t value = 0xFF);                                     // tutto bianco
 void clearScreen(uint8_t black_value, uint8_t color_value);                 // BWR
-void clearScreen(uint8_t black_value, uint8_t color_value, uint8_t yellow_value); // BWRY
 void writeScreenBuffer(uint8_t value = 0xFF);
 void writeScreenBuffer(uint8_t black_value, uint8_t color_value);
-void writeScreenBuffer(uint8_t black_value, uint8_t color_value, uint8_t yellow_value);
 ```
 
-`writeScreenBuffer` scrive direttamente sui 3 canali RAM del controller
-con i valori indicati (polarity nativa SSD1677: `0x00` = accent spento,
-`0xFF` = accent ON ovunque).
+`writeScreenBuffer` scrive direttamente sui 2 piani RAM del controller con i
+valori indicati (polarity nativa SSD1677: `0x00` = accent spento, `0xFF` =
+accent ON ovunque). Con `color_value != 0x00` il piano accent resta sporco,
+così un disegno a canale singolo successivo lo ripulisce invece di dipingere
+tutto di rosso.
 
 ---
 
@@ -242,10 +306,7 @@ pronta per essere passata a `showImage()`.
   `_drawDescriptor` / `_drawBWRY`** → tutti rimossi e sostituiti dalla
   free function template `GxEPDImage::showImage<DisplayT>(display, desc)`
   che vive nel namespace `GxEPDImage`. Unico entry-point pubblico per
-  stampare un'immagine, con tutta la logica display-specific (yellow
-  out-of-band + decodifica bitmap pixel-per-pixel via drawPixel) dentro.
+  stampare un'immagine, indipendente dal silicio: parla solo con l'API pubblica
+  del driver e con quella del template `GxEPD2_3C`.
 - **`drawImageRGB565` / `rgb565ToQuadColor` / `FORMAT_RGB565` /
   `GXEPD_RGB565_IMAGE`** → rimossi insieme al supporto RGB565.
-- **`writeImageYellow` + `preserveYellow`** → introdotti per supportare
-  il canale 0x28 nel flusso paged del template `GxEPD2_3C`, che vede
-  solo 2 canali (architettura ereditata dal driver upstream).

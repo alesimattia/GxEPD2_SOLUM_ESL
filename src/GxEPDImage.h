@@ -20,9 +20,12 @@
 //                                      Il template GxEPD2_3C tiene
 //                                      _current_page privato senza getter,
 //                                      quindi il driver mantiene un contatore
-//                                      parallelo: azzerato in setPaged() e in
-//                                      _Update_Full(), avanzato in
-//                                      writeImage(black, color, ...).
+//                                      parallelo, che avanza a ogni page
+//                                      ricevuta da nextPage() e si azzera a
+//                                      ogni inizio di loop e a ogni refresh.
+//
+//   Sul display basta l'API di GxEPD2_3C: pageHeight(), getRotation(),
+//   height(), fillRect() e drawInvertedBitmap().
 //
 //   Il pinout invece non passa da qui: è la struct uniforme di
 //   GxEPD2_SOLUM_Pins.h, che ogni driver accetta nel costruttore.
@@ -79,34 +82,41 @@ namespace GxEPDImage
   };
 
   /**
+   * Come showImage() tratta i pixel bianchi dell'immagine. Il template
+   * GxEPD2_3C riparte da un buffer bianco a ogni pagina e manda al controller
+   * i due piani interi, quindi un bianco non dipinto non lascia traccia del
+   * frame precedente: dipingerlo serve solo a coprire ciò che la stessa pagina
+   * ha già disegnato sotto l'immagine.
+   */
+  enum class Paint : uint8_t
+  {
+    Opaque,   // dipinge anche il bianco, sopra qualunque cosa la pagina contenga
+    InkOnly   // dipinge solo nero e rosso, per un'immagine su fondo bianco
+  };
+
+  /**
    * Unico entry-point pubblico per stampare un'immagine sui pannelli SOLUM
    * di questa libreria. Va chiamata DENTRO un loop paged
-   * firstPage()/nextPage() del template GxEPD2_3C, dopo fillScreen() e prima
-   * di nextPage().
+   * firstPage()/nextPage() del template GxEPD2_3C.
    *
-   * Responsabilità del chiamante (vedi esempio sotto):
-   *   1. Aprire il loop paged (firstPage + do { ... } while (nextPage()))
-   *   2. Chiamare display.hibernate() se vuole spegnere il pannello
-   *
-   * Strategia: i piani black e red vengono decodificati pixel-per-pixel con
-   * drawPixel, perchè la convenzione bit=1=NOT color delle bitmap (output
-   * dello script python e di image2cpp invertito) è opposta a quella di
-   * Adafruit_GFX::drawBitmap (bit=1=IS color), e il compositing di due piani
-   * drawBitmap non lo fa nativamente.
+   * È un wrapper di GxEPD2_3C::drawInvertedBitmap(), che disegna i bit a 0 di
+   * un piano, cioè la convenzione bit=1=NOT color delle bitmap prodotte da
+   * epd_image_converter.pyw e da image2cpp invertito: il piano rosso si
+   * disegna per primo e il nero sopra, così dove entrambi sono accesi vince il
+   * nero. Le righe sopra la pagina corrente si saltano a priori con il
+   * page-hint del driver, il resto lo taglia drawPixel(). Con Paint::Opaque un
+   * fillRect() bianco sulle stesse righe precede i due piani e costa un
+   * drawPixel per pixel; con Paint::InkOnly si paga solo l'inchiostro.
    *
    * Un eventuale terzo piano del descrittore (data2) non viene toccato: è il
    * chiamante a scriverlo prima di firstPage() con le primitive del driver,
    * sui pannelli che ne hanno uno. Vedi la nota in cima al file.
    *
-   * Costo loop drawPixel: ~24 ms su ESP32 a 240 MHz, irrilevante rispetto
-   * ai ~22 s di refresh elettroforetico.
-   *
    * Esempio one-shot full-screen:
    *
    *   display.firstPage();
    *   do {
-   *     display.fillScreen(GxEPD_WHITE);
-   *     GxEPDImage::showImage(display, *desc_ptr);
+   *     GxEPDImage::showImage(display, *desc_ptr, 0, 0, GxEPDImage::Paint::InkOnly);
    *   } while (display.nextPage());
    *   display.hibernate();
    *
@@ -115,19 +125,20 @@ namespace GxEPDImage
    *   GxEPDImage::showImage(display, GXEPD_BW_IMAGE(my_array, w, h));
    *
    * @tparam DisplayT  template instance di GxEPD2_3C<Driver, page_height>
-   * @param display    riferimento al display (per drawPixel + display.epd2)
+   * @param display    riferimento al display (drawInvertedBitmap, fillRect, epd2)
    * @param d          descrittore dell'immagine (BW / BWR / BWRY)
    * @param x, y       offset dell'angolo top-left (default 0,0)
+   * @param paint      Opaque (default) o InkOnly
    */
   template<typename DisplayT>
   inline void showImage(DisplayT& display, const Descriptor& d,
-                        int16_t x = 0, int16_t y = 0)
+                        int16_t x = 0, int16_t y = 0, Paint paint = Paint::Opaque)
   {
     const int16_t  w      = static_cast<int16_t>(d.width);
     const int16_t  h      = static_cast<int16_t>(d.height);
     const uint16_t stride = static_cast<uint16_t>((w + 7) / 8);
 
-    // Righe sorgente da saltare prima del loop. La page k del template copre
+    // Righe sorgente da saltare prima del disegno. La page k del template copre
     // le righe fisiche da _pw_y + k * pageH in giù, con _pw_y = 0 a schermo
     // pieno; _pw_y è privato e il driver lo vede solo dopo la prima page, ma
     // non è mai negativo. Quindi si salta un solo lato, quello che nessuna
@@ -135,9 +146,7 @@ namespace GxEPDImage
     //   rotation 0: le righe sopra la page, cioè prima di pageY;
     //   rotation 2: drawPixel() ribalta y su HEIGHT, quindi le righe logiche
     //               dopo HEIGHT - pageY;
-    //   rotation 1 e 3: le righe sorgente cadono sull'asse x, loop completo.
-    // A schermo pieno il wallpaper del firmware itera circa il doppio delle
-    // righe del taglio esatto, una ventina di ms su un refresh da 24 s.
+    //   rotation 1 e 3: le righe sorgente cadono sull'asse x, nessun salto.
     const int16_t pageH = static_cast<int16_t>(display.pageHeight());
     const int16_t pageY = static_cast<int16_t>(display.epd2.showImagePageHint()) * pageH;
     const uint8_t rot   = display.getRotation();
@@ -148,33 +157,20 @@ namespace GxEPDImage
       pyStart = static_cast<int16_t>(max(static_cast<int16_t>(0), static_cast<int16_t>(pageY - y)));
     else if (rot == 2)
       pyEnd = static_cast<int16_t>(min(h, static_cast<int16_t>(display.height() - pageY - y)));
+    if (pyEnd <= pyStart) return;
 
-    for (int16_t py = pyStart; py < pyEnd; ++py)
-    {
-      // Hoist del row offset fuori dal loop interno: py * stride viene
-      // calcolato 1 volta per riga invece che per ogni pixel.
-      const uint32_t rowOffset = static_cast<uint32_t>(py) * stride;
-      const uint8_t* row0 = d.data0 + rowOffset;
-      const uint8_t* row1 = d.data1 ? (d.data1 + rowOffset) : nullptr;
+    const int16_t  top     = static_cast<int16_t>(y + pyStart);
+    const int16_t  rows    = static_cast<int16_t>(pyEnd - pyStart);
+    const uint32_t skipped = static_cast<uint32_t>(pyStart) * stride;
 
-      for (int16_t px = 0; px < w; ++px)
-      {
-        const uint16_t byteIdx = static_cast<uint16_t>(px >> 3);
-        const uint8_t  bitMask = 0x80 >> (px & 7);
-
-        uint16_t color = GxEPD_WHITE;
-        if (!(pgm_read_byte(row0 + byteIdx) & bitMask))
-          color = GxEPD_BLACK;
-        else if (row1 && !(pgm_read_byte(row1 + byteIdx) & bitMask))
-          color = GxEPD_RED;
-
-        display.drawPixel(x + px, y + py, color);
-      }
-    }
-    // Nessun avanzamento del page-hint qui: è fatto dentro
-    // writeImage(black, color, ...) quando GxEPD2_3C::nextPage() chiude la
-    // page sul controller. showImage può essere chiamata 0, 1 o N volte
-    // nella stessa page senza desincronizzare il counter.
+    if (paint == Paint::Opaque)
+      display.fillRect(x, top, w, rows, GxEPD_WHITE);
+    if (d.data1)
+      display.drawInvertedBitmap(x, top, d.data1 + skipped, w, rows, GxEPD_RED);
+    display.drawInvertedBitmap(x, top, d.data0 + skipped, w, rows, GxEPD_BLACK);
+    // Nessun avanzamento del page-hint qui: lo fa il driver quando
+    // GxEPD2_3C::nextPage() gli consegna la page. showImage può essere
+    // chiamata 0, 1 o N volte nella stessa page senza desincronizzare il counter.
   }
 } // namespace GxEPDImage
 

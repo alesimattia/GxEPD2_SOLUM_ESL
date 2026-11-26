@@ -836,7 +836,7 @@ class ConverterApp:
                 f"Array raw: {base_name}"
                 + canali_txt
                 + f"\nDescrittore unificato: {descriptor_name}"
-                + f"\n\nUso nello sketch:\n  display.epd2.showImage({descriptor_name});"
+                + f"\n\nUso nello sketch:\n  GxEPDImage::showImage(display, {descriptor_name});  // dentro il loop paged"
             )
         except Exception as ex:
             messagebox.showerror("Errore conversione", str(ex))

@@ -98,8 +98,9 @@ static void probePartialLutRaw()
 // p — la catena di partial, con le sequenze del driver custom.
 //
 // Qui non si cerca se il partial esiste: si verifica che le sequenze che il
-// driver mette in _Init_Part(), _Update_Part() e drawImagePartial() reggano
-// una catena, e che l'uscita dalla catena non lasci trappole.
+// driver mette in _Init_Part() e _Update_Part(), e la sottoclasse di
+// PartialProbeDriver.h in drawImagePartial(), reggano una catena, e che
+// l'uscita dalla catena non lasci trappole.
 //
 // I due TESTIMONI sono il controllo: stanno fuori da ogni fascia di lavoro e
 // nessun partial li indirizza, quindi se restano dove sono la confinatura per
@@ -230,7 +231,7 @@ static void probePartialChain()
 
   if (cfg.exhaustive)
   {
-    // La trappola che il driver chiude con _cleanColorIfPrevious(): alla fine
+    // La trappola che il driver chiude con _cleanRam26(true): alla fine
     // di una catena 0x26 contiene il frame precedente in polarità BW, cioè bit
     // a 1 dove il vetro è bianco, e un refresh pieno rilegge quella RAM come
     // ACCENT. Senza pulizia lo schermo deve diventare rosso.
@@ -245,7 +246,7 @@ static void probePartialChain()
 
   // L'uscita corretta. chainReference() azzera 0x26 col pattern hardware prima
   // di riscrivere i testimoni, che è esattamente quello che il driver fa in
-  // _cleanColorIfPrevious() all'inizio di ogni refresh pieno: il confronto con
+  // _cleanRam26(true) all'inizio di ogni refresh pieno: il confronto con
   // la passata qui sopra dice se quella pulizia è necessaria o ridondante.
   openScreen("catena, uscita con pulizia di 0x26");
   chainReference("CATENA USCITA CON PULIZIA DI 0X26");
